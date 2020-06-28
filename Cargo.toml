@@ -1,0 +1,12 @@
+[package]
+name = "HunkEditor"
+version = "0.1.0"
+authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+AsciiBox = { git = "git://linode/100" }
+terminal_size = { git = "https://github.com/eminence/terminal-size.git" }
+
