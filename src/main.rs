@@ -38,9 +38,6 @@ impl Cursor {
             output =  self.offset + self.length;
         } else {
             output = self.offset;
-        }
-
-        output
     }
 }
 
@@ -183,11 +180,44 @@ impl Editor for HunkEditor {
 
     pub fn remove_bytes(&mut self, offset: usize, length: usize) { }
 
-    pub fn insert_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) { }
+    pub fn insert_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), ContentError> {
+        let mut output;
+        if (position < self.bytes.len()) {
+            let mut i: usize = position;
+            for new_byte in new_bytes.iter() {
+                self.bytes.insert(i, new_byte);
+                i += 1
+            }
+            output = Ok(());
+        } else {
+            output = Err(ContentError::OutOfRange);
+        }
+
+        output
+    }
+
+    pub fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), ContentError> {
+        let mut output;
+        if (position < self.bytes.len()) {
+            if position + new_bytes.len() < self.bytes.len() {
+                let mut i: usize = position;
+                for new_byte in new_bytes.iter() {
+                    self.bytes[position] = new_byte;
+                    position += 1;
+                }
+            } else {
+                self.bytes.resize(position);
+                self.bytes.extend_from_slice(&new_bytes.as_slice());
+            }
+        } else {
+            output = Err(ContentError::OutOfRange);
+        }
+
+        output
+    }
+
 
     pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) { }
-
-    pub fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) { }
 
     pub fn get_selected(&mut self) -> Vec<u8> { }
 
