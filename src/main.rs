@@ -68,7 +68,6 @@ trait Editor {
     pub fn cursor_decrease_length(&mut self);
 }
 
-
 trait VisualEditor {
     pub fn cursor_next_line(&mut self);
     pub fn cursor_prev_line(&mut self);
@@ -82,6 +81,7 @@ struct ViewPort {
     width: usize,
     height: usize
 }
+
 impl ViewPort {
     pub fn get_width(&self) {
         self.width
@@ -144,9 +144,23 @@ impl Editor for HunkEditor {
 
     pub fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) { }
 
-    pub fn set_cursor_offset(&mut self, new_offset: usize) { }
+    pub fn set_cursor_offset(&mut self, new_offset: usize) {
+        let mut adj_offset = cmp::min(self.active_content.len(), new_offset);
+        self.cursor.set_offset(adj_offset);
+        self.set_cursor_length(self.cursor.length);
+    }
 
-    pub fn set_cursor_length(&mut self, new_length: usize) { }
+    pub fn set_cursor_length(&mut self, new_length: isize) {
+        let mut adj_length;
+        if new_length < 0 {
+            adj_length = cmp::max(new_length, 0 - new_length);
+            self.cursor.set_length(adj_length);
+        } else if new_length == 0 {
+        } else {
+            adj_length = cmp::min(new_length, self.active_content.len() - self.cursor.offset);
+            self.cursor.set_length(adj_length);
+        }
+    }
 
     pub fn make_selection(&mut self, offset: usize, length: usize) {
         self.set_cursor_offset(offset);
