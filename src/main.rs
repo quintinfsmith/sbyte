@@ -1,8 +1,50 @@
 use asciibox::RectManager;
 use terminal_size::{Width, Height, terminal_size};
 
+pub enum FunctionRef {
+
+}
+
 pub enum EditorError {
     OutofRange
+}
+
+
+struct InputNode {
+    next_nodes: HashMap<u8, InputNode>,
+    hook: Option(FunctionRef)
+}
+
+impl InputNode {
+    pub fn new() -> InputNode {
+        InputNode {
+            next_nodes: HashMap::new(),
+            hook: None
+        }
+    }
+
+    fn assign_command(&mut self, new_pattern: Vec<u8>, hook: FunctionRef) {
+        if new_pattern.len() {
+            let next_byte = new_pattern.remove(0);
+
+            let mut next_node = self.next_nodes.entry_mut(next_byte).or_insert(InputNode::new());
+            next_node.assign_command(new_pattern, hook);
+
+        } else {
+            self.hook = hook;
+        }
+    }
+
+    fn input(&mut self, new_input: u8) -> bool {
+        match self.next_nodes.get(new_input) {
+            Some(next_node) => {
+                true
+            }
+            None => {
+                false
+            }
+        }
+    }
 }
 
 struct Cursor {
@@ -38,6 +80,9 @@ impl Cursor {
             output =  self.offset + self.length;
         } else {
             output = self.offset;
+        }
+
+        output
     }
 }
 
@@ -116,6 +161,9 @@ trait UI {
     }
 }
 
+enum Undoable {
+}
+
 struct HunkEditor {
     //Editor
     clipboard: Vec<u8>,
@@ -125,6 +173,7 @@ struct HunkEditor {
     cursor: Cursor,
     active_converter: Option<u8>,
     converters: HashMap<u8, Converter>,
+    undo_stack: Vec<(Undoable, usize)>,
 
     // UI
     mode_user: u8,
@@ -136,13 +185,10 @@ struct HunkEditor {
     // ConsoleEditor
 }
 
-impl Contextual for HunkEditor {
-}
+impl Contextual for HunkEditor { }
 
 impl Editor for HunkEditor {
     pub fn undo(&mut self) { }
-
-    pub fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) { }
 
     pub fn set_cursor_offset(&mut self, new_offset: usize) {
         let mut adj_offset = cmp::min(self.active_content.len(), new_offset);
@@ -162,12 +208,33 @@ impl Editor for HunkEditor {
         }
     }
 
+    pub fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
+        let mut matches = self.find_all(search_for);
+        // replace in reverse order
+        matches.reverse();
+        replace_with.reverse();
+
+        for i in matches.iter() {
+            for j in 0..replace_with.len() {
+                self.active_content.remove(i + j);
+            }
+            for new_byte in replace_with.iter() {
+                self.active_content.insert(i, new_byte);
+            }
+        }
+    }
+
     pub fn make_selection(&mut self, offset: usize, length: usize) {
         self.set_cursor_offset(offset);
         self.set_cursor_length(length);
     }
 
-    pub fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>) { }
+    pub fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>) {
+        self.clipboard = Vec::new();
+        for b in bytes_to_copy.iter() {
+            self.clipboard.push(b);
+        }
+    }
 
     pub fn copy_selection(&mut self) {
         match self.active_content.get_chunk(self.cursor.get_offset(), self.cursor.get_length()) {
@@ -179,20 +246,65 @@ impl Editor for HunkEditor {
         }
     }
 
-    pub fn load_file(&mut self, file_path: String) { }
+    pub fn load_file(&mut self, file_path: String) {
+    }
 
-    pub fn save_file(&mut self) { }
+    pub fn save_file(&mut self) {
+    }
 
-    pub fn set_file_path(&mut self, new_file_path: String) { }
+    pub fn set_file_path(&mut self, new_file_path: String) {
+    }
 
-    pub fn find_all(&self, pattern: Vec<u8>) -> Vec<usize> { }
+    pub fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
+        let mut output: Vec<usize> = Vec::new();
 
-    pub fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option(usize) { }
+        let mut pivot: usize = 0;
+        let mut in_match = false;
+
+        let mut search_length = search_for.len();
+
+        for (i, byte) in self.active_content.iter().enumerate() {
+            if search_for[pivot] == byte {
+                in_match = true;
+                pivot += 1;
+            } else {
+                in_match = false;
+                pivot = 0;
+            }
+
+            if pivot == search_length {
+                output.push(i - search_length);
+            }
+
+        }
+
+        output
+    }
+
+    pub fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option(usize) {
+        //TODO: This could definitely be sped up.
+        let mut matches = self.find_all(pattern);
+        let mut output = ();
+
+        if matches.len() {
+            for i in matches.iter() {
+                if i >= offset {
+                    output = Ok(i);
+                    break;
+                }
+            }
+        }
+
+        output
+    }
 
 
-    pub fn backspace(&mut self) { }
-
-    pub fn remove_bytes(&mut self, offset: usize, length: usize) { }
+    pub fn remove_bytes(&mut self, offset: usize, length: usize) {
+        let adj_length = cmp::min(self.active_content.len() - offset, length);
+        for i in 0..adj_length {
+            self.active_content.remove(offset);
+        }
+    }
 
     pub fn insert_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), ContentError> {
         let mut output;
@@ -230,16 +342,53 @@ impl Editor for HunkEditor {
         output
     }
 
+    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
+        let position = self.cursor.get_offset();
+        self.insert_bytes(new_bytes, position);
+    }
 
-    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) { }
+    pub fn get_selected(&mut self) -> Vec<u8> {
+    }
 
-    pub fn get_selected(&mut self) -> Vec<u8> { }
+    pub fn cursor_move(&mut self, new_offset: usize) {
+        let adj_offset = cmp::min(new_offset, self.active_content.len());
+        self.set_cursor_offset(adj_offset);
+        self.cursor.set_length(1);
+    }
 
-    pub fn cursor_move(&mut self, new_offset: usize) { }
-    pub fn cursor_next_byte(&mut self) { }
-    pub fn cursor_prev_byte(&mut self) { }
-    pub fn cursor_increase_length(&mut self) { }
-    pub fn cursor_decrease_length(&mut self) { }
+    pub fn cursor_next_byte(&mut self) {
+        let new_position = self.cursor.get_offset() + 1;
+        self.cursor_move(new_position);
+    }
+
+    pub fn cursor_prev_byte(&mut self) {
+        let new_position = self.cursor.get_offset() - 1;
+        self.cursor_move(new_position);
+    }
+
+    pub fn cursor_increase_length(&mut self) {
+        let new_length;
+        if self.cursor.length == -1 {
+            new_length = 1;
+        } else {
+            new_length = self.cursor.length + 1;
+        }
+    }
+
+    pub fn cursor_decrease_length(&mut self) {
+        let new_length;
+        if self.cursor.length == 1 {
+            new_length = -1
+        } else {
+            new_length = self.cursor.length - 1;
+        }
+    }
+
+    pub fn set_cursor_offset(&mut self, new_offset: usize) {
+    }
+
+    pub fn set_cursor_length(&mut self, new_length: usize) {
+    }
 }
 
 impl VisualEditor for HunkEditor {
@@ -248,6 +397,11 @@ impl VisualEditor for HunkEditor {
     pub fn cursor_increase_length_by_line(&mut self) { }
     pub fn cursor_decrease_length_by_line(&mut self) { }
     pub fn adjust_viewport_offset(&mut self) { }
+}
+
+trait CustomInput {
+    pub fn assign_command(&mut self, command_string: Vec<u8>, hook: FunctionRef);
+    pub fn read_input(&mut self, next_byte: u8);
 }
 
 ////////////////////////////////////////////////
