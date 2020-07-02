@@ -1,22 +1,28 @@
 use asciibox::RectManager;
 use terminal_size::{Width, Height, terminal_size};
+use std::collections::HashMap;
+use std::cmp::{min, max};
 
-pub enum FunctionRef {
+enum FunctionRef {
 
 }
 
-pub enum EditorError {
-    OutofRange
+enum EditorError {
+    OutOfRange
+}
+
+struct Converter {
+
 }
 
 
 struct InputNode {
     next_nodes: HashMap<u8, InputNode>,
-    hook: Option(FunctionRef)
+    hook: Option<FunctionRef>
 }
 
 impl InputNode {
-    pub fn new() -> InputNode {
+    fn new() -> InputNode {
         InputNode {
             next_nodes: HashMap::new(),
             hook: None
@@ -24,20 +30,25 @@ impl InputNode {
     }
 
     fn assign_command(&mut self, new_pattern: Vec<u8>, hook: FunctionRef) {
-        if new_pattern.len() {
-            let next_byte = new_pattern.remove(0);
+        let mut tmp_pattern = Vec::new();
+        for (i, byte) in new_pattern.iter().enumerate() {
+            tmp_pattern.push(*byte);
+        }
 
-            let mut next_node = self.next_nodes.entry_mut(next_byte).or_insert(InputNode::new());
-            next_node.assign_command(new_pattern, hook);
+        if tmp_pattern.len() > 0 {
+            let next_byte = tmp_pattern.remove(0);
+
+            let mut next_node = self.next_nodes.entry(next_byte).or_insert(InputNode::new());
+            next_node.assign_command(tmp_pattern, hook);
 
         } else {
-            self.hook = hook;
+            self.hook = Some(hook);
         }
     }
 
     fn input(&mut self, new_input: u8) -> bool {
-        match self.next_nodes.get(new_input) {
-            Some(next_node) => {
+        match self.next_nodes.get(&new_input) {
+            Some(_) => {
                 true
             }
             None => {
@@ -49,19 +60,19 @@ impl InputNode {
 
 struct Cursor {
     offset: usize,
-    length: usize
+    length: isize
 }
 
 impl Cursor {
-    pub fn set_length(&mut self, new_length: usize) {
+    fn set_length(&mut self, new_length: isize) {
         self.length = new_length;
-    },
-
-    pub fn set_offset(&mut self, new_offset: usize) {
-        self.new_offset = new_offset;
     }
 
-    pub fn get_length(&self) -> usize {
+    fn set_offset(&mut self, new_offset: usize) {
+        self.offset = new_offset;
+    }
+
+    fn get_length(&self) -> usize {
         let output;
 
         if self.length < 0 {
@@ -70,14 +81,14 @@ impl Cursor {
             output = self.length;
         }
 
-        output
+        output as usize
     }
 
-    pub fn get_offset(&self) -> usize {
+    fn get_offset(&self) -> usize {
         let output;
 
         if self.length < 0 {
-            output =  self.offset + self.length;
+            output =  self.offset + (self.length as usize);
         } else {
             output = self.offset;
         }
@@ -88,37 +99,35 @@ impl Cursor {
 
 
 trait Editor {
-    pub fn undo(&mut self);
-    pub fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>);
-    pub fn set_cursor_offset(&mut self, new_offset: usize);
-    pub fn set_cursor_length(&mut self, new_length: usize);
-    pub fn make_selection(&mut self, offset: usize, length: usize);
-    pub fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);
-    pub fn copy_selection(&mut self);
-    pub fn load_file(&mut self, file_path: String);
-    pub fn save_file(&mut self);
-    pub fn set_file_path(&mut self, new_file_path: String);
-    pub fn find_all(&self, pattern: Vec<u8>) -> Vec<usize>;
-    pub fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option(usize);
-    pub fn backspace(&mut self);
-    pub fn remove_bytes(&mut self, offset: usize, length: usize);
-    pub fn insert_bytes(&mut self, new_bytes: Vec<u8>, offset: usize);
-    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
-    pub fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, offset: usize);
-    pub fn get_selected(&mut self) -> Vec<u8>;
-    pub fn cursor_move(&mut self, new_offset: usize);
-    pub fn cursor_next_byte(&mut self);
-    pub fn cursor_prev_byte(&mut self);
-    pub fn cursor_increase_length(&mut self);
-    pub fn cursor_decrease_length(&mut self);
+    fn undo(&mut self);
+    fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>);
+    fn cursor_set_offset(&mut self, new_offset: usize);
+    fn cursor_set_length(&mut self, new_length: isize);
+    fn make_selection(&mut self, offset: usize, length: usize);
+    fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);
+    fn copy_selection(&mut self);
+    fn load_file(&mut self, file_path: String);
+    fn save_file(&mut self);
+    fn set_file_path(&mut self, new_file_path: String);
+    fn find_all(&self, pattern: Vec<u8>) -> Vec<usize>;
+    fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option<usize>;
+    fn remove_bytes(&mut self, offset: usize, length: usize);
+    fn insert_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) -> Result<(), EditorError>;
+    fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
+    fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) -> Result<(), EditorError>;
+    fn get_selected(&mut self) -> Vec<u8>;
+    fn cursor_next_byte(&mut self);
+    fn cursor_prev_byte(&mut self);
+    fn cursor_increase_length(&mut self);
+    fn cursor_decrease_length(&mut self);
 }
 
 trait VisualEditor {
-    pub fn cursor_next_line(&mut self);
-    pub fn cursor_prev_line(&mut self);
-    pub fn cursor_increase_length_by_line(&mut self);
-    pub fn cursor_decrease_length_by_line(&mut self);
-    pub fn adjust_viewport_offset(&mut self);
+    fn cursor_next_line(&mut self);
+    fn cursor_prev_line(&mut self);
+    fn cursor_increase_length_by_line(&mut self);
+    fn cursor_decrease_length_by_line(&mut self);
+    fn adjust_viewport_offset(&mut self);
 }
 
 struct ViewPort {
@@ -128,35 +137,35 @@ struct ViewPort {
 }
 
 impl ViewPort {
-    pub fn get_width(&self) {
+    fn get_width(&self) -> usize {
         self.width
     }
-    pub fn get_height(&self) {
+    fn get_height(&self) -> usize {
         self.height
     }
-    pub fn get_ofset(&self) {
+    fn get_offset(&self) -> usize {
         self.offset
     }
-    pub fn set_offset(&mut self, new_offset: usize) {
+    fn set_offset(&mut self, new_offset: usize) {
         self.offset = new_offset;
     }
-    pub fn set_width(&mut self, new_width: usize) {
+    fn set_width(&mut self, new_width: usize) {
         self.width = new_width;
     }
-    pub fn set_height(&mut self, new_height: usize) {
+    fn set_height(&mut self, new_height: usize) {
         self.height = new_height;
     }
-    pub fn set_size(&mut self, new_width: usize, new_height: usize) {
+    fn set_size(&mut self, new_width: usize, new_height: usize) {
         self.set_width(new_width);
         self.set_height(new_height);
     }
 }
 
 trait UI {
-    pub fn set_user_mode(&mut self) {
+    fn set_user_mode(&mut self) {
 
     }
-    pub fn get_user_mode(&mut self) {
+    fn get_user_mode(&mut self) {
 
     }
 }
@@ -180,82 +189,57 @@ struct HunkEditor {
 
 
     // VisualEditor
-    viewport: Viewport,
+    viewport: ViewPort,
 
     // ConsoleEditor
+
 }
 
-impl Contextual for HunkEditor { }
-
 impl Editor for HunkEditor {
-    pub fn undo(&mut self) { }
+    fn undo(&mut self) { }
 
-    pub fn set_cursor_offset(&mut self, new_offset: usize) {
-        let mut adj_offset = cmp::min(self.active_content.len(), new_offset);
-        self.cursor.set_offset(adj_offset);
-        self.set_cursor_length(self.cursor.length);
-    }
-
-    pub fn set_cursor_length(&mut self, new_length: isize) {
-        let mut adj_length;
-        if new_length < 0 {
-            adj_length = cmp::max(new_length, 0 - new_length);
-            self.cursor.set_length(adj_length);
-        } else if new_length == 0 {
-        } else {
-            adj_length = cmp::min(new_length, self.active_content.len() - self.cursor.offset);
-            self.cursor.set_length(adj_length);
-        }
-    }
-
-    pub fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
+    fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
         let mut matches = self.find_all(search_for);
         // replace in reverse order
         matches.reverse();
-        replace_with.reverse();
 
         for i in matches.iter() {
             for j in 0..replace_with.len() {
                 self.active_content.remove(i + j);
             }
-            for new_byte in replace_with.iter() {
-                self.active_content.insert(i, new_byte);
+            for (j, new_byte) in replace_with.iter().enumerate() {
+                self.active_content.insert(*i + j, *new_byte);
             }
         }
     }
 
-    pub fn make_selection(&mut self, offset: usize, length: usize) {
-        self.set_cursor_offset(offset);
-        self.set_cursor_length(length);
+    fn make_selection(&mut self, offset: usize, length: usize) {
+        self.cursor_set_offset(offset);
+        self.cursor_set_length(length as isize);
     }
 
-    pub fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>) {
+    fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>) {
         self.clipboard = Vec::new();
         for b in bytes_to_copy.iter() {
-            self.clipboard.push(b);
+            self.clipboard.push(*b);
         }
     }
 
-    pub fn copy_selection(&mut self) {
-        match self.active_content.get_chunk(self.cursor.get_offset(), self.cursor.get_length()) {
-            Some(bytes_to_copy) => {
-                // TODO: this won't work
-                self.copy_to_clipboard(bytes_to_copy);
-            }
-            None => ()
-        }
+    fn copy_selection(&mut self) {
+        let mut selected_bytes = self.get_selected();
+        self.copy_to_clipboard(selected_bytes);
     }
 
-    pub fn load_file(&mut self, file_path: String) {
+    fn load_file(&mut self, file_path: String) {
     }
 
-    pub fn save_file(&mut self) {
+    fn save_file(&mut self) {
     }
 
-    pub fn set_file_path(&mut self, new_file_path: String) {
+    fn set_file_path(&mut self, new_file_path: String) {
     }
 
-    pub fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
+    fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
         let mut output: Vec<usize> = Vec::new();
 
         let mut pivot: usize = 0;
@@ -264,7 +248,7 @@ impl Editor for HunkEditor {
         let mut search_length = search_for.len();
 
         for (i, byte) in self.active_content.iter().enumerate() {
-            if search_for[pivot] == byte {
+            if search_for[pivot] == *byte {
                 in_match = true;
                 pivot += 1;
             } else {
@@ -281,15 +265,15 @@ impl Editor for HunkEditor {
         output
     }
 
-    pub fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option(usize) {
+    fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option<usize> {
         //TODO: This could definitely be sped up.
         let mut matches = self.find_all(pattern);
-        let mut output = ();
+        let mut output = None;
 
-        if matches.len() {
+        if matches.len() > 0 {
             for i in matches.iter() {
-                if i >= offset {
-                    output = Ok(i);
+                if *i >= offset {
+                    output = Some(*i);
                     break;
                 }
             }
@@ -299,109 +283,176 @@ impl Editor for HunkEditor {
     }
 
 
-    pub fn remove_bytes(&mut self, offset: usize, length: usize) {
-        let adj_length = cmp::min(self.active_content.len() - offset, length);
+    fn remove_bytes(&mut self, offset: usize, length: usize) {
+        let adj_length = min(self.active_content.len() - offset, length);
         for i in 0..adj_length {
             self.active_content.remove(offset);
         }
     }
 
-    pub fn insert_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), ContentError> {
+    fn insert_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), EditorError> {
         let mut output;
-        if (position < self.bytes.len()) {
+        if (position < self.active_content.len()) {
             let mut i: usize = position;
             for new_byte in new_bytes.iter() {
-                self.bytes.insert(i, new_byte);
+                self.active_content.insert(i, *new_byte);
                 i += 1
             }
             output = Ok(());
         } else {
-            output = Err(ContentError::OutOfRange);
+            output = Err(EditorError::OutOfRange);
         }
 
         output
     }
 
-    pub fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), ContentError> {
+    fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), EditorError> {
         let mut output;
-        if (position < self.bytes.len()) {
-            if position + new_bytes.len() < self.bytes.len() {
-                let mut i: usize = position;
-                for new_byte in new_bytes.iter() {
-                    self.bytes[position] = new_byte;
-                    position += 1;
+        if (position < self.active_content.len()) {
+            if position + new_bytes.len() < self.active_content.len() {
+                for (i, new_byte) in new_bytes.iter().enumerate() {
+                    self.active_content[position + i] = *new_byte;
                 }
             } else {
-                self.bytes.resize(position);
-                self.bytes.extend_from_slice(&new_bytes.as_slice());
+                self.active_content.resize(position, 0);
+                self.active_content.extend_from_slice(&new_bytes.as_slice());
             }
+            output = Ok(());
         } else {
-            output = Err(ContentError::OutOfRange);
+            output = Err(EditorError::OutOfRange);
         }
 
         output
     }
 
-    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
+    fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
         let position = self.cursor.get_offset();
         self.insert_bytes(new_bytes, position);
     }
 
-    pub fn get_selected(&mut self) -> Vec<u8> {
+    fn get_selected(&mut self) -> Vec<u8> {
+        let mut output: Vec<u8> = Vec::new();
+        let offset = self.cursor.get_offset();
+        let length = self.cursor.get_length();
+
+        for i in offset .. offset + length {
+            output.push(self.active_content[i]);
+        }
+
+        output
     }
 
-    pub fn cursor_move(&mut self, new_offset: usize) {
-        let adj_offset = cmp::min(new_offset, self.active_content.len());
-        self.set_cursor_offset(adj_offset);
-        self.cursor.set_length(1);
-    }
-
-    pub fn cursor_next_byte(&mut self) {
+    fn cursor_next_byte(&mut self) {
         let new_position = self.cursor.get_offset() + 1;
-        self.cursor_move(new_position);
+        self.cursor_set_offset(new_position);
     }
 
-    pub fn cursor_prev_byte(&mut self) {
+    fn cursor_prev_byte(&mut self) {
         let new_position = self.cursor.get_offset() - 1;
-        self.cursor_move(new_position);
+        self.cursor_set_offset(new_position);
     }
 
-    pub fn cursor_increase_length(&mut self) {
+    fn cursor_increase_length(&mut self) {
         let new_length;
         if self.cursor.length == -1 {
             new_length = 1;
         } else {
             new_length = self.cursor.length + 1;
         }
+
+        self.cursor_set_length(new_length);
     }
 
-    pub fn cursor_decrease_length(&mut self) {
+    fn cursor_decrease_length(&mut self) {
         let new_length;
         if self.cursor.length == 1 {
             new_length = -1
         } else {
             new_length = self.cursor.length - 1;
         }
+
+        self.cursor_set_length(new_length);
     }
 
-    pub fn set_cursor_offset(&mut self, new_offset: usize) {
+    fn cursor_set_offset(&mut self, new_offset: usize) {
+        let mut adj_offset = min(self.active_content.len(), new_offset);
+        self.cursor.set_offset(adj_offset);
+        self.cursor_set_length(self.cursor.length);
     }
 
-    pub fn set_cursor_length(&mut self, new_length: usize) {
+    fn cursor_set_length(&mut self, new_length: isize) {
+        let mut adj_length;
+        if new_length < 0 {
+            adj_length = max(new_length, 0 - new_length);
+            self.cursor.set_length(adj_length);
+        } else if new_length == 0 {
+        } else {
+            adj_length = min(new_length as usize, self.active_content.len() - self.cursor.offset) as isize;
+            self.cursor.set_length(adj_length);
+        }
     }
 }
 
 impl VisualEditor for HunkEditor {
-    pub fn cursor_next_line(&mut self) { }
-    pub fn cursor_prev_line(&mut self) { }
-    pub fn cursor_increase_length_by_line(&mut self) { }
-    pub fn cursor_decrease_length_by_line(&mut self) { }
-    pub fn adjust_viewport_offset(&mut self) { }
+    fn cursor_next_line(&mut self) {
+        let mut new_offset = self.cursor.offset + self.viewport.get_width();
+        self.cursor_set_offset(new_offset);
+    }
+
+    fn cursor_prev_line(&mut self) {
+        let mut new_offset = self.cursor.offset - self.viewport.get_width();
+        self.cursor_set_offset(new_offset);
+    }
+
+    fn cursor_increase_length_by_line(&mut self) {
+        let mut new_length: isize = self.cursor.length + (self.viewport.get_width() as isize);
+
+        if self.cursor.length < 0 && new_length >= 0 {
+            new_length += 1;
+        }
+
+        self.cursor_set_length(new_length);
+    }
+
+    fn cursor_decrease_length_by_line(&mut self) {
+        let mut new_length: isize = self.cursor.length - (self.viewport.get_width() as isize);
+        if self.cursor.length > 0 && new_length <= 0 {
+            new_length -= 1;
+        }
+
+        self.cursor_set_length(new_length);
+    }
+
+    fn adjust_viewport_offset(&mut self) {
+        let width = self.viewport.get_width();
+        let height = self.viewport.get_height();
+        let screen_buffer_length = width * height;
+        let mut adj_viewport_offset = self.viewport.offset;
+
+        if (self.cursor.length >= 0) {
+            let cursor_length = self.cursor.length as usize;
+            while self.cursor.offset + cursor_length - adj_viewport_offset > screen_buffer_length {
+                adj_viewport_offset += width;
+            }
+        } else {
+            let cursor_length = (0 - self.cursor.length) as usize;
+            while self.cursor.offset - cursor_length - adj_viewport_offset > screen_buffer_length {
+                adj_viewport_offset += width;
+            }
+
+        }
+
+        while adj_viewport_offset > self.cursor.offset {
+            adj_viewport_offset = max(adj_viewport_offset - width, 0);
+        }
+
+        self.viewport.set_offset(adj_viewport_offset);
+    }
 }
 
 trait CustomInput {
-    pub fn assign_command(&mut self, command_string: Vec<u8>, hook: FunctionRef);
-    pub fn read_input(&mut self, next_byte: u8);
+    fn assign_command(&mut self, command_string: Vec<u8>, hook: FunctionRef);
+    fn read_input(&mut self, next_byte: u8);
 }
 
 ////////////////////////////////////////////////
