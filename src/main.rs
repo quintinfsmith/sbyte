@@ -30,8 +30,7 @@ trait Converter {
     fn encode_integer(&self, integer: usize) -> Result<Vec<u8>, ConverterError>;
 }
 
-struct HexConverter {
-}
+struct HexConverter { }
 
 impl HexConverter {
     fn hex_char_to_dec_int(&self, hex_char: u8) -> Result<u8, ConverterError> {
@@ -197,6 +196,12 @@ struct Cursor {
 }
 
 impl Cursor {
+    pub fn new() -> Cursor {
+        Cursor {
+            offset: 0,
+            length: 1
+        }
+    }
     fn set_length(&mut self, new_length: isize) {
         self.length = new_length;
     }
@@ -272,6 +277,13 @@ struct ViewPort {
 }
 
 impl ViewPort {
+    pub fn new(width: usize, height: usize) -> ViewPort {
+        ViewPort {
+            offset: 0,
+            width: width,
+            height: height
+        }
+    }
     fn get_width(&self) -> usize {
         self.width
     }
@@ -334,10 +346,36 @@ struct HunkEditor {
     // ConsoleEditor
 }
 
-impl Editor for HunkEditor {
-    fn undo(&mut self) {
+impl HunkEditor {
+    pub fn new() -> HunkEditor {
+        let mut width = 1;
+        let mut height = 1;
 
+        match terminal_size() {
+            Some((Width(w), Height(h))) => {
+                width = w as usize;
+                height = h as usize;
+            }
+            None => ()
+        }
+
+        HunkEditor {
+            clipboard: Vec::new(),
+            active_content: Vec::new(),
+            active_file_path: String::from("none"),
+            internal_log: Vec::new(),
+            cursor: Cursor::new(),
+            active_converter: ConverterRef::HEX,
+            undo_stack: Vec::new(),
+            mode_user: UserMode::MOVE,
+            input_managers: HashMap::new(),
+            viewport: ViewPort::new(width, height)
+        }
     }
+}
+
+impl Editor for HunkEditor {
+    fn undo(&mut self) { }
 
     fn get_active_converter(&self) -> Box<dyn Converter> {
         match self.active_converter {
@@ -386,7 +424,6 @@ impl Editor for HunkEditor {
     }
 
     fn load_file(&mut self, file_path: String) {
-
         match File::open(file_path) {
             Ok(mut file) => {
                 let mut contents = String::new();
@@ -634,5 +671,5 @@ impl VisualEditor for HunkEditor {
 ////////////////////////////////////////////////
 
 fn main() {
-    println!("Hello, world!");
+    let editor = HunkEditor::new();
 }
