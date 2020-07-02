@@ -2,6 +2,8 @@ use asciibox::RectManager;
 use terminal_size::{Width, Height, terminal_size};
 use std::collections::HashMap;
 use std::cmp::{min, max};
+use std::fs::File;
+use std::io::{Write, Read};
 
 enum FunctionRef {
 
@@ -11,15 +13,140 @@ enum EditorError {
     OutOfRange
 }
 
-struct Converter {
-
+enum ConverterError {
+    InvalidDigit
 }
+
+trait Converter {
+    fn encode(human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
+    fn decode(bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
+    fn decode_integer(byte_string: Vec<u8>) -> Result<usize, ConverterError>;
+    fn encode_integer(integer: usize) -> Result<Vec<u8>, ConverterError>;
+}
+
+struct HexConverter {
+}
+
+impl HexConverter {
+    fn hex_char_to_dec_int(hex_char: u8) -> Result<u8, ConverterError> {
+        // TODO: Make constant
+        let hex_digits: Vec<u8> = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
+
+        match hex_digits.binary_search(&hex_char) {
+            Ok(index) => {
+                Ok(index as u8)
+            }
+            Err(e) => {
+                Err(ConverterError::InvalidDigit)
+            }
+        }
+    }
+}
+
+impl Converter for HexConverter {
+    fn encode(human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+        let mut output_bytes: Vec<u8> = Vec::new();
+        let mut output = Ok(Vec::new());
+
+        for byte in human_readable.iter() {
+            match HexConverter::encode_integer(*byte as usize) {
+                Ok(subbytes) => {
+                    for subbyte in subbytes.iter() {
+                        output_bytes.push(*subbyte);
+                    }
+                }
+                Err(e) => {
+                    output = Err(e);
+                    break;
+                }
+            }
+        }
+
+        if output.is_ok() {
+            output = Ok(output_bytes);
+        }
+
+        output
+    }
+
+    fn encode_integer(integer: usize) -> Result<Vec<u8>, ConverterError> {
+        let first = integer / 16;
+        let second = integer % 16;
+        let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
+
+
+        if (first > hex_digits.len() || second > hex_digits.len()) {
+            Err(ConverterError::InvalidDigit)
+        } else {
+
+            Ok(vec![hex_digits[first], hex_digits[second]])
+        }
+    }
+
+    fn decode(bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+        let mut output_bytes: Vec<u8> = Vec::new();
+        let mut output = Ok(Vec::new());
+
+        let mut byte_value: u8;
+        let mut lode_byte = 0;
+        for (i, byte) in bytes.iter().rev().enumerate() {
+            match HexConverter::hex_char_to_dec_int(*byte) {
+                Ok(decimal) => {
+                    byte_value = decimal;
+                    lode_byte += byte_value * ((16_u32.pow((i % 2) as u32)) as u8);
+
+                    if i % 2 != 0 {
+                        output_bytes.push(lode_byte);
+                        lode_byte = 0;
+                    }
+                }
+                Err(e) => {
+                    output = Err(e);
+                    break;
+                }
+            }
+        }
+
+        if output.is_ok() {
+            if lode_byte != 0 {
+                output_bytes.push(lode_byte);
+            }
+
+            output_bytes.reverse();
+            output = Ok(output_bytes);
+        }
+
+        output
+    }
+
+    fn decode_integer(byte_string: Vec<u8>) -> Result<usize, ConverterError> {
+        let mut output_number: usize = 0;
+        let mut output = Ok(output_number);
+
+        for byte in byte_string.iter() {
+            match HexConverter::hex_char_to_dec_int(*byte) {
+                Ok(decimal_int) => {
+                    output_number *= 16;
+                    output_number += decimal_int as usize;
+                }
+                Err(e) => {
+                    output = Err(e);
+                    break;
+                }
+            }
+        }
+
+        output
+    }
+}
+
 
 
 struct InputNode {
     next_nodes: HashMap<u8, InputNode>,
     hook: Option<FunctionRef>
 }
+
 
 impl InputNode {
     fn new() -> InputNode {
@@ -161,17 +288,24 @@ impl ViewPort {
     }
 }
 
+enum UserMode {
+    MOVE,
+    VISUAL,
+    COMMAND,
+    SEARCH,
+    INSERT,
+    OVERWRITE
+}
+
 trait UI {
-    fn set_user_mode(&mut self) {
+    fn set_user_mode(&mut self, mode: UserMode);
+    fn get_user_mode(&mut self) -> UserMode;
 
-    }
-    fn get_user_mode(&mut self) {
-
-    }
+    fn assign_mode_command(&mut self, mode: UserMode, command_string: Vec<u8>, hook: FunctionRef);
+    fn read_input(&mut self, next_byte: u8);
 }
 
-enum Undoable {
-}
+enum Undoable { }
 
 struct HunkEditor {
     //Editor
@@ -181,22 +315,21 @@ struct HunkEditor {
     internal_log: Vec<String>,
     cursor: Cursor,
     active_converter: Option<u8>,
-    converters: HashMap<u8, Converter>,
     undo_stack: Vec<(Undoable, usize)>,
-
     // UI
-    mode_user: u8,
-
+    mode_user: UserMode,
+    input_managers: HashMap<UserMode, InputNode>,
 
     // VisualEditor
     viewport: ViewPort,
 
     // ConsoleEditor
-
 }
 
 impl Editor for HunkEditor {
-    fn undo(&mut self) { }
+    fn undo(&mut self) {
+
+    }
 
     fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
         let mut matches = self.find_all(search_for);
@@ -231,12 +364,38 @@ impl Editor for HunkEditor {
     }
 
     fn load_file(&mut self, file_path: String) {
+
+        match File::open(file_path) {
+            Ok(mut file) => {
+                let mut contents = String::new();
+                file.read_to_string(&mut contents);
+
+                self.active_content = Vec::new();
+
+                for (i, byte) in contents.as_bytes().iter().enumerate() {
+                    self.active_content.push(*byte);
+                }
+            }
+            Err(e) => {}
+        }
     }
 
     fn save_file(&mut self) {
+        let path = &self.active_file_path;
+        match File::create(path) {
+            Ok(mut file) => {
+                file.write_all(self.active_content.as_slice());
+                // TODO: Handle potential file system problems
+                //file.sync_all();
+            }
+            Err(e) => {
+            }
+        }
+
     }
 
     fn set_file_path(&mut self, new_file_path: String) {
+        self.active_file_path = new_file_path;
     }
 
     fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
@@ -448,11 +607,6 @@ impl VisualEditor for HunkEditor {
 
         self.viewport.set_offset(adj_viewport_offset);
     }
-}
-
-trait CustomInput {
-    fn assign_command(&mut self, command_string: Vec<u8>, hook: FunctionRef);
-    fn read_input(&mut self, next_byte: u8);
 }
 
 ////////////////////////////////////////////////
