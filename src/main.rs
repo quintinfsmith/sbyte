@@ -17,18 +17,24 @@ enum ConverterError {
     InvalidDigit
 }
 
+enum ConverterRef {
+    HEX,
+    BIN,
+    OCT
+}
+
 trait Converter {
-    fn encode(human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
-    fn decode(bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
-    fn decode_integer(byte_string: Vec<u8>) -> Result<usize, ConverterError>;
-    fn encode_integer(integer: usize) -> Result<Vec<u8>, ConverterError>;
+    fn encode(&self, human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
+    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
+    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
+    fn encode_integer(&self, integer: usize) -> Result<Vec<u8>, ConverterError>;
 }
 
 struct HexConverter {
 }
 
 impl HexConverter {
-    fn hex_char_to_dec_int(hex_char: u8) -> Result<u8, ConverterError> {
+    fn hex_char_to_dec_int(&self, hex_char: u8) -> Result<u8, ConverterError> {
         // TODO: Make constant
         let hex_digits: Vec<u8> = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
 
@@ -44,12 +50,12 @@ impl HexConverter {
 }
 
 impl Converter for HexConverter {
-    fn encode(human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+    fn encode(&self, human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
         let mut output_bytes: Vec<u8> = Vec::new();
         let mut output = Ok(Vec::new());
 
         for byte in human_readable.iter() {
-            match HexConverter::encode_integer(*byte as usize) {
+            match self.encode_integer(*byte as usize) {
                 Ok(subbytes) => {
                     for subbyte in subbytes.iter() {
                         output_bytes.push(*subbyte);
@@ -69,7 +75,7 @@ impl Converter for HexConverter {
         output
     }
 
-    fn encode_integer(integer: usize) -> Result<Vec<u8>, ConverterError> {
+    fn encode_integer(&self, integer: usize) -> Result<Vec<u8>, ConverterError> {
         let first = integer / 16;
         let second = integer % 16;
         let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
@@ -83,14 +89,14 @@ impl Converter for HexConverter {
         }
     }
 
-    fn decode(bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
         let mut output_bytes: Vec<u8> = Vec::new();
         let mut output = Ok(Vec::new());
 
         let mut byte_value: u8;
         let mut lode_byte = 0;
         for (i, byte) in bytes.iter().rev().enumerate() {
-            match HexConverter::hex_char_to_dec_int(*byte) {
+            match self.hex_char_to_dec_int(*byte) {
                 Ok(decimal) => {
                     byte_value = decimal;
                     lode_byte += byte_value * ((16_u32.pow((i % 2) as u32)) as u8);
@@ -119,12 +125,12 @@ impl Converter for HexConverter {
         output
     }
 
-    fn decode_integer(byte_string: Vec<u8>) -> Result<usize, ConverterError> {
+    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
         let mut output_number: usize = 0;
         let mut output = Ok(output_number);
 
         for byte in byte_string.iter() {
-            match HexConverter::hex_char_to_dec_int(*byte) {
+            match self.hex_char_to_dec_int(*byte) {
                 Ok(decimal_int) => {
                     output_number *= 16;
                     output_number += decimal_int as usize;
@@ -247,6 +253,8 @@ trait Editor {
     fn cursor_prev_byte(&mut self);
     fn cursor_increase_length(&mut self);
     fn cursor_decrease_length(&mut self);
+
+    fn get_active_converter(&self) -> Box<dyn Converter>;
 }
 
 trait VisualEditor {
@@ -314,7 +322,7 @@ struct HunkEditor {
     active_file_path: String,
     internal_log: Vec<String>,
     cursor: Cursor,
-    active_converter: Option<u8>,
+    active_converter: ConverterRef,
     undo_stack: Vec<(Undoable, usize)>,
     // UI
     mode_user: UserMode,
@@ -329,6 +337,20 @@ struct HunkEditor {
 impl Editor for HunkEditor {
     fn undo(&mut self) {
 
+    }
+
+    fn get_active_converter(&self) -> Box<dyn Converter> {
+        match self.active_converter {
+            ConverterRef::HEX => {
+                Box::new(HexConverter {})
+            }
+            //ConverterRef::BIN => {
+            //    Box::new(BinaryConverter {})
+            //}
+            _ => {
+                Box::new(HexConverter {})
+            }
+        }
     }
 
     fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
