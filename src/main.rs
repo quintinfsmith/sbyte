@@ -1,13 +1,11 @@
-use asciibox::RectManager;
-use terminal_size::{Width, Height, terminal_size};
+use asciibox::{RectStage, RectScene, Rect};
 use std::collections::HashMap;
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io::{Write, Read};
+use std::{time, thread};
 
-enum FunctionRef {
-
-}
+enum FunctionRef { }
 
 enum EditorError {
     OutOfRange
@@ -163,6 +161,7 @@ impl InputNode {
 
     fn assign_command(&mut self, new_pattern: Vec<u8>, hook: FunctionRef) {
         let mut tmp_pattern = Vec::new();
+
         for (i, byte) in new_pattern.iter().enumerate() {
             tmp_pattern.push(*byte);
         }
@@ -317,14 +316,6 @@ enum UserMode {
     OVERWRITE
 }
 
-trait UI {
-    fn set_user_mode(&mut self, mode: UserMode);
-    fn get_user_mode(&mut self) -> UserMode;
-
-    fn assign_mode_command(&mut self, mode: UserMode, command_string: Vec<u8>, hook: FunctionRef);
-    fn read_input(&mut self, next_byte: u8);
-}
-
 enum Undoable { }
 
 struct HunkEditor {
@@ -336,6 +327,7 @@ struct HunkEditor {
     cursor: Cursor,
     active_converter: ConverterRef,
     undo_stack: Vec<(Undoable, usize)>,
+
     // UI
     mode_user: UserMode,
     input_managers: HashMap<UserMode, InputNode>,
@@ -343,21 +335,12 @@ struct HunkEditor {
     // VisualEditor
     viewport: ViewPort,
 
-    // ConsoleEditor
+    // InConsole
+    rectstage: RectStage
 }
 
 impl HunkEditor {
-    pub fn new() -> HunkEditor {
-        let mut width = 1;
-        let mut height = 1;
-
-        match terminal_size() {
-            Some((Width(w), Height(h))) => {
-                width = w as usize;
-                height = h as usize;
-            }
-            None => ()
-        }
+    pub fn new(width:usize, height: usize) -> HunkEditor {
 
         HunkEditor {
             clipboard: Vec::new(),
@@ -668,8 +651,61 @@ impl VisualEditor for HunkEditor {
     }
 }
 
+trait UI {
+    fn set_user_mode(&mut self, mode: UserMode);
+    fn get_user_mode(&mut self) -> UserMode;
+
+    fn assign_mode_command(&mut self, mode: UserMode, command_string: Vec<u8>, hook: FunctionRef);
+    fn read_input(&mut self, next_byte: u8);
+}
+impl UI for HunkEditor {
+    fn set_user_mode(&mut self, mode: UserMode) {
+        self.mode_user = mode;
+    }
+
+    fn get_user_mode(&mut self) -> UserMode {
+        self.mode_user
+    }
+
+    fn assign_mode_command(&mut self, mode: UserMode, command_string: Vec<u8>, hook: FunctionRef) {
+       let mut mode_node = self.input_managers.entry(mode).or_insert(InputNode::new());
+        mode_node.assign_command(command_string, hook);
+    }
+
+    fn read_input(&mut self, next_byte: u8) {
+
+    }
+}
+
+trait InConsole {
+    fn run_display(&mut self);
+    fn tick(&mut self);
+}
+
+impl InConsole for HunkEditor {
+    fn run_display(&mut self, fps: f64) {
+        let nano_seconds = ((1f64 / fps) * 1_000_000_000) as u64;
+        let delay = time::Duration::from_nanos(nan_seconds);
+        while self.tick() {
+            thread::sleep(delay);
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        let mut do_keep_running = true;
+        // Check Kill Flag
+        // Check if file is loaded
+        // Check for resize
+        // Check Display Flags
+
+
+        do_keep_running
+    }
+}
+
+
 ////////////////////////////////////////////////
 
 fn main() {
-    let editor = HunkEditor::new();
+    let editor = HunkEditor::new(10, 10);
 }

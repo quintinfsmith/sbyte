@@ -8,5 +8,4 @@ edition = "2018"
 
 [dependencies]
 AsciiBox = { git = "git://linode/100" }
-terminal_size = { git = "https://github.com/eminence/terminal-size.git" }
 
