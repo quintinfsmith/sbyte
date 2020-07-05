@@ -336,7 +336,24 @@ struct HunkEditor {
     viewport: ViewPort,
 
     // InConsole
-    rectstage: RectStage
+    active_row_map: HashMap<usize, bool>,
+    flag_kill: bool,
+    flag_force_rerow: bool,
+    file_loaded: bool,
+
+    flag_refresh_full: bool,
+    flag_refresh_display: bool,
+    flag_refresh_meta: bool,
+    cells_to_refresh: HashSet<(usize, usize)>,
+    rows_to_refresh: HashSet<usize>,
+
+    is_resizing: bool,
+
+    rect_display: (usize, usize),
+    rect_meta: usize,
+
+    row_dict: HashMap<usize, (usize, usize)>,
+    cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>
 }
 
 impl HunkEditor {
@@ -680,26 +697,189 @@ impl UI for HunkEditor {
 trait InConsole {
     fn run_display(&mut self);
     fn tick(&mut self);
+
+    fn check_resize(&mut self);
+    fn resize(&mut self);
+    fn draw(&mut self);
+    fn setup_displays(&mut self);
+    fn apply_cursor(&mut self);
+    fn remove_cursor(&mut self);
+
+    fn remap_active_rows(&mut self);
+
 }
 
 impl InConsole for HunkEditor {
     fn run_display(&mut self, fps: f64) {
         let nano_seconds = ((1f64 / fps) * 1_000_000_000) as u64;
         let delay = time::Duration::from_nanos(nan_seconds);
-        while self.tick() {
+        while ! self.flag_kill {
+            self.tick();
             thread::sleep(delay);
         }
     }
 
-    fn tick(&mut self) -> bool {
-        let mut do_keep_running = true;
+    fn tick(&mut self) {
         // Check Kill Flag
         // Check if file is loaded
         // Check for resize
         // Check Display Flags
+    }
 
+    fn check_resize(&mut self) {
+        let mut rectmanager = self.rectmanager;
+        if rectmanager.check_resize() {
+            self.is_resizing = true;
+            // Viewport offset needs to be set to zero to ensure each line has the correct width
+            self.viewport.set_offset(0);
+            self.setup_displays();
+            self.flag_force_rerow = true;
+            self.remap_active_rows();
+        }
+    }
 
-        do_keep_running
+    fn remap_active_rows(&mut self) {
+        let viewport = self.viewport;
+        let width = viewport.get_width();
+        let height = viewport.get_height();
+        let initial_y = viewport.get_offset() / width;
+
+        self.adjust_display_offset();
+
+        let new_y = viewport.get_offset() / width;
+
+        let diff;
+        if (new_y > initial_y) {
+            diff = new_y - initial_y;
+        } else {
+            diff = initial_y - new_y;
+        }
+
+        if diff > 0 || self.flag_force_rerow {
+            if diff < height && ! self.flag_force_rerow {
+                // Don't rerender rendered rows. just shuffle them around
+                {
+                    (let human, let bits) = self.rect_display;
+                    self.rectmanager.shift_contents(
+                        human,
+                        initial_y - new_y
+                    );
+                    self.rectmanager.shift_contents(
+                        bits,
+                        initial_y - new_y
+                    );
+                }
+
+                let mut new_rows_map = HashMap::new();
+                let mut new_cells_map = HashMap::new();
+                let mut new_active_map = HashMap::new();
+                if new_y < initial_y {
+                    // Reassign the display_dicts to correspond to correct rows
+                    let mut from_y;
+                    for y in 0 .. height {
+                        from_y = (y - diff) % height;
+                        match self.rows_dict.get(from_y) {
+                            Some(human, bits) => {
+                                new_rows_map.entry(from_y)
+                                    .and_modify(|e| { *e = (*human, *bits)})
+                                    .or_insert((*human, *bits));
+                            }
+                            None => ()
+                        }
+
+                        match self.cell_dict.get(from_y) {
+                            Some(human, bits) => {
+                                new_cells_map.entry(from_y)
+                                    .and_modify(|e| { *e = (*human, *bits)})
+                                    .or_insert((*human, *bits));
+                            }
+                            None => ()
+                        }
+                        if y >= height - diff {
+                            match new_rows_map.get(y) {
+                                Some((human, bits)) => {
+                                    self.rectmanager.move(human, 0, y);
+                                    self.rectmanager.move(bits, 0, y);
+                                }
+                            }
+                            new_active_map.insert(y, false)
+                        } else {
+                            match self.active_row_map.get(from_y) {
+                                Some(needs_refresh) => {
+                                    new_active_map.insert(y, needs_refresh);
+                                }
+                                None => ()
+                            }
+                        }
+                    }
+                }
+                self.active_row_map = new_active_map;
+                for (y, (human, bits)) in new_rows_map.iter() {
+                    self.row_dict.entry(y)
+                        .and_modify(|e| {*e = (*human, *bits)})
+                        .or_insert((*human, *bits));
+                }
+                for (y, cells) in new_cells_map.iter() {
+                    self.cell_dict.entry(y)
+                        .and_modify(|e| {*e = *cells})
+                        .or_insert(*cells);
+                }
+            } else {
+                for y in 0 .. height {
+                    self.active_row_map.entry(y)
+                        .and_modify(|e| {*e = false})
+                        .or_insert(false);
+                }
+            }
+        }
+        let iterator = self.active_row_map.iter();
+        for (y, is_rendered) in iterator {
+            if ! is_rendered {
+                self.set_row_characters(y + new_offset);
+            }
+        }
+
+        self.flag_force_rerow = false;
+        //TODO
+        //self.set_offset_display();
+        self.flag_refresh_display = true;
+    }
+
+    fn set_row_characters(&mut self, absolute_y: usize) {
+        let viewport = self.viewport;
+        let width = viewport.get_width();
+        let offset = width * absolute_y;
+
+        let chunk = self.active_content.get_chunk(offset, width);
+        let relative_y = absolute_y - (viewport.get_offset() / width);
+        match self.cell_dict.get_mut(relative_y) {
+            Some(mut cellhash) => {
+                for (x, (rect_id_human, rect_id_bits)) in cellhash.iter_mut() {
+                    self.rectmanager.clear(rect_id_human);
+                    self.rectmanager.clear(rect_id_bits);
+                }
+
+                let mut tmp_human;
+                let mut tmp_bits;
+                for (x, byte) in chunk.iter() {
+                    //TODO: HumanConverter
+                    tmp_bits = self.get_active_converter().encode_integer(byte);
+                    match cellhash.get(x) {
+                        Some((human, bits)) => {
+                            self.rectmanager.set_string(human, 0, 0, tmp_human);
+                            self.rectmanager.set_string(bits, 0, 0, tmp_bits);
+                        }
+                        None => ()
+                    }
+                }
+            }
+            None => ()
+        }
+
+        self.rows_to_refresh.insert(relative_y);
+        self.active_row_map.entry(relative_y)
+            .and_modify(|e| {*e = true})
+            .or_insert(true);
     }
 }
 
