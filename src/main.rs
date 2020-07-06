@@ -1,5 +1,5 @@
-use asciibox::{RectStage, RectScene, Rect};
-use std::collections::HashMap;
+use asciibox::{RectManager, Rect};
+use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io::{Write, Read};
@@ -253,6 +253,7 @@ trait Editor {
     fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
     fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) -> Result<(), EditorError>;
     fn get_selected(&mut self) -> Vec<u8>;
+    fn get_chunk(&mut self, offset: usize, length: usize) -> Vec<u8>;
     fn cursor_next_byte(&mut self);
     fn cursor_prev_byte(&mut self);
     fn cursor_increase_length(&mut self);
@@ -316,6 +317,9 @@ enum UserMode {
     INSERT,
     OVERWRITE
 }
+impl std::cmp::PartialEq for UserMode {}
+impl std::cmp::Eq for UserMode { }
+impl std::hash::Hash for UserMode { }
 
 enum Undoable { }
 
@@ -337,6 +341,7 @@ struct HunkEditor {
     viewport: ViewPort,
 
     // InConsole
+    rectmanager: RectManager,
     active_row_map: HashMap<usize, bool>,
     flag_kill: bool,
     flag_force_rerow: bool,
@@ -345,8 +350,8 @@ struct HunkEditor {
     flag_refresh_full: bool,
     flag_refresh_display: bool,
     flag_refresh_meta: bool,
-    cells_to_refresh: HashSet<(usize, usize)>,
-    rows_to_refresh: HashSet<usize>,
+    cells_to_refresh: HashSet<(usize, usize)>, // rect ids, rather than coords
+    rows_to_refresh: HashSet<(usize, usize)>, // rects ids, rather than row
 
     is_resizing: bool,
 
@@ -401,8 +406,8 @@ impl HunkEditor {
             rects_display: (id_display_bits, id_display_human),
             rect_meta: id_rect_meta,
 
-            row_dict: HashMap<usize, (usize, usize)>,
-            cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>
+            row_dict: HashMap::new(),
+            cell_dict: HashMap::new()
         }
     }
 }
@@ -582,10 +587,14 @@ impl Editor for HunkEditor {
     }
 
     fn get_selected(&mut self) -> Vec<u8> {
-        let mut output: Vec<u8> = Vec::new();
         let offset = self.cursor.get_offset();
         let length = self.cursor.get_length();
 
+        self.get_chunk(offset, length)
+    }
+
+    fn get_chunk(&mut self, offset: usize, length: usize) -> Vec<u8> {
+        let mut output: Vec<u8> = Vec::new();
         for i in offset .. offset + length {
             output.push(self.active_content[i]);
         }
@@ -643,11 +652,30 @@ impl Editor for HunkEditor {
         }
     }
 
-    fn get_display_ratio(&mut self) {
-        let human_string = HumanConverter::encode(vec![65]);
+    fn get_display_ratio(&mut self) -> u8 {
+        let human_string_length;
+        match HumanConverter::encode(vec![65]) {
+            Ok(_bytes) => {
+                human_string_length = _bytes.len();
+            }
+            Err(e) => {
+                // TODO
+                human_string_length = 1;
+            }
+        }
+
         let active_converter = self.get_active_converter();
-        let active_string = active_converter.encode(vec![65]);
-        active_string.len() / human_string.len()
+        let active_string_length;
+        match active_converter.encode(vec![65]) {
+            Ok(_bytes) => {
+                active_string_length =  _bytes.len();
+            }
+            Err(e) => {
+                // TODO
+                active_string_length = 1;
+            }
+        }
+        (active_string_length / human_string_length) as u8
     }
 }
 
@@ -735,25 +763,24 @@ impl UI for HunkEditor {
 }
 
 trait InConsole {
-    fn run_display(&mut self);
+    fn run_display(&mut self, fps: f64);
     fn tick(&mut self);
 
     fn check_resize(&mut self);
-    fn resize(&mut self);
-    fn draw(&mut self);
     fn setup_displays(&mut self);
     fn apply_cursor(&mut self);
     fn remove_cursor(&mut self);
 
     fn remap_active_rows(&mut self);
 
-
+    fn set_row_characters(&mut self, offset: usize);
+    fn autoset_viewport_size(&mut self);
 }
 
 impl InConsole for HunkEditor {
     fn run_display(&mut self, fps: f64) {
-        let nano_seconds = ((1f64 / fps) * 1_000_000_000) as u64;
-        let delay = time::Duration::from_nanos(nan_seconds);
+        let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
+        let delay = time::Duration::from_nanos(nano_seconds);
         while ! self.flag_kill {
             self.tick();
             thread::sleep(delay);
@@ -761,10 +788,53 @@ impl InConsole for HunkEditor {
     }
 
     fn tick(&mut self) {
-        // Check Kill Flag
-        // Check if file is loaded
-        // Check for resize
-        // Check Display Flags
+        if ! self.file_loaded {
+        } else {
+            self.check_resize();
+            let mut do_draw = self.flag_refresh_full
+                || self.flag_refresh_display
+                || self.flag_refresh_meta
+                || self.cells_to_refresh.len() > 0
+                || self.rows_to_refresh.len() > 0;
+
+            if self.flag_refresh_full {
+                self.rectmanager.queue_draw(0);
+                self.flag_refresh_full = false;
+                self.flag_refresh_display = false;
+                self.flag_refresh_meta = false;
+                self.cells_to_refresh.drain();
+                self.rows_to_refresh.drain();
+            }
+            if self.flag_refresh_display {
+                self.rectmanager.queue_draw(self.rect_display_wrapper);
+                self.flag_refresh_display = false;
+                self.cells_to_refresh.drain();
+                self.rows_to_refresh.drain();
+            }
+
+
+            for (_bits_id, _human_id) in self.cells_to_refresh.iter() {
+                self.rectmanager.queue_draw(_bits_id);
+                self.rectmanager.queue_draw(_human_id);
+            }
+
+            for (_bits_id, _human_id) in self.rows_to_refresh.iter() {
+                self.rectmanager.queue_draw(_bits_id);
+                self.rectmanager.queue_draw(_human_id);
+            }
+
+            self.cells_to_refresh.drain();
+            self.rows_to_refresh.drain();
+
+            if self.flag_refresh_meta {
+                self.flag_refresh_meta = false;
+                self.rectmanager.queue_draw(self.rect_meta);
+            }
+
+            if do_draw {
+                self.rectmanager.draw_queued();
+            }
+        }
     }
 
     fn autoset_viewport_size(&mut self) {
@@ -792,6 +862,8 @@ impl InConsole for HunkEditor {
         let full_height = self.rectmanager.get_height();
         self.autoset_viewport_size();
         let viewport = self.viewport;
+        let viewport_width = viewport.get_width();
+        let viewport_height = viewport.get_height();
 
         self.rectmanager.resize(self.rect_meta, full_width, 1);
         self.rectmanager.resize(
@@ -800,14 +872,14 @@ impl InConsole for HunkEditor {
             full_height - 1
         );
 
-        (let bits_display, let human_display) = self.rects_display;
-        self.rectmanager.empty(bits);
-        self.rectmanager.empty(human);
+        let (bits_display, human_display) = self.rects_display;
+        self.rectmanager.empty(bits_display);
+        self.rectmanager.empty(human_display);
 
-        self.cells_dict.drain();
-        self.rows_dict.drain();
+        self.cell_dict.drain();
+        self.row_dict.drain();
 
-        let display_ratio = self.get_display_ratio();
+        let display_ratio = self.get_display_ratio() as usize;
         let mut width_bits;
         if display_ratio != 1 {
             width_bits = max(1, display_ratio - 1);
@@ -834,7 +906,7 @@ impl InConsole for HunkEditor {
                 (viewport_width * display_ratio) - 1,
                 1
             );
-            self.rectmanager.move(_bits_row_id, 0, y);
+            self.rectmanager.set_position(_bits_row_id, 0, y);
 
 
             _human_row_id = self.rectmanager.new_rect(
@@ -845,9 +917,9 @@ impl InConsole for HunkEditor {
                 viewport_width
                 1
             );
-            self.rectmanager.move(_human_row_id, 0, y);
+            self.rectmanager.set_position(_human_row_id, 0, y);
 
-            self.rows_dict.entry(y)
+            self.row_dict.entry(y)
                 .and_modify(|e| *e = (_bits_row_id, _human_row_id))
                 .or_insert((_bits_row_id, _human_row_id));
 
@@ -859,10 +931,10 @@ impl InConsole for HunkEditor {
                 );
                 self.rectmanager.resize(
                     _bits_cell_id,
-                    bits_width,
+                    width_bits,
                     1
                 );
-                self.rectmanager.move(
+                self.rectmanager.set_position(
                     _bits_cell_id,
                     x * display_ratio,
                     0
@@ -872,16 +944,16 @@ impl InConsole for HunkEditor {
                     Some(_human_row_id)
                 );
 
-                self.rectmanager.move(_human_cell_id, x, 0);
+                self.rectmanager.set_position(_human_cell_id, x, 0);
                 self.rectmanager.resize(_human_cell_id, 1, 1);
 
-                _cells_hashmap.entry(x)
+                _cells_hashmap.entry(x as usize)
                     .and_modify(|e| *e = (_bits_cell_id, _human_cell_id))
                     .or_insert((_bits_cell_id, _human_cell_id));
             }
         }
 
-        self.flags_refresh_meta = true;
+        self.flag_refresh_meta = true;
     }
 
     fn check_resize(&mut self) {
@@ -901,7 +973,7 @@ impl InConsole for HunkEditor {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
         let mut meta_height = 0;
-        match self.rectmanager.get_mut(self.rect_meta) {
+        match self.rectmanager.get_rect_mut(self.rect_meta) {
             Some(rect_meta) => {
                 meta_height = rect_meta.get_height()
                 self.rect_meta.move(0, full_height - meta_height)
@@ -910,7 +982,7 @@ impl InConsole for HunkEditor {
         }
 
         let mut display_height = full_height - meta_height;
-        self.rectmanager.get_mut(self.rect_display_wrapper) {
+        self.rectmanager.get_rect_mut(self.rect_display_wrapper) {
             Some(display_wrapper) => {
                 display_wrapper.clear();
                 display_wrapper.resize(
@@ -924,7 +996,7 @@ impl InConsole for HunkEditor {
         }
 
         let display_ratio = self.get_display_ratio();
-        (let human_id, let bits_id) = self.rects_display;
+        let (human_id, bits_id) = self.rects_display;
         let bits_display_width = viewport.get_width() * display_ratio;
         match self.rectmanager.get_mut(bits_id) {
             Some(rect_bits) => {
@@ -960,7 +1032,7 @@ impl InConsole for HunkEditor {
         let height = viewport.get_height();
         let initial_y = viewport.get_offset() / width;
 
-        self.adjust_display_offset();
+        self.adjust_viewport_offset();
 
         let new_y = viewport.get_offset() / width;
 
@@ -975,7 +1047,7 @@ impl InConsole for HunkEditor {
             if diff < height && ! self.flag_force_rerow {
                 // Don't rerender rendered rows. just shuffle them around
                 {
-                    (let bits, let human) = self.rects_display;
+                    let (bits, human) = self.rects_display;
                     self.rectmanager.shift_contents(
                         human,
                         initial_y - new_y
@@ -994,7 +1066,7 @@ impl InConsole for HunkEditor {
                     let mut from_y;
                     for y in 0 .. height {
                         from_y = (y - diff) % height;
-                        match self.rows_dict.get(from_y) {
+                        match self.row_dict.get(&from_y) {
                             Some((bits, human)) => {
                                 new_rows_map.entry(from_y)
                                     .and_modify(|e| { *e = (*bits, *human)})
@@ -1003,26 +1075,26 @@ impl InConsole for HunkEditor {
                             None => ()
                         }
 
-                        match self.cell_dict.get(from_y) {
-                            Some((bits, human)) => {
+                        match self.cell_dict.get(&from_y) {
+                            Some(cellhash) => {
                                 new_cells_map.entry(from_y)
-                                    .and_modify(|e| { *e = (*bits, *human)})
-                                    .or_insert((*bits, *human));
+                                    .and_modify(|e| { *e = *cellhash})
+                                    .or_insert(*cellhash);
                             }
                             None => ()
                         }
                         if y >= height - diff {
-                            match new_rows_map.get(y) {
+                            match new_rows_map.get(&y) {
                                 Some((bits, human)) => {
-                                    self.rectmanager.move(human, 0, y);
-                                    self.rectmanager.move(bits, 0, y);
+                                    self.rectmanager.set_position(human, 0, y);
+                                    self.rectmanager.set_position(bits, 0, y);
                                 }
                             }
-                            new_active_map.insert(y, false)
+                            new_active_map.insert(y, false);
                         } else {
-                            match self.active_row_map.get(from_y) {
+                            match self.active_row_map.get(&from_y) {
                                 Some(needs_refresh) => {
-                                    new_active_map.insert(y, needs_refresh);
+                                    new_active_map.insert(y, *needs_refresh);
                                 }
                                 None => ()
                             }
@@ -1031,12 +1103,12 @@ impl InConsole for HunkEditor {
                 }
                 self.active_row_map = new_active_map;
                 for (y, (bits, human)) in new_rows_map.iter() {
-                    self.row_dict.entry(y)
+                    self.row_dict.entry(*y)
                         .and_modify(|e| {*e = (*bits, *human)})
                         .or_insert((*bits, *human));
                 }
                 for (y, cells) in new_cells_map.iter() {
-                    self.cell_dict.entry(y)
+                    self.cell_dict.entry(*y)
                         .and_modify(|e| {*e = *cells})
                         .or_insert(*cells);
                 }
@@ -1051,7 +1123,7 @@ impl InConsole for HunkEditor {
         let iterator = self.active_row_map.iter();
         for (y, is_rendered) in iterator {
             if ! is_rendered {
-                self.set_row_characters(y + new_offset);
+                self.set_row_characters(*y + new_y);
             }
         }
 
@@ -1066,9 +1138,9 @@ impl InConsole for HunkEditor {
         let width = viewport.get_width();
         let offset = width * absolute_y;
 
-        let chunk = self.active_content.get_chunk(offset, width);
+        let chunk = self.get_chunk(offset, width);
         let relative_y = absolute_y - (viewport.get_offset() / width);
-        match self.cell_dict.get_mut(relative_y) {
+        match self.cell_dict.get_mut(&relative_y) {
             Some(mut cellhash) => {
                 for (x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
                     self.rectmanager.clear(rect_id_human);
@@ -1077,10 +1149,10 @@ impl InConsole for HunkEditor {
 
                 let mut tmp_human;
                 let mut tmp_bits;
-                for (x, byte) in chunk.iter() {
+                for (x, byte) in chunk.iter().enumerate() {
                     //TODO: HumanConverter
-                    tmp_bits = self.get_active_converter().encode_integer(byte);
-                    match cellhash.get(x) {
+                    tmp_bits = self.get_active_converter().encode_integer(*byte as usize);
+                    match cellhash.get(&x) {
                         Some((bits, human)) => {
                             self.rectmanager.set_string(human, 0, 0, tmp_human);
                             self.rectmanager.set_string(bits, 0, 0, tmp_bits);
@@ -1091,8 +1163,13 @@ impl InConsole for HunkEditor {
             }
             None => ()
         }
+        match self.row_dict.get(&relative_y) {
+            Some((_bits, _human)) => {
+                self.rows_to_refresh.insert((*_bits, *_human));
+            }
+            None => ()
+        }
 
-        self.rows_to_refresh.insert(relative_y);
         self.active_row_map.entry(relative_y)
             .and_modify(|e| {*e = true})
             .or_insert(true);
@@ -1101,6 +1178,16 @@ impl InConsole for HunkEditor {
     fn _set_offset_display(&mut self) {
 
     }
+
+    fn display_user_message(&mut self) {
+
+    }
+
+    fn apply_cursor(&mut self) {
+    }
+    fn remove_cursor(&mut self) {
+    }
+
 }
 
 
