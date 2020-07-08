@@ -1,4 +1,4 @@
-use asciibox::{RectManager, Rect};
+use asciibox::{RectManager, Rect, logg};
 use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use std::fs::File;
@@ -711,13 +711,14 @@ impl Editor for HunkEditor {
     }
 
     fn get_display_ratio(&mut self) -> u8 {
-        let human_converter = HumanConverter {};
-        let human_string_length = human_converter.encode(vec![65]).len();
+        3
+        //let human_converter = HumanConverter {};
+        //let human_string_length = human_converter.encode(vec![65]).len();
 
-        let active_converter = self.get_active_converter();
-        let active_string_length = active_converter.encode(vec![65]).len();
+        //let active_converter = self.get_active_converter();
+        //let active_string_length = active_converter.encode(vec![65]).len();
 
-        (active_string_length / human_string_length) as u8
+        //(active_string_length / human_string_length) as u8
     }
 }
 
@@ -827,7 +828,7 @@ impl InConsole for HunkEditor {
     fn run_display(&mut self, fps: f64) {
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
-        //self.setup_displays();
+        self.setup_displays();
         while ! self.flag_kill {
             self.tick();
             thread::sleep(delay);
@@ -890,12 +891,13 @@ impl InConsole for HunkEditor {
         let full_width = self.rectmanager.get_width();
         let meta_height = self.rectmanager.get_rect_size(self.rect_meta).ok().unwrap().1;
 
-        let display_ratio = self.get_display_ratio() as usize;
-        let r = (1 / display_ratio);
-        let a = (1 - ( 1 / r + 1));
-        let base_width = full_width * a;
+        let display_ratio = self.get_display_ratio() as f64;
+        let r: f64 = (1f64 / display_ratio);
+        let a: f64 = (1f64 - ( 1f64 / (r + 1f64)));
+        let base_width = (full_width as f64) * a;
+
         self.viewport.set_size(
-            base_width,
+            base_width as usize,
             full_height - 1
         );
 
@@ -984,11 +986,13 @@ impl InConsole for HunkEditor {
                 _bits_cell_id = self.rectmanager.new_rect(
                     Some(_bits_row_id)
                 );
+                self.rectmanager.set_bg_color(_bits_cell_id, 7);
                 self.rectmanager.resize(
                     _bits_cell_id,
                     width_bits,
                     1
                 );
+
                 self.rectmanager.set_position(
                     _bits_cell_id,
                     (x * display_ratio) as isize,
@@ -998,6 +1002,8 @@ impl InConsole for HunkEditor {
                 _human_cell_id = self.rectmanager.new_rect(
                     Some(_human_row_id)
                 );
+                self.rectmanager.set_bg_color(_human_cell_id, 2);
+
 
                 self.rectmanager.set_position(
                     _human_cell_id,
@@ -1023,14 +1029,16 @@ impl InConsole for HunkEditor {
             self.setup_displays();
             self.flag_force_rerow = true;
             self.remap_active_rows();
+            self.is_resizing = false;
         }
     }
 
     fn arrange_displays(&mut self) {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
-        let mut meta_height = self.rectmanager.get_rect_size(self.rect_meta).ok().unwrap().1;
+        let mut meta_height = 1;
 
+        self.rectmanager.set_bg_color(self.rect_meta, 1);
         self.rectmanager.set_position(
             self.rect_meta,
             0,
@@ -1053,7 +1061,8 @@ impl InConsole for HunkEditor {
 
 
         let display_ratio = self.get_display_ratio();
-        let (human_id, bits_id) = self.rects_display;
+        let (bits_id, human_id) = self.rects_display;
+
         let bits_display_width = self.viewport.get_width() * display_ratio as usize;
 
         self.rectmanager.resize(bits_id, bits_display_width, display_height);
@@ -1076,7 +1085,7 @@ impl InConsole for HunkEditor {
         let initial_y = (self.viewport.get_offset() / width) as isize;
 
         self.adjust_viewport_offset();
-
+        logg("B1".to_string());
         let new_y = (self.viewport.get_offset() / width) as isize;
 
         let diff: usize;
@@ -1200,7 +1209,7 @@ impl InConsole for HunkEditor {
                 //let mut tmp_human_str;
                 for (x, byte) in chunk.iter().enumerate() {
                     //TODO: HumanConverter
-                    tmp_bits = active_converter.encode_integer(*byte as usize);
+                    //tmp_bits = active_converter.encode_integer(*byte as usize);
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
                             tmp_bits_str = std::str::from_utf8(tmp_bits.as_slice()).unwrap();
@@ -1219,6 +1228,7 @@ impl InConsole for HunkEditor {
             }
             None => ()
         }
+
 
         self.active_row_map.entry(relative_y)
             .and_modify(|e| {*e = true})
