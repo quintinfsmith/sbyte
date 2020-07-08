@@ -4,6 +4,7 @@ use std::cmp::{min, max};
 use std::fs::File;
 use std::io::{Write, Read};
 use std::{time, thread};
+use std::env;
 
 enum FunctionRef { }
 
@@ -22,10 +23,10 @@ enum ConverterRef {
 }
 
 trait Converter {
-    fn encode(&self, human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
+    fn encode(&self, human_readable: Vec<u8>) -> Vec<u8>;
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
-    fn encode_integer(&self, integer: usize) -> Result<Vec<u8>, ConverterError>;
+    fn encode_integer(&self, integer: usize) -> Vec<u8>;
 }
 
 struct HexConverter { }
@@ -49,43 +50,31 @@ impl HexConverter {
 }
 
 impl Converter for HexConverter {
-    fn encode(&self, human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+    fn encode(&self, human_readable: Vec<u8>) -> Vec<u8> {
         let mut output_bytes: Vec<u8> = Vec::new();
-        let mut output = Ok(Vec::new());
 
         for byte in human_readable.iter() {
-            match self.encode_integer(*byte as usize) {
-                Ok(subbytes) => {
-                    for subbyte in subbytes.iter() {
-                        output_bytes.push(*subbyte);
-                    }
-                }
-                Err(e) => {
-                    output = Err(e);
-                    break;
-                }
+            for subbyte in self.encode_integer(*byte as usize).iter() {
+                output_bytes.push(*subbyte);
             }
         }
 
-        if output.is_ok() {
-            output = Ok(output_bytes);
+
+        output_bytes
+    }
+
+    fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
+        let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
+        let mut output = Vec::new();
+        let mut did_first_pass = false;
+        let mut tmp_hex_digit;
+        while integer > 0 || ! did_first_pass {
+            tmp_hex_digit = integer % 16;
+            output.push(hex_digits[tmp_hex_digit]);
+            integer /= 16;
         }
 
         output
-    }
-
-    fn encode_integer(&self, integer: usize) -> Result<Vec<u8>, ConverterError> {
-        let first = integer / 16;
-        let second = integer % 16;
-        let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
-
-
-        if (first > hex_digits.len() || second > hex_digits.len()) {
-            Err(ConverterError::InvalidDigit)
-        } else {
-
-            Ok(vec![hex_digits[first], hex_digits[second]])
-        }
     }
 
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
@@ -162,12 +151,12 @@ impl HumanConverter {
 }
 
 impl Converter for HumanConverter {
-    fn encode(&self, human_readable: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+    fn encode(&self, human_readable: Vec<u8>) -> Vec<u8> {
         human_readable
     }
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
 
-        bytes_readable
+        Ok(bytes)
     }
 
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
@@ -187,10 +176,26 @@ impl Converter for HumanConverter {
             }
         }
 
+        if output.is_ok() {
+            output = Ok(output_number);
+        }
+
         output
     }
-    fn encode_integer(&self, integer: usize) -> Result<Vec<u8>, ConverterError> {
 
+    fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
+        let digits = vec![48,49,50,51,52,53,54,55,56,57];
+        let mut did_first_pass = false;
+        let mut output = Vec::new();
+        let mut test_byte;
+        while integer > 0 || ! did_first_pass {
+            test_byte = integer % 10;
+            output.push(digits[test_byte]);
+            integer /= 10;
+            did_first_pass = true;
+        }
+
+        output
     }
 }
 
@@ -361,16 +366,13 @@ impl ViewPort {
 }
 
 enum UserMode {
-    MOVE,
-    VISUAL,
-    COMMAND,
-    SEARCH,
-    INSERT,
-    OVERWRITE
+    MOVE = 0,
+    VISUAL = 1,
+    COMMAND = 2,
+    SEARCH = 3,
+    INSERT = 4,
+    OVERWRITE = 5
 }
-impl std::cmp::PartialEq for UserMode {}
-impl std::cmp::Eq for UserMode { }
-impl std::hash::Hash for UserMode { }
 
 enum Undoable { }
 
@@ -385,8 +387,8 @@ struct HunkEditor {
     undo_stack: Vec<(Undoable, usize)>,
 
     // UI
-    mode_user: UserMode,
-    input_managers: HashMap<UserMode, InputNode>,
+    mode_user: u8,
+    input_managers: HashMap<u8, InputNode>,
 
     // VisualEditor
     viewport: ViewPort,
@@ -416,7 +418,7 @@ struct HunkEditor {
 
 impl HunkEditor {
     pub fn new() -> HunkEditor {
-        let mut rectmanager = RectManager::new(0, 0);
+        let mut rectmanager = RectManager::new();
         let (width, height) = rectmanager.get_rect_size(0).ok().unwrap();
         let mut id_display_wrapper = rectmanager.new_rect(Some(0));
         let mut id_display_bits = rectmanager.new_rect(
@@ -435,7 +437,7 @@ impl HunkEditor {
             cursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
-            mode_user: UserMode::MOVE,
+            mode_user: UserMode::MOVE as u8,
             input_managers: HashMap::new(),
             viewport: ViewPort::new(width, height),
 
@@ -524,9 +526,13 @@ impl Editor for HunkEditor {
                 for (i, byte) in contents.as_bytes().iter().enumerate() {
                     self.active_content.push(*byte);
                 }
+
+                self.file_loaded = true;
             }
             Err(e) => {}
         }
+
+        self.flag_refresh_full = true;
     }
 
     fn save_file(&mut self) {
@@ -705,30 +711,12 @@ impl Editor for HunkEditor {
     }
 
     fn get_display_ratio(&mut self) -> u8 {
-        let human_string_length;
         let human_converter = HumanConverter {};
-
-        match human_converter.encode(vec![65]) {
-            Ok(_bytes) => {
-                human_string_length = _bytes.len();
-            }
-            Err(e) => {
-                // TODO
-                human_string_length = 1;
-            }
-        }
+        let human_string_length = human_converter.encode(vec![65]).len();
 
         let active_converter = self.get_active_converter();
-        let active_string_length;
-        match active_converter.encode(vec![65]) {
-            Ok(_bytes) => {
-                active_string_length =  _bytes.len();
-            }
-            Err(e) => {
-                // TODO
-                active_string_length = 1;
-            }
-        }
+        let active_string_length = active_converter.encode(vec![65]).len();
+
         (active_string_length / human_string_length) as u8
     }
 }
@@ -791,22 +779,22 @@ impl VisualEditor for HunkEditor {
 }
 
 trait UI {
-    fn set_user_mode(&mut self, mode: UserMode);
-    fn get_user_mode(&mut self) -> UserMode;
+    fn set_user_mode(&mut self, mode: u8);
+    fn get_user_mode(&mut self) -> u8;
 
-    fn assign_mode_command(&mut self, mode: UserMode, command_string: Vec<u8>, hook: FunctionRef);
+    fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef);
     fn read_input(&mut self, next_byte: u8);
 }
 impl UI for HunkEditor {
-    fn set_user_mode(&mut self, mode: UserMode) {
+    fn set_user_mode(&mut self, mode: u8) {
         self.mode_user = mode;
     }
 
-    fn get_user_mode(&mut self) -> UserMode {
+    fn get_user_mode(&mut self) -> u8 {
         self.mode_user
     }
 
-    fn assign_mode_command(&mut self, mode: UserMode, command_string: Vec<u8>, hook: FunctionRef) {
+    fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef) {
        let mut mode_node = self.input_managers.entry(mode).or_insert(InputNode::new());
         mode_node.assign_command(command_string, hook);
     }
@@ -839,6 +827,7 @@ impl InConsole for HunkEditor {
     fn run_display(&mut self, fps: f64) {
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
+        //self.setup_displays();
         while ! self.flag_kill {
             self.tick();
             thread::sleep(delay);
@@ -862,14 +851,15 @@ impl InConsole for HunkEditor {
                 self.flag_refresh_meta = false;
                 self.cells_to_refresh.drain();
                 self.rows_to_refresh.drain();
+                self.rectmanager.set_bg_color(0, 3);
             }
+
             if self.flag_refresh_display {
                 self.rectmanager.queue_draw(self.rect_display_wrapper);
                 self.flag_refresh_display = false;
                 self.cells_to_refresh.drain();
                 self.rows_to_refresh.drain();
             }
-
 
             for (_bits_id, _human_id) in self.cells_to_refresh.iter() {
                 self.rectmanager.queue_draw(*_bits_id);
@@ -890,7 +880,7 @@ impl InConsole for HunkEditor {
             }
 
             if do_draw {
-                self.rectmanager.draw_queued();
+                self.rectmanager.draw(0);
             }
         }
     }
@@ -918,10 +908,10 @@ impl InConsole for HunkEditor {
     fn setup_displays(&mut self) {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
+
         self.autoset_viewport_size();
-        let viewport = self.viewport;
-        let viewport_width = viewport.get_width();
-        let viewport_height = viewport.get_height();
+        let viewport_width = self.viewport.get_width();
+        let viewport_height = self.viewport.get_height();
 
         self.rectmanager.resize(self.rect_meta, full_width, 1);
         self.rectmanager.resize(
@@ -934,6 +924,8 @@ impl InConsole for HunkEditor {
         self.rectmanager.empty(bits_display);
         self.rectmanager.empty(human_display);
 
+        self.arrange_displays();
+
         self.cell_dict.drain();
         self.row_dict.drain();
 
@@ -945,7 +937,7 @@ impl InConsole for HunkEditor {
             width_bits = display_ratio;
         }
 
-        let viewport_height = viewport.get_height();
+        let viewport_height = self.viewport.get_height();
         let mut _bits_row_id;
         let mut _bits_cell_id;
         let mut _human_row_id;
@@ -959,6 +951,7 @@ impl InConsole for HunkEditor {
             _bits_row_id = self.rectmanager.new_rect(
                 Some(bits_display)
             );
+
             self.rectmanager.resize(
                 _bits_row_id,
                 (viewport_width * display_ratio) - 1,
@@ -1019,12 +1012,11 @@ impl InConsole for HunkEditor {
             }
         }
 
-        self.flag_refresh_meta = true;
+        self.flag_refresh_full = true;
     }
 
     fn check_resize(&mut self) {
-        let mut rectmanager = self.rectmanager;
-        if rectmanager.auto_resize() {
+        if self.rectmanager.auto_resize() {
             self.is_resizing = true;
             // Viewport offset needs to be set to zero to ensure each line has the correct width
             self.viewport.set_offset(0);
@@ -1035,10 +1027,10 @@ impl InConsole for HunkEditor {
     }
 
     fn arrange_displays(&mut self) {
-        let viewport = self.viewport;
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
         let mut meta_height = self.rectmanager.get_rect_size(self.rect_meta).ok().unwrap().1;
+
         self.rectmanager.set_position(
             self.rect_meta,
             0,
@@ -1062,14 +1054,14 @@ impl InConsole for HunkEditor {
 
         let display_ratio = self.get_display_ratio();
         let (human_id, bits_id) = self.rects_display;
-        let bits_display_width = viewport.get_width() * display_ratio as usize;
+        let bits_display_width = self.viewport.get_width() * display_ratio as usize;
 
         self.rectmanager.resize(bits_id, bits_display_width, display_height);
         self.rectmanager.set_position(bits_id, 0, 0);
 
         // TODO: Fill in a separator
 
-        let human_display_width = viewport.get_width();
+        let human_display_width = self.viewport.get_width();
         let human_display_x = (full_width - human_display_width) as isize;
 
         self.rectmanager.resize(human_id, human_display_width, display_height);
@@ -1079,14 +1071,13 @@ impl InConsole for HunkEditor {
     }
 
     fn remap_active_rows(&mut self) {
-        let viewport = self.viewport;
-        let width = viewport.get_width();
-        let height = viewport.get_height();
-        let initial_y = (viewport.get_offset() / width) as isize;
+        let width = self.viewport.get_width();
+        let height = self.viewport.get_height();
+        let initial_y = (self.viewport.get_offset() / width) as isize;
 
         self.adjust_viewport_offset();
 
-        let new_y = (viewport.get_offset() / width) as isize;
+        let new_y = (self.viewport.get_offset() / width) as isize;
 
         let diff: usize;
         if (new_y > initial_y) {
@@ -1132,8 +1123,8 @@ impl InConsole for HunkEditor {
                         match self.cell_dict.get(&from_y) {
                             Some(cellhash) => {
                                 new_cells_map.entry(from_y)
-                                    .and_modify(|e| { *e = *cellhash})
-                                    .or_insert(*cellhash);
+                                    .and_modify(|e| { *e = cellhash.clone()})
+                                    .or_insert(cellhash.clone());
                             }
                             None => ()
                         }
@@ -1143,6 +1134,7 @@ impl InConsole for HunkEditor {
                                     self.rectmanager.set_position(*human, 0, y as isize);
                                     self.rectmanager.set_position(*bits, 0, y as isize);
                                 }
+                                None => ()
                             }
                             new_active_map.insert(y, false);
                         } else {
@@ -1163,8 +1155,8 @@ impl InConsole for HunkEditor {
                 }
                 for (y, cells) in new_cells_map.iter() {
                     self.cell_dict.entry(*y)
-                        .and_modify(|e| {*e = *cells})
-                        .or_insert(*cells);
+                        .and_modify(|e| {*e = cells.clone()})
+                        .or_insert(cells.clone());
                 }
             } else {
                 for y in 0 .. height {
@@ -1174,8 +1166,8 @@ impl InConsole for HunkEditor {
                 }
             }
         }
-        let iterator = self.active_row_map.iter();
-        for (y, is_rendered) in iterator {
+        let active_rows = self.active_row_map.clone();
+        for (y, is_rendered) in active_rows.iter() {
             if ! is_rendered {
                 self.set_row_characters(*y + (new_y as usize));
             }
@@ -1188,12 +1180,13 @@ impl InConsole for HunkEditor {
     }
 
     fn set_row_characters(&mut self, absolute_y: usize) {
-        let viewport = self.viewport;
+        let viewport = &self.viewport;
+        let active_converter = self.get_active_converter();
         let width = viewport.get_width();
         let offset = width * absolute_y;
 
         let chunk = self.get_chunk(offset, width);
-        let relative_y = absolute_y - (viewport.get_offset() / width);
+        let relative_y = absolute_y - (self.viewport.get_offset() / width);
         match self.cell_dict.get_mut(&relative_y) {
             Some(mut cellhash) => {
                 for (x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
@@ -1202,15 +1195,15 @@ impl InConsole for HunkEditor {
                 }
 
                 //let mut tmp_human;
-                let mut tmp_bits;
+                let mut tmp_bits = vec![65, 65];
                 let mut tmp_bits_str;
                 //let mut tmp_human_str;
                 for (x, byte) in chunk.iter().enumerate() {
                     //TODO: HumanConverter
-                    tmp_bits = self.get_active_converter().encode_integer(*byte as usize);
+                    tmp_bits = active_converter.encode_integer(*byte as usize);
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
-                            tmp_bits_str = std::str::from_utf8(tmp_bits.ok().unwrap().as_slice()).unwrap();
+                            tmp_bits_str = std::str::from_utf8(tmp_bits.as_slice()).unwrap();
                             //self.rectmanager.set_string(human, 0, 0, tmp_human);
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
                         }
@@ -1233,7 +1226,17 @@ impl InConsole for HunkEditor {
     }
 
     fn _set_offset_display(&mut self) {
+        let mut digit_count = 0;
+        if self.active_content.len() > 0 {
+            digit_count = (self.active_content.len() as f64).log10().ceil() as usize;
+        }
+        let offset_display = format!("Offset: {} / {}", self.cursor.get_offset(), self.active_content.len());
 
+        self.rectmanager.clear(self.rect_meta);
+        // TODO: Right-align
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &offset_display);
+
+        self.flag_refresh_meta = true;
     }
 
     fn display_user_message(&mut self) {
@@ -1241,8 +1244,61 @@ impl InConsole for HunkEditor {
     }
 
     fn apply_cursor(&mut self) {
+        let viewport_width = self.viewport.get_width();
+        let viewport_height = self.viewport.get_height();
+        let cursor_offset = self.cursor.get_offset() - self.viewport.get_offset();
+        let cursor_length = self.cursor.get_length();
+
+        let mut y;
+        let mut x;
+        for i in cursor_offset .. cursor_offset + cursor_length {
+            y = i / viewport_width;
+            if y < viewport_height {
+                match self.cell_dict.get(&y) {
+                    Some(cellhash) => {
+                        x = i % viewport_width;
+                        match cellhash.get(&x) {
+                            Some((bits, human)) => {
+                                self.rectmanager.set_invert_flag(*bits);
+                                self.rectmanager.set_invert_flag(*human);
+                                self.cells_to_refresh.insert((*bits, *human));
+                            }
+                            None => ()
+                        }
+                    }
+                    None => ()
+                }
+            }
+        }
     }
+
     fn remove_cursor(&mut self) {
+        let viewport_width = self.viewport.get_width();
+        let viewport_height = self.viewport.get_height();
+        let cursor_offset = self.cursor.get_offset() - self.viewport.get_offset();
+        let cursor_length = self.cursor.get_length();
+
+        let mut y;
+        let mut x;
+        for i in cursor_offset .. cursor_offset + cursor_length {
+            y = i / viewport_width;
+            if y < viewport_height {
+                match self.cell_dict.get(&y) {
+                    Some(cellhash) => {
+                        x = i % viewport_width;
+                        match cellhash.get(&x) {
+                            Some((bits, human)) => {
+                                self.rectmanager.unset_invert_flag(*bits);
+                                self.rectmanager.unset_invert_flag(*human);
+                                self.cells_to_refresh.insert((*bits, *human));
+                            }
+                            None => ()
+                        }
+                    }
+                    None => ()
+                }
+            }
+        }
     }
 }
 
@@ -1250,5 +1306,8 @@ impl InConsole for HunkEditor {
 ////////////////////////////////////////////////
 
 fn main() {
-    let editor = HunkEditor::new();
+    let args: Vec<String> = env::args().collect();
+    let mut editor = HunkEditor::new();
+    editor.load_file(args.get(1).unwrap().to_string());
+    editor.run_display(60.0);
 }
