@@ -23,7 +23,9 @@ enum ConverterRef {
 }
 
 trait Converter {
-    fn encode(&self, human_readable: Vec<u8>) -> Vec<u8>;
+    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8>;
+    fn encode_byte(&self, byte: u8) -> Vec<u8>;
+
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
     fn encode_integer(&self, integer: usize) -> Vec<u8>;
@@ -50,27 +52,37 @@ impl HexConverter {
 }
 
 impl Converter for HexConverter {
-    fn encode(&self, human_readable: Vec<u8>) -> Vec<u8> {
+    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
         let mut output_bytes: Vec<u8> = Vec::new();
 
-        for byte in human_readable.iter() {
-            for subbyte in self.encode_integer(*byte as usize).iter() {
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
                 output_bytes.push(*subbyte);
             }
         }
 
-
         output_bytes
+    }
+
+    fn encode_byte(&self, byte: u8) -> Vec<u8> {
+        let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
+
+        let mut output = Vec::new();
+
+        output.push(hex_digits[(byte / 16) as usize]);
+        output.push(hex_digits[(byte % 16) as usize]);
+
+        output
     }
 
     fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
         let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
         let mut output = Vec::new();
-        let mut did_first_pass = false;
         let mut tmp_hex_digit;
-        while integer > 0 || ! did_first_pass {
+        let mut passes = (integer as f64).log(16.0).ceil() as usize;
+        for i in 0 .. passes {
             tmp_hex_digit = integer % 16;
-            output.push(hex_digits[tmp_hex_digit]);
+            output.insert(0, hex_digits[tmp_hex_digit]);
             integer /= 16;
         }
 
@@ -151,9 +163,36 @@ impl HumanConverter {
 }
 
 impl Converter for HumanConverter {
-    fn encode(&self, human_readable: Vec<u8>) -> Vec<u8> {
-        human_readable
+    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
+        let mut output = Vec::new();
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
+                output.push(*subbyte);
+            }
+        }
+
+        output
     }
+
+    fn encode_byte(&self, byte: u8) -> Vec<u8> {
+        let mut output = Vec::new();
+        match byte {
+            10 => {
+                output.push(226);
+                output.push(134);
+                output.push(178);
+            }
+            0..=31 => {
+                output.push(46);
+            }
+            _ => {
+                output.push(byte);
+            }
+        }
+
+        output
+    }
+
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
 
         Ok(bytes)
@@ -531,8 +570,6 @@ impl Editor for HunkEditor {
             }
             Err(e) => {}
         }
-
-        self.flag_refresh_full = true;
     }
 
     fn save_file(&mut self) {
@@ -786,6 +823,7 @@ trait UI {
     fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef);
     fn read_input(&mut self, next_byte: u8);
 }
+
 impl UI for HunkEditor {
     fn set_user_mode(&mut self, mode: u8) {
         self.mode_user = mode;
@@ -829,6 +867,7 @@ impl InConsole for HunkEditor {
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
         self.setup_displays();
+
         while ! self.flag_kill {
             self.tick();
             thread::sleep(delay);
@@ -852,7 +891,6 @@ impl InConsole for HunkEditor {
                 self.flag_refresh_meta = false;
                 self.cells_to_refresh.drain();
                 self.rows_to_refresh.drain();
-                self.rectmanager.set_bg_color(0, 3);
             }
 
             if self.flag_refresh_display {
@@ -986,7 +1024,7 @@ impl InConsole for HunkEditor {
                 _bits_cell_id = self.rectmanager.new_rect(
                     Some(_bits_row_id)
                 );
-                self.rectmanager.set_bg_color(_bits_cell_id, 7);
+                self.rectmanager.set_fg_color(_bits_cell_id, 3);
                 self.rectmanager.resize(
                     _bits_cell_id,
                     width_bits,
@@ -1017,6 +1055,13 @@ impl InConsole for HunkEditor {
                     .or_insert((_bits_cell_id, _human_cell_id));
             }
         }
+
+        if self.file_loaded {
+            self.flag_force_rerow = true;
+            self.remap_active_rows();
+            self.is_resizing = false;
+        }
+        self.apply_cursor();
 
         self.flag_refresh_full = true;
     }
@@ -1085,7 +1130,6 @@ impl InConsole for HunkEditor {
         let initial_y = (self.viewport.get_offset() / width) as isize;
 
         self.adjust_viewport_offset();
-        logg("B1".to_string());
         let new_y = (self.viewport.get_offset() / width) as isize;
 
         let diff: usize;
@@ -1175,6 +1219,7 @@ impl InConsole for HunkEditor {
                 }
             }
         }
+
         let active_rows = self.active_row_map.clone();
         for (y, is_rendered) in active_rows.iter() {
             if ! is_rendered {
@@ -1191,6 +1236,7 @@ impl InConsole for HunkEditor {
     fn set_row_characters(&mut self, absolute_y: usize) {
         let viewport = &self.viewport;
         let active_converter = self.get_active_converter();
+        let human_converter = HumanConverter {};
         let width = viewport.get_width();
         let offset = width * absolute_y;
 
@@ -1203,25 +1249,32 @@ impl InConsole for HunkEditor {
                     self.rectmanager.clear(*rect_id_bits);
                 }
 
-                //let mut tmp_human;
                 let mut tmp_bits = vec![65, 65];
                 let mut tmp_bits_str;
-                //let mut tmp_human_str;
+                let mut tmp_human;
+                let mut tmp_human_str;
                 for (x, byte) in chunk.iter().enumerate() {
-                    //TODO: HumanConverter
-                    //tmp_bits = active_converter.encode_integer(*byte as usize);
+                    tmp_bits = active_converter.encode_byte(*byte);
+                    tmp_human = human_converter.encode_byte(*byte);
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
                             tmp_bits_str = std::str::from_utf8(tmp_bits.as_slice()).unwrap();
-                            //self.rectmanager.set_string(human, 0, 0, tmp_human);
+                            tmp_human_str = std::str::from_utf8(tmp_human.as_slice()).unwrap();
+                            self.rectmanager.set_string(*human, 0, 0, tmp_human_str);
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
+                            logg(format!("Rect Set {}", tmp_bits_str));
                         }
-                        None => ()
+                        None => {
+                            logg(format!("No Rect at {}, {}", x, relative_y));
+                        }
                     }
                 }
             }
-            None => ()
+            None => {
+                logg(format!("No Row {} to set chars", relative_y));
+            }
         }
+
         match self.row_dict.get(&relative_y) {
             Some((_bits, _human)) => {
                 self.rows_to_refresh.insert((*_bits, *_human));
