@@ -945,6 +945,7 @@ trait UI {
 }
 
 impl UI for HunkEditor {
+
     fn set_user_mode(&mut self, mode: u8) {
         self.mode_user = mode;
     }
@@ -952,7 +953,6 @@ impl UI for HunkEditor {
     fn get_user_mode(&mut self) -> u8 {
         self.mode_user
     }
-
 
     fn run_cmd_from_functionref(&mut self, funcref: FunctionRef) {
         match funcref {
@@ -1204,8 +1204,8 @@ impl InConsole for HunkEditor {
                 (viewport_width * display_ratio) - 1,
                 1
             );
-            self.rectmanager.set_position(_bits_row_id, 0, y as isize);
 
+            self.rectmanager.set_position(_bits_row_id, 0, y as isize);
 
             _human_row_id = self.rectmanager.new_rect(
                 Some(human_display)
@@ -1288,7 +1288,6 @@ impl InConsole for HunkEditor {
         let full_height = self.rectmanager.get_height();
         let mut meta_height = 1;
 
-        self.rectmanager.set_bg_color(self.rect_meta, 1);
         self.rectmanager.set_position(
             self.rect_meta,
             0,
@@ -1369,10 +1368,16 @@ impl InConsole for HunkEditor {
                 if new_y < initial_y {
                     // Reassign the display_dicts to correspond to correct rows
                     for y in 0 .. height {
-                        from_y = (y - diff) % height;
+
+                        if (diff > y) {
+                            from_y = height - ((diff - y) % height);
+                        } else {
+                            from_y = (y - diff) % height;
+                        }
+
                         match self.row_dict.get(&from_y) {
                             Some((bits, human)) => {
-                                new_rows_map.entry(from_y)
+                                new_rows_map.entry(y)
                                     .and_modify(|e| { *e = (*bits, *human)})
                                     .or_insert((*bits, *human));
                             }
@@ -1381,14 +1386,15 @@ impl InConsole for HunkEditor {
 
                         match self.cell_dict.get(&from_y) {
                             Some(cellhash) => {
-                                new_cells_map.entry(from_y)
+                                new_cells_map.entry(y)
                                     .and_modify(|e| { *e = cellhash.clone()})
                                     .or_insert(cellhash.clone());
                             }
                             None => ()
                         }
 
-                        if y < diff {
+                        if y < from_y {
+                            // Moving row at bottom to top
                             match new_rows_map.get(&y) {
                                 Some((bits, human)) => {
                                     self.rectmanager.set_position(*bits, 0, y as isize);
@@ -1406,29 +1412,31 @@ impl InConsole for HunkEditor {
                             }
                         }
                     }
+
                 } else {
                     for y in 0 .. height {
                         from_y = (y + diff) % height;
-
                         match self.row_dict.get(&from_y) {
                             Some((bits, human)) => {
-                                new_rows_map.entry(from_y)
+                                new_rows_map.entry(y)
                                     .and_modify(|e| { *e = (*bits, *human)})
                                     .or_insert((*bits, *human));
+
                             }
                             None => ()
                         }
 
                         match self.cell_dict.get(&from_y) {
                             Some(cellhash) => {
-                                new_cells_map.entry(from_y)
+                                new_cells_map.entry(y)
                                     .and_modify(|e| { *e = cellhash.clone()})
                                     .or_insert(cellhash.clone());
                             }
                             None => ()
                         }
 
-                        if y >= height - diff {
+                        if from_y < y {
+                            //Moving row at top to the bottom
                             match new_rows_map.get(&y) {
                                 Some((bits, human)) => {
                                     self.rectmanager.set_position(*human, 0, y as isize);
@@ -1442,7 +1450,10 @@ impl InConsole for HunkEditor {
                                 Some(needs_refresh) => {
                                     new_active_map.insert(y, *needs_refresh);
                                 }
-                                None => ()
+                                // *Shouldn't* happen
+                                None => {
+                                    new_active_map.insert(y, false);
+                                }
                             }
                         }
                     }
@@ -1491,6 +1502,7 @@ impl InConsole for HunkEditor {
         let relative_y = absolute_y - (self.viewport.get_offset() / width);
         match self.cell_dict.get_mut(&relative_y) {
             Some(mut cellhash) => {
+
                 for (x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
                     self.rectmanager.clear(*rect_id_human);
                     self.rectmanager.clear(*rect_id_bits);
