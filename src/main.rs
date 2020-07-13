@@ -552,8 +552,10 @@ impl HunkEditor {
         let mut tmp_char: &[u8];
         input_daemon = thread::spawn(move || {
             let mut inputter = Inputter::new();
-            inputter.assign_mode_command(0, vec![106], FunctionRef::CURSOR_DOWN);
-            inputter.assign_mode_command(0, vec![107], FunctionRef::CURSOR_UP);
+            inputter.assign_mode_command(0, "j".to_string(), FunctionRef::CURSOR_DOWN);
+            inputter.assign_mode_command(0, "k".to_string(), FunctionRef::CURSOR_UP);
+            inputter.assign_mode_command(0, "h".to_string(), FunctionRef::CURSOR_LEFT);
+            inputter.assign_mode_command(0, "l".to_string(), FunctionRef::CURSOR_RIGHT);
 
 
 
@@ -884,7 +886,8 @@ impl VisualEditor for HunkEditor {
     }
 
     fn cursor_prev_line(&mut self) {
-        let mut new_offset = self.cursor.offset - self.viewport.get_width();
+        let viewport_width = self.viewport.get_width();
+        let mut new_offset = self.cursor.offset - min(self.cursor.offset, viewport_width);
         self.cursor_set_offset(new_offset);
     }
 
@@ -915,15 +918,15 @@ impl VisualEditor for HunkEditor {
 
         if (self.cursor.length >= 0) {
             let cursor_length = self.cursor.length as usize;
-            while self.cursor.offset + cursor_length - adj_viewport_offset > screen_buffer_length {
+            while self.cursor.offset + cursor_length > screen_buffer_length + adj_viewport_offset {
                 adj_viewport_offset += width;
             }
         } else {
             let cursor_length = (0 - self.cursor.length) as usize;
-            while self.cursor.offset - cursor_length - adj_viewport_offset > screen_buffer_length {
+            let adj_cursor_offset = self.cursor.offset - min(cursor_length, self.cursor.offset);
+            while adj_cursor_offset > screen_buffer_length + adj_viewport_offset {
                 adj_viewport_offset += width;
             }
-
         }
 
         while adj_viewport_offset > self.cursor.offset {
@@ -954,22 +957,44 @@ impl UI for HunkEditor {
     fn run_cmd_from_functionref(&mut self, funcref: FunctionRef) {
         match funcref {
             FunctionRef::CURSOR_UP => {
+                let current_offset = self.viewport.offset;
                 self.remove_cursor();
                 self.cursor_prev_line();
-                self.adjust_viewport_offset();
+                self.remap_active_rows();
                 self.apply_cursor();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
             }
             FunctionRef::CURSOR_DOWN => {
+                let current_offset = self.viewport.offset;
                 self.remove_cursor();
                 self.cursor_next_line();
-                self.adjust_viewport_offset();
+                self.remap_active_rows();
                 self.apply_cursor();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
             }
             FunctionRef::CURSOR_LEFT => {
+                let current_offset = self.viewport.offset;
+                self.remove_cursor();
                 self.cursor_prev_byte();
+                self.remap_active_rows();
+                self.apply_cursor();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
             }
             FunctionRef::CURSOR_RIGHT => {
+                let current_offset = self.viewport.offset;
+                self.remove_cursor();
                 self.cursor_next_byte();
+                self.remap_active_rows();
+                self.apply_cursor();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
             }
             _ => {
                 // Unknown
@@ -1028,9 +1053,10 @@ impl Inputter {
         output
     }
 
-    fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef) {
+    fn assign_mode_command(&mut self, mode: u8, command_string: String, hook: FunctionRef) {
+        let mut command_vec = command_string.as_bytes().to_vec();
         let mut mode_node = self.input_managers.entry(mode).or_insert(InputNode::new());
-        mode_node.assign_command(command_string, hook);
+        mode_node.assign_command(command_vec, hook);
     }
 }
 
@@ -1107,7 +1133,8 @@ impl InConsole for HunkEditor {
     fn autoset_viewport_size(&mut self) {
         let full_height = self.rectmanager.get_height();
         let full_width = self.rectmanager.get_width();
-        let meta_height = self.rectmanager.get_rect_size(self.rect_meta).ok().unwrap().1;
+        //let meta_height = self.rectmanager.get_rect_size(self.rect_meta).ok().unwrap().1;
+        let meta_height = 1;
 
         let display_ratio = self.get_display_ratio() as f64;
         let r: f64 = (1f64 / display_ratio);
@@ -1304,6 +1331,7 @@ impl InConsole for HunkEditor {
     }
 
     fn remap_active_rows(&mut self) {
+        //TODO: Desparately needs to be sped up
         let width = self.viewport.get_width();
         let height = self.viewport.get_height();
         let initial_y = (self.viewport.get_offset() / width) as isize;
@@ -1317,7 +1345,6 @@ impl InConsole for HunkEditor {
         } else {
             diff = (initial_y - new_y) as usize;
         }
-
         if diff > 0 || self.flag_force_rerow {
             if diff < height && ! self.flag_force_rerow {
                 // Don't rerender rendered rows. just shuffle them around
@@ -1338,9 +1365,9 @@ impl InConsole for HunkEditor {
                 let mut new_rows_map = HashMap::new();
                 let mut new_cells_map = HashMap::new();
                 let mut new_active_map = HashMap::new();
+                let mut from_y;
                 if new_y < initial_y {
                     // Reassign the display_dicts to correspond to correct rows
-                    let mut from_y;
                     for y in 0 .. height {
                         from_y = (y - diff) % height;
                         match self.row_dict.get(&from_y) {
@@ -1360,6 +1387,47 @@ impl InConsole for HunkEditor {
                             }
                             None => ()
                         }
+
+                        if y < diff {
+                            match new_rows_map.get(&y) {
+                                Some((bits, human)) => {
+                                    self.rectmanager.set_position(*bits, 0, y as isize);
+                                    self.rectmanager.set_position(*human, 0, y as isize);
+                                }
+                                None => ()
+                            }
+                            new_active_map.insert(y, false);
+                        } else {
+                            match self.active_row_map.get(&from_y) {
+                                Some(needs_refresh) => {
+                                    new_active_map.insert(y, *needs_refresh);
+                                }
+                                None => ()
+                            }
+                        }
+                    }
+                } else {
+                    for y in 0 .. height {
+                        from_y = (y + diff) % height;
+
+                        match self.row_dict.get(&from_y) {
+                            Some((bits, human)) => {
+                                new_rows_map.entry(from_y)
+                                    .and_modify(|e| { *e = (*bits, *human)})
+                                    .or_insert((*bits, *human));
+                            }
+                            None => ()
+                        }
+
+                        match self.cell_dict.get(&from_y) {
+                            Some(cellhash) => {
+                                new_cells_map.entry(from_y)
+                                    .and_modify(|e| { *e = cellhash.clone()})
+                                    .or_insert(cellhash.clone());
+                            }
+                            None => ()
+                        }
+
                         if y >= height - diff {
                             match new_rows_map.get(&y) {
                                 Some((bits, human)) => {
@@ -1379,6 +1447,7 @@ impl InConsole for HunkEditor {
                         }
                     }
                 }
+
                 self.active_row_map = new_active_map;
                 for (y, (bits, human)) in new_rows_map.iter() {
                     self.row_dict.entry(*y)
@@ -1391,25 +1460,24 @@ impl InConsole for HunkEditor {
                         .or_insert(cells.clone());
                 }
             } else {
+                self.active_row_map.drain();
                 for y in 0 .. height {
-                    self.active_row_map.entry(y)
-                        .and_modify(|e| {*e = false})
-                        .or_insert(false);
+                    self.active_row_map.insert(y, false);
                 }
             }
-        }
 
-        let active_rows = self.active_row_map.clone();
-        for (y, is_rendered) in active_rows.iter() {
-            if ! is_rendered {
-                self.set_row_characters(*y + (new_y as usize));
+            let active_rows = self.active_row_map.clone();
+            for (y, is_rendered) in active_rows.iter() {
+                if ! is_rendered {
+                    self.set_row_characters(*y + (new_y as usize));
+                }
             }
-        }
 
+            //TODO
+            //self.set_offset_display();
+            self.flag_refresh_display = true;
+        }
         self.flag_force_rerow = false;
-        //TODO
-        //self.set_offset_display();
-        self.flag_refresh_display = true;
     }
 
     fn set_row_characters(&mut self, absolute_y: usize) {
