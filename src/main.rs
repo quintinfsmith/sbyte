@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io;
-use std::io::{Write, Read};
+use std::io::{Write, Read, BufRead, BufReader};
 use std::{time, thread};
 use std::env;
 use std::sync::{Mutex, Arc};
 use termios::{Termios, TCSANOW, ECHO, ICANON, tcsetattr};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum FunctionRef {
     CURSOR_UP,
     CURSOR_DOWN,
@@ -549,7 +549,6 @@ impl HunkEditor {
         let mut input_daemon;
 
         let c = function_refs.clone();
-        let mut tmp_char: &[u8];
         input_daemon = thread::spawn(move || {
             let mut inputter = Inputter::new();
             inputter.assign_mode_command(0, "j".to_string(), FunctionRef::CURSOR_DOWN);
@@ -573,27 +572,31 @@ impl HunkEditor {
 
             stdout.lock().flush().unwrap();
 
+
+            let mut do_push: bool;
             while true {
                 buffer = [0;1];
                 reader.read_exact(&mut buffer).unwrap();
                 for character in buffer.iter() {
                     match inputter.read_input(*character) {
                         Some(funcref) => {
-
-                            // Just wait until the FunctionRef can be added to the queue
-                            while true {
-                                match c.try_lock() {
-                                    Ok(ref mut mutex) => {
-                                        mutex.push(funcref);
-                                        break;
+                            match c.try_lock() {
+                                Ok(ref mut mutex) => {
+                                    do_push = true;
+                                    for current_item in mutex.iter() {
+                                        if *current_item == funcref {
+                                            do_push = false;
+                                            break;
+                                        }
                                     }
-                                    Err(e) => {}
+                                    if do_push {
+                                        mutex.push(funcref);
+                                    }
                                 }
+                                Err(e) => {}
                             }
-
                         }
-                        None => {
-                        }
+                        None => ()
                     }
                 }
             }
@@ -677,12 +680,12 @@ impl Editor for HunkEditor {
     fn load_file(&mut self, file_path: String) {
         match File::open(file_path) {
             Ok(mut file) => {
-                let mut contents = String::new();
-                file.read_to_string(&mut contents);
+                let mut reader = BufReader::new(file);
+                let buffer: &[u8] = reader.fill_buf().unwrap();
 
                 self.active_content = Vec::new();
 
-                for (i, byte) in contents.as_bytes().iter().enumerate() {
+                for (i, byte) in buffer.iter().enumerate() {
                     self.active_content.push(*byte);
                 }
 
@@ -1095,15 +1098,15 @@ impl InConsole for HunkEditor {
                 self.flag_refresh_full = false;
                 self.flag_refresh_display = false;
                 self.flag_refresh_meta = false;
-                self.cells_to_refresh.drain();
-                self.rows_to_refresh.drain();
+                //self.cells_to_refresh.drain();
+                //self.rows_to_refresh.drain();
             }
 
             if self.flag_refresh_display {
                 self.rectmanager.queue_draw(self.rect_display_wrapper);
                 self.flag_refresh_display = false;
-                self.cells_to_refresh.drain();
-                self.rows_to_refresh.drain();
+                //self.cells_to_refresh.drain();
+                //self.rows_to_refresh.drain();
             }
 
             for (_bits_id, _human_id) in self.cells_to_refresh.iter() {
@@ -1502,7 +1505,6 @@ impl InConsole for HunkEditor {
         let relative_y = absolute_y - (self.viewport.get_offset() / width);
         match self.cell_dict.get_mut(&relative_y) {
             Some(mut cellhash) => {
-
                 for (x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
                     self.rectmanager.clear(*rect_id_human);
                     self.rectmanager.clear(*rect_id_bits);
@@ -1517,8 +1519,23 @@ impl InConsole for HunkEditor {
                     tmp_human = human_converter.encode_byte(*byte);
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
-                            tmp_bits_str = std::str::from_utf8(tmp_bits.as_slice()).unwrap();
-                            tmp_human_str = std::str::from_utf8(tmp_human.as_slice()).unwrap();
+                            tmp_bits_str = match std::str::from_utf8(tmp_bits.as_slice()) {
+                                Ok(valid) => {
+                                    valid
+                                }
+                                Err(e) => {
+                                    // Shouldn't Happen
+                                    "."
+                                }
+                            };
+                            tmp_human_str = match std::str::from_utf8(tmp_human.as_slice()) {
+                                Ok(valid) => {
+                                    valid
+                                }
+                                Err(e) => {
+                                    "."
+                                }
+                            };
                             self.rectmanager.set_string(*human, 0, 0, tmp_human_str);
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
                         }
