@@ -2,11 +2,23 @@ use asciibox::{RectManager, Rect, logg};
 use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use std::fs::File;
+use std::io;
 use std::io::{Write, Read};
 use std::{time, thread};
 use std::env;
+use std::sync::{Mutex, Arc};
+use termios::{Termios, TCSANOW, ECHO, ICANON, tcsetattr};
 
-enum FunctionRef { }
+#[derive(Clone, Copy)]
+enum FunctionRef {
+    CURSOR_UP,
+    CURSOR_DOWN,
+    CURSOR_LEFT,
+    CURSOR_RIGHT,
+    INSERT,
+    OVERWRITE,
+    DELETE,
+}
 
 enum EditorError {
     OutOfRange
@@ -238,8 +250,6 @@ impl Converter for HumanConverter {
     }
 }
 
-
-
 struct InputNode {
     next_nodes: HashMap<u8, InputNode>,
     hook: Option<FunctionRef>
@@ -270,6 +280,36 @@ impl InputNode {
         } else {
             self.hook = Some(hook);
         }
+    }
+
+    fn fetch_command(&mut self, input_pattern: Vec<u8>) -> (Option<FunctionRef>, bool) {
+        let mut output = (None, false);
+        match (&self.hook) {
+            Some(hook) => {
+                // Found, Clear buffer
+                output = (Some(*hook), true);
+            }
+            None => {
+                let mut tmp_pattern = input_pattern.clone();
+                if tmp_pattern.len() > 0 {
+                    let next_byte = tmp_pattern.remove(0);
+                    match self.next_nodes.get_mut(&next_byte) {
+                        Some(node) => {
+                            output = node.fetch_command(tmp_pattern);
+                        }
+                        None => {
+                            // Dead End, Clear Buffer
+                            output = (None, true);
+                        }
+                    };
+                } else {
+                    // Nothing Found Yet, keep buffer
+                    output = (None, false);
+                }
+            }
+        };
+
+        output
     }
 
     fn input(&mut self, new_input: u8) -> bool {
@@ -427,7 +467,6 @@ struct HunkEditor {
 
     // UI
     mode_user: u8,
-    input_managers: HashMap<u8, InputNode>,
 
     // VisualEditor
     viewport: ViewPort,
@@ -477,7 +516,6 @@ impl HunkEditor {
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
             mode_user: UserMode::MOVE as u8,
-            input_managers: HashMap::new(),
             viewport: ViewPort::new(width, height),
 
             rectmanager: rectmanager,
@@ -501,6 +539,86 @@ impl HunkEditor {
 
             row_dict: HashMap::new(),
             cell_dict: HashMap::new()
+        }
+    }
+
+    pub fn main(&mut self) {
+        let function_refs: Arc<Mutex<Vec<FunctionRef>>> = Arc::new(Mutex::new(Vec::new()));
+
+
+        let mut input_daemon;
+
+        let c = function_refs.clone();
+        let mut tmp_char: &[u8];
+        input_daemon = thread::spawn(move || {
+            let mut inputter = Inputter::new();
+            inputter.assign_mode_command(0, vec![106], FunctionRef::CURSOR_DOWN);
+            inputter.assign_mode_command(0, vec![107], FunctionRef::CURSOR_UP);
+
+
+
+            // TODO: Clean this shit up. for now, this is how we're reading single character input
+            let stdin = 0; // couldn't get std::os::unix::io::FromRawFd to work 
+                           // on /dev/stdin or /dev/tty
+            let termios = Termios::from_fd(stdin).unwrap();
+            let mut new_termios = termios.clone();  // make a mutable copy of termios 
+                                                    // that we will modify
+            new_termios.c_lflag &= !(ICANON | ECHO); // no echo and canonical mode
+            tcsetattr(stdin, TCSANOW, &mut new_termios).unwrap();
+            let stdout = io::stdout();
+            let mut reader = io::stdin();
+            let mut buffer;
+
+            stdout.lock().flush().unwrap();
+
+            while true {
+                buffer = [0;1];
+                reader.read_exact(&mut buffer).unwrap();
+                for character in buffer.iter() {
+                    match inputter.read_input(*character) {
+                        Some(funcref) => {
+
+                            // Just wait until the FunctionRef can be added to the queue
+                            while true {
+                                match c.try_lock() {
+                                    Ok(ref mut mutex) => {
+                                        mutex.push(funcref);
+                                        break;
+                                    }
+                                    Err(e) => {}
+                                }
+                            }
+
+                        }
+                        None => {
+                        }
+                    }
+                }
+            }
+        });
+
+
+        let fps = 60.0;
+
+        let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
+        let delay = time::Duration::from_nanos(nano_seconds);
+        self.setup_displays();
+
+        let mut _current_func;
+        while ! self.flag_kill {
+            match function_refs.try_lock() {
+                Ok(ref mut mutex) => {
+                    if mutex.len() > 0 {
+                        _current_func = mutex.remove(0);
+                        self.run_cmd_from_functionref(_current_func);
+                    }
+                }
+                Err(e) => {
+                }
+            }
+
+            self.tick();
+            thread::sleep(delay);
         }
     }
 }
@@ -820,8 +938,7 @@ trait UI {
     fn set_user_mode(&mut self, mode: u8);
     fn get_user_mode(&mut self) -> u8;
 
-    fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef);
-    fn read_input(&mut self, next_byte: u8);
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef);
 }
 
 impl UI for HunkEditor {
@@ -833,18 +950,91 @@ impl UI for HunkEditor {
         self.mode_user
     }
 
-    fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef) {
-       let mut mode_node = self.input_managers.entry(mode).or_insert(InputNode::new());
-        mode_node.assign_command(command_string, hook);
+
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef) {
+        match funcref {
+            FunctionRef::CURSOR_UP => {
+                self.remove_cursor();
+                self.cursor_prev_line();
+                self.adjust_viewport_offset();
+                self.apply_cursor();
+            }
+            FunctionRef::CURSOR_DOWN => {
+                self.remove_cursor();
+                self.cursor_next_line();
+                self.adjust_viewport_offset();
+                self.apply_cursor();
+            }
+            FunctionRef::CURSOR_LEFT => {
+                self.cursor_prev_byte();
+            }
+            FunctionRef::CURSOR_RIGHT => {
+                self.cursor_next_byte();
+            }
+            _ => {
+                // Unknown
+            }
+        }
+    }
+}
+
+struct Inputter {
+    input_managers: HashMap<u8, InputNode>,
+    input_buffer: Vec<u8>,
+    context: u8
+}
+
+impl Inputter {
+    fn new() -> Inputter {
+        Inputter {
+            input_managers: HashMap::new(),
+            input_buffer: Vec::new(),
+            context: 0
+        }
     }
 
-    fn read_input(&mut self, next_byte: u8) {
+    fn read_input(&mut self, input_byte: u8) -> Option<FunctionRef> {
+//        let input: Option<u8> = std::io::stdin()
+//            .bytes()
+//            .next()
+//            .and_then(|result| result.ok())
+//            .map(|byte| byte as u8);
+//
+        let mut output = None;
 
+        self.input_buffer.push(input_byte);
+
+        let input_buffer = self.input_buffer.clone();
+        let mut clear_buffer = false;
+
+        match self.input_managers.get_mut(&self.context) {
+            Some(root_node) => {
+                let (cmd, completed_path) = root_node.fetch_command(input_buffer);
+                match cmd {
+                    Some(funcref) => {
+                        output = Some(funcref);
+                    }
+                    None => ()
+                }
+                clear_buffer = completed_path;
+            }
+            None => ()
+        }
+
+        if (clear_buffer) {
+            self.input_buffer.drain(..);
+        }
+
+        output
+    }
+
+    fn assign_mode_command(&mut self, mode: u8, command_string: Vec<u8>, hook: FunctionRef) {
+        let mut mode_node = self.input_managers.entry(mode).or_insert(InputNode::new());
+        mode_node.assign_command(command_string, hook);
     }
 }
 
 trait InConsole {
-    fn run_display(&mut self, fps: f64);
     fn tick(&mut self);
 
     fn check_resize(&mut self);
@@ -863,16 +1053,6 @@ trait InConsole {
 }
 
 impl InConsole for HunkEditor {
-    fn run_display(&mut self, fps: f64) {
-        let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
-        let delay = time::Duration::from_nanos(nano_seconds);
-        self.setup_displays();
-
-        while ! self.flag_kill {
-            self.tick();
-            thread::sleep(delay);
-        }
-    }
 
     fn tick(&mut self) {
         if ! self.file_loaded {
@@ -919,7 +1099,7 @@ impl InConsole for HunkEditor {
             }
 
             if do_draw {
-                self.rectmanager.draw(0);
+                self.rectmanager.draw_queued();
             }
         }
     }
@@ -936,7 +1116,7 @@ impl InConsole for HunkEditor {
 
         self.viewport.set_size(
             base_width as usize,
-            full_height - 1
+            full_height - meta_height
         );
 
         self.active_row_map.drain();
@@ -1024,7 +1204,6 @@ impl InConsole for HunkEditor {
                 _bits_cell_id = self.rectmanager.new_rect(
                     Some(_bits_row_id)
                 );
-                self.rectmanager.set_fg_color(_bits_cell_id, 3);
                 self.rectmanager.resize(
                     _bits_cell_id,
                     width_bits,
@@ -1040,7 +1219,6 @@ impl InConsole for HunkEditor {
                 _human_cell_id = self.rectmanager.new_rect(
                     Some(_human_row_id)
                 );
-                self.rectmanager.set_bg_color(_human_cell_id, 2);
 
 
                 self.rectmanager.set_position(
@@ -1093,17 +1271,18 @@ impl InConsole for HunkEditor {
 
         let mut display_height = full_height - meta_height;
         self.rectmanager.clear(self.rect_display_wrapper);
+
         self.rectmanager.resize(
             self.rect_display_wrapper,
             full_width,
             display_height
         );
+
         self.rectmanager.set_position(
             self.rect_display_wrapper,
             0,
             0
         );
-
 
         let display_ratio = self.get_display_ratio();
         let (bits_id, human_id) = self.rects_display;
@@ -1262,16 +1441,13 @@ impl InConsole for HunkEditor {
                             tmp_human_str = std::str::from_utf8(tmp_human.as_slice()).unwrap();
                             self.rectmanager.set_string(*human, 0, 0, tmp_human_str);
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
-                            logg(format!("Rect Set {}", tmp_bits_str));
                         }
                         None => {
-                            logg(format!("No Rect at {}, {}", x, relative_y));
                         }
                     }
                 }
             }
             None => {
-                logg(format!("No Row {} to set chars", relative_y));
             }
         }
 
@@ -1297,6 +1473,8 @@ impl InConsole for HunkEditor {
 
         self.rectmanager.clear(self.rect_meta);
         // TODO: Right-align
+        let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
+        let x = meta_width - offset_display.len();
         self.rectmanager.set_string(self.rect_meta, 0, 0, &offset_display);
 
         self.flag_refresh_meta = true;
@@ -1372,5 +1550,5 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let mut editor = HunkEditor::new();
     editor.load_file(args.get(1).unwrap().to_string());
-    editor.run_display(60.0);
+    editor.main();
 }

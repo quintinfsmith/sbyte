@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 AsciiBox = { path = "/home/pent/Projects/100" }
-
+termios = "0.3"
