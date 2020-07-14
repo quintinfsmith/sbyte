@@ -22,6 +22,8 @@ enum FunctionRef {
     APPEND_TO_REGISTER,
     JUMP_TO_REGISTER,
     CLEAR_REGISTER,
+    UNDO,
+    REDO,
 
     INSERT_TO_CMDLINE,
 
@@ -384,6 +386,9 @@ impl Cursor {
 
 trait Editor {
     fn undo(&mut self);
+    fn redo(&mut self);
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>)) -> (usize, usize, Option<Vec<u8>>);
+    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>);
     fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>);
     fn cursor_set_offset(&mut self, new_offset: usize);
     fn cursor_set_length(&mut self, new_length: isize);
@@ -395,9 +400,9 @@ trait Editor {
     fn set_file_path(&mut self, new_file_path: String);
     fn find_all(&self, pattern: Vec<u8>) -> Vec<usize>;
     fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option<usize>;
-    fn remove_bytes(&mut self, offset: usize, length: usize);
-    fn remove_bytes_at_cursor(&mut self);
-    fn insert_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) -> Result<(), EditorError>;
+    fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8>;
+    fn remove_bytes_at_cursor(&mut self) -> Vec<u8>;
+    fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError>;
     fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
     fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) -> Result<(), EditorError>;
     fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
@@ -467,7 +472,6 @@ enum UserMode {
     OVERWRITE = 5
 }
 
-enum Undoable { }
 
 struct HunkEditor {
     //Editor
@@ -477,7 +481,8 @@ struct HunkEditor {
     internal_log: Vec<String>,
     cursor: Cursor,
     active_converter: ConverterRef,
-    undo_stack: Vec<(Undoable, usize)>,
+    undo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
+    redo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
 
     // UI
     mode_user: u8,
@@ -534,6 +539,7 @@ impl HunkEditor {
             cursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             mode_user: UserMode::MOVE as u8,
             register: 0,
             register_isset: false,
@@ -586,6 +592,8 @@ impl HunkEditor {
             inputter.assign_mode_command(0, "G".to_string(), FunctionRef::JUMP_TO_REGISTER);
             inputter.assign_mode_command(0, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::CLEAR_REGISTER);
             inputter.assign_mode_command(0, "x".to_string(), FunctionRef::DELETE);
+            inputter.assign_mode_command(0, "u".to_string(), FunctionRef::UNDO);
+            inputter.assign_mode_command(0, std::str::from_utf8(&[18]).unwrap().to_string(), FunctionRef::REDO);
 
             inputter.assign_mode_command(0, "i".to_string(), FunctionRef::MODE_SET_INSERT);
             inputter.assign_mode_command(0, "a".to_string(), FunctionRef::MODE_SET_APPEND);
@@ -682,7 +690,58 @@ impl HunkEditor {
 }
 
 impl Editor for HunkEditor {
-    fn undo(&mut self) { }
+    fn undo(&mut self) {
+        let task = self.undo_stack.pop();
+        match task {
+            Some(_task) => {
+                let redo_task = self.do_undo_or_redo(_task);
+                self.redo_stack.push(redo_task);
+            }
+            None => {
+            }
+        }
+    }
+
+    fn redo(&mut self) {
+        let task = self.redo_stack.pop();
+        match task {
+            Some(_task) => {
+                let undo_task = self.do_undo_or_redo(_task);
+                // NOTE: Not using self.push_to_undo_stack. don't want to clear the redo stack
+                self.undo_stack.push(undo_task);
+            }
+            None => {
+            }
+        }
+    }
+
+
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>)) -> (usize, usize, Option<Vec<u8>>) {
+        let (offset, bytes_to_remove, bytes_to_insert) = task;
+
+        self.cursor_set_offset(offset);
+
+        let mut opposite_bytes_to_insert = None;
+        if (bytes_to_remove > 0) {
+            opposite_bytes_to_insert = Some(self.remove_bytes(offset, bytes_to_remove));
+        }
+
+        let mut opposite_bytes_to_remove = 0;
+        match bytes_to_insert {
+            Some(bytes) => {
+                opposite_bytes_to_remove = bytes.len();
+                self.insert_bytes(offset, bytes);
+            }
+            None => ()
+        }
+
+        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert)
+    }
+
+    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>) {
+        self.redo_stack.drain(..);
+        self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert));
+    }
 
     fn get_active_converter(&self) -> Box<dyn Converter> {
         match self.active_converter {
@@ -731,12 +790,21 @@ impl Editor for HunkEditor {
     }
 
     fn load_file(&mut self, file_path: String) {
+        self.active_content = Vec::new();
+
         match File::open(file_path) {
             Ok(mut file) => {
-                let mut reader = BufReader::new(file);
-                let buffer: &[u8] = reader.fill_buf().unwrap();
+                let file_length = match file.metadata() {
+                    Ok(metadata) => {
+                        metadata.len()
+                    }
+                    Err(e) => {
+                        0
+                    }
+                };
 
-                self.active_content = Vec::new();
+                let mut buffer: Vec<u8> = vec![0; file_length as usize];
+                file.read(&mut buffer);
 
                 for (i, byte) in buffer.iter().enumerate() {
                     self.active_content.push(*byte);
@@ -809,23 +877,26 @@ impl Editor for HunkEditor {
         output
     }
 
-    fn remove_bytes(&mut self, offset: usize, length: usize) {
+    fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
         let adj_length = min(self.active_content.len() - offset, length);
+        let mut removed_bytes = Vec::new();
         for i in 0..adj_length {
-            self.active_content.remove(offset);
+            removed_bytes.push(self.active_content.remove(offset));
         }
+
+        removed_bytes
     }
 
-    fn remove_bytes_at_cursor(&mut self) {
+    fn remove_bytes_at_cursor(&mut self) -> Vec<u8> {
         let offset = self.cursor.get_offset();
         let length = self.cursor.get_length();
-        self.remove_bytes(offset, length);
+        self.remove_bytes(offset, length)
     }
 
-    fn insert_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), EditorError> {
+    fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
         let mut output;
-        if (position < self.active_content.len()) {
-            let mut i: usize = position;
+        if (offset < self.active_content.len()) {
+            let mut i: usize = offset;
             for new_byte in new_bytes.iter() {
                 self.active_content.insert(i, *new_byte);
                 i += 1
@@ -864,7 +935,7 @@ impl Editor for HunkEditor {
 
     fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
         let position = self.cursor.get_offset();
-        self.insert_bytes(new_bytes, position);
+        self.insert_bytes(position, new_bytes);
     }
 
     fn get_selected(&mut self) -> Vec<u8> {
@@ -1088,7 +1159,7 @@ impl UI for HunkEditor {
             FunctionRef::JUMP_TO_REGISTER => {
                 let current_offset = self.viewport.offset;
                 self.remove_cursor();
-                let new_offset = max(0, self.grab_register(isize::MAX)) as usize;
+                let new_offset = max(0, self.grab_register(std::isize::MAX)) as usize;
                 self.cursor_set_offset(new_offset);
                 self.remap_active_rows();
                 self.apply_cursor();
@@ -1101,9 +1172,12 @@ impl UI for HunkEditor {
                 let offset = self.cursor.get_offset();
 
                 let repeat = self.grab_register(1);
+                let mut removed_bytes = Vec::new();
                 for _ in 0 .. repeat {
-                    self.remove_bytes_at_cursor();
+                   removed_bytes.extend(self.remove_bytes_at_cursor().iter().copied());
                 }
+                self.push_to_undo_stack(offset, 0, Some(removed_bytes));
+
 
                 let viewport_width = self.viewport.get_width();
                 let viewport_height = self.viewport.get_height();
@@ -1113,6 +1187,7 @@ impl UI for HunkEditor {
                 for y in active_row .. viewport_line + viewport_height {
                     self.set_row_characters(y);
                 }
+                self.set_offset_display();
             }
             FunctionRef::BACKSPACE => {
                 let repeat = self.grab_register(1);
@@ -1122,14 +1197,59 @@ impl UI for HunkEditor {
                         self.run_cmd_from_functionref(FunctionRef::DELETE, argument_byte);
                     }
                 }
+            }
 
+            FunctionRef::UNDO => {
+                let current_viewport_offset = self.viewport.offset;
+                self.remove_cursor();
+
+                self.undo();
+
+                self.remap_active_rows();
+                if self.viewport.offset == current_viewport_offset {
+                    let viewport_width = self.viewport.get_width();
+                    let viewport_height = self.viewport.get_height();
+                    let active_row = self.cursor.get_offset() / viewport_width;
+                    let viewport_line = self.viewport.get_offset() / viewport_width;
+
+                    for y in active_row .. viewport_line + viewport_height {
+                        self.set_row_characters(y);
+                    }
+                }
+                self.apply_cursor();
+                self.set_offset_display();
+            }
+
+            FunctionRef::REDO => {
+                let current_viewport_offset = self.viewport.offset;
+                self.remove_cursor();
+
+                self.redo();
+
+
+                self.remap_active_rows();
+                if self.viewport.offset == current_viewport_offset {
+                    let viewport_width = self.viewport.get_width();
+                    let viewport_height = self.viewport.get_height();
+                    let active_row = self.cursor.get_offset() / viewport_width;
+                    let viewport_line = self.viewport.get_offset() / viewport_width;
+
+                    for y in active_row .. viewport_line + viewport_height {
+                        self.set_row_characters(y);
+                    }
+                }
+                self.apply_cursor();
+                self.set_offset_display();
             }
             FunctionRef::MODE_SET_INSERT => {
+                self.clear_register();
             }
             FunctionRef::MODE_SET_APPEND => {
+                self.clear_register();
                 self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
             }
             FunctionRef::MODE_SET_MOVE => {
+                self.clear_register();
                 self.rectmanager.unset_bg_color(self.rect_meta);
             }
             FunctionRef::INSERT => {
@@ -1137,20 +1257,27 @@ impl UI for HunkEditor {
 
                 let mut bytes =  vec![argument_byte];
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.insert_bytes_at_cursor(bytes.clone());
-                    self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
-                }
-                let viewport_width = self.viewport.get_width();
-                let viewport_height = self.viewport.get_height();
-                let first_active_row = offset / viewport_width;
-                let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
+                if repeat > 0 {
+                    for _ in 0 .. repeat {
+                        self.insert_bytes_at_cursor(bytes.clone());
+                        self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
+                    }
+                    self.push_to_undo_stack(offset, (repeat as usize) * bytes.len(), None);
 
-                for y in first_active_row .. last_active_row {
-                    self.set_row_characters(y);
+
+                    let viewport_width = self.viewport.get_width();
+                    let viewport_height = self.viewport.get_height();
+                    let first_active_row = offset / viewport_width;
+                    let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
+
+                    for y in first_active_row .. last_active_row {
+                        self.set_row_characters(y);
+                    }
+                    self.set_offset_display();
                 }
             }
             FunctionRef::INSERT_TO_CMDLINE => {
+                
             }
             FunctionRef::OVERWRITE => {
                 let offset = self.cursor.get_offset();
