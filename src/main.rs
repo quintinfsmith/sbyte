@@ -947,7 +947,7 @@ impl Editor for HunkEditor {
 
     fn get_chunk(&mut self, offset: usize, length: usize) -> Vec<u8> {
         let mut output: Vec<u8> = Vec::new();
-        for i in offset .. min(self.active_content.len() - 1, offset + length) {
+        for i in offset .. min(self.active_content.len(), offset + length) {
             output.push(self.active_content[i]);
         }
 
@@ -987,14 +987,16 @@ impl Editor for HunkEditor {
     }
 
     fn cursor_set_offset(&mut self, new_offset: usize) {
-        let mut adj_offset = min(self.active_content.len() - 1, new_offset);
+        let mut adj_offset = min(self.active_content.len(), new_offset);
         self.cursor.set_offset(adj_offset);
         self.cursor_set_length(self.cursor.length);
     }
 
     fn cursor_set_length(&mut self, new_length: isize) {
         let mut adj_length;
-        if new_length < 0 {
+        if self.cursor.offset == self.active_content.len() && new_length > 0 {
+            self.cursor.set_length(1);
+        } else if new_length < 0 {
             adj_length = max(new_length, 0 - new_length);
             self.cursor.set_length(adj_length);
         } else if new_length == 0 {
@@ -1831,7 +1833,10 @@ impl InConsole for HunkEditor {
         let width = viewport.get_width();
         let offset = width * absolute_y;
 
-        let chunk = self.get_chunk(offset, width);
+        let mut chunk = self.get_chunk(offset, width);
+        if (self.cursor.get_offset() == self.active_content.len()) {
+            chunk.push(10);
+        }
         let relative_y = absolute_y - (self.viewport.get_offset() / width);
         match self.cell_dict.get_mut(&relative_y) {
             Some(mut cellhash) => {
@@ -1896,7 +1901,7 @@ impl InConsole for HunkEditor {
         if self.active_content.len() > 0 {
             digit_count = (self.active_content.len() as f64).log10().ceil() as usize;
         }
-        let offset_display = format!("Offset: {} / {}", self.cursor.get_offset(), self.active_content.len());
+        let offset_display = format!("Offset: {} / {}", self.cursor.get_offset(), self.active_content.len() - 1);
 
         self.rectmanager.clear(self.rect_meta);
         // TODO: Right-align
