@@ -30,6 +30,7 @@ enum FunctionRef {
     REDO,
 
     INSERT_TO_CMDLINE,
+    RUN_CUSTOM_COMMAND,
 
     MODE_SET_MOVE,
     MODE_SET_INSERT,
@@ -488,6 +489,9 @@ struct HunkEditor {
     undo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
 
+    //Commandable
+    cmdline: Vec<u8>,
+
     // UI
     mode_user: u8,
     register: isize,
@@ -514,7 +518,6 @@ struct HunkEditor {
     rect_display_wrapper: usize,
     rects_display: (usize, usize),
     rect_meta: usize,
-    rect_cmdline: usize,
 
     row_dict: HashMap<usize, (usize, usize)>,
     cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>
@@ -532,8 +535,6 @@ impl HunkEditor {
             Some(id_display_wrapper)
         );
         let mut id_rect_meta = rectmanager.new_rect(Some(0));
-        let mut id_rect_cmdline = rectmanager.new_rect(Some(id_rect_meta));
-        rectmanager.detach(id_rect_cmdline);
 
         HunkEditor {
             clipboard: Vec::new(),
@@ -549,6 +550,8 @@ impl HunkEditor {
             register_isset: false,
 
             viewport: ViewPort::new(width, height),
+
+            cmdline: Vec::new(),
 
             rectmanager: rectmanager,
 
@@ -568,7 +571,6 @@ impl HunkEditor {
             rect_display_wrapper: id_display_wrapper,
             rects_display: (id_display_bits, id_display_human),
             rect_meta: id_rect_meta,
-            rect_cmdline: id_rect_cmdline,
 
             row_dict: HashMap::new(),
             cell_dict: HashMap::new()
@@ -607,7 +609,7 @@ impl HunkEditor {
             inputter.assign_mode_command(0, "i".to_string(), FunctionRef::MODE_SET_INSERT);
             inputter.assign_mode_command(0, "a".to_string(), FunctionRef::MODE_SET_APPEND);
             inputter.assign_mode_command(0, "o".to_string(), FunctionRef::MODE_SET_OVERWRITE);
-            inputter.assign_mode_command(0, "/".to_string(), FunctionRef::MODE_SET_CMD);
+            inputter.assign_mode_command(0, ":".to_string(), FunctionRef::MODE_SET_CMD);
 
             inputter.assign_mode_command(1, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
             inputter.assign_mode_command(2, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
@@ -618,9 +620,13 @@ impl HunkEditor {
                 inputter.assign_mode_command(3, std::str::from_utf8(&[i]).unwrap().to_string(), FunctionRef::INSERT_TO_CMDLINE);
             }
 
+            inputter.assign_mode_command(3, std::str::from_utf8(&[10]).unwrap().to_string(), FunctionRef::RUN_CUSTOM_COMMAND);
+            inputter.assign_mode_command(3, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
+
             inputter.assign_mode_command(0, std::str::from_utf8(&[127]).unwrap().to_string(), FunctionRef::BACKSPACE);
 
             inputter.set_context_key(FunctionRef::MODE_SET_MOVE, 0);
+            inputter.set_context_key(FunctionRef::RUN_CUSTOM_COMMAND, 0); // Switch back to move mode after calling cmd
             inputter.set_context_key(FunctionRef::MODE_SET_INSERT, 1);
             inputter.set_context_key(FunctionRef::MODE_SET_APPEND, 1);
             inputter.set_context_key(FunctionRef::MODE_SET_OVERWRITE, 2);
@@ -1325,6 +1331,9 @@ impl UI for HunkEditor {
                 self.clear_register();
                 self.rectmanager.unset_bg_color(self.rect_meta);
             }
+            FunctionRef::MODE_SET_CMD => {
+                self.cmdline.drain(..);
+            }
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
 
@@ -1350,7 +1359,8 @@ impl UI for HunkEditor {
                 }
             }
             FunctionRef::INSERT_TO_CMDLINE => {
-                
+                self.cmdline.push(argument_byte);
+                self.draw_cmdline();
             }
             FunctionRef::OVERWRITE => {
                 let offset = self.cursor.get_offset();
@@ -1373,6 +1383,8 @@ impl UI for HunkEditor {
                 for y in first_active_row .. last_active_row + 1 {
                     self.set_row_characters(y);
                 }
+            }
+            FunctionRef::RUN_CUSTOM_COMMAND => {
             }
             _ => {
                 // Unknown
@@ -1486,6 +1498,8 @@ trait InConsole {
     fn set_offset_display(&mut self);
     fn arrange_displays(&mut self);
     fn display_user_message(&mut self);
+
+    fn draw_cmdline(&mut self);
 }
 
 impl InConsole for HunkEditor {
@@ -2043,6 +2057,14 @@ impl InConsole for HunkEditor {
                 }
             }
         }
+    }
+
+    fn draw_cmdline(&mut self) {
+        let cmd_display = std::str::from_utf8(self.cmdline.as_slice()).unwrap();
+        self.rectmanager.clear(self.rect_meta);
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &cmd_display);
+
+        self.flag_refresh_meta = true;
     }
 }
 
