@@ -15,6 +15,10 @@ enum FunctionRef {
     CURSOR_DOWN,
     CURSOR_LEFT,
     CURSOR_RIGHT,
+    CURSOR_LENGTH_UP,
+    CURSOR_LENGTH_DOWN,
+    CURSOR_LENGTH_LEFT,
+    CURSOR_LENGTH_RIGHT,
     INSERT,
     OVERWRITE,
     DELETE,
@@ -374,7 +378,7 @@ impl Cursor {
         let output;
 
         if self.length < 0 {
-            output =  self.offset + (self.length as usize);
+            output = ((self.offset as isize) + self.length) as usize;
         } else {
             output = self.offset;
         }
@@ -584,6 +588,11 @@ impl HunkEditor {
             inputter.assign_mode_command(0, "k".to_string(), FunctionRef::CURSOR_UP);
             inputter.assign_mode_command(0, "h".to_string(), FunctionRef::CURSOR_LEFT);
             inputter.assign_mode_command(0, "l".to_string(), FunctionRef::CURSOR_RIGHT);
+
+            inputter.assign_mode_command(0, "J".to_string(), FunctionRef::CURSOR_LENGTH_DOWN);
+            inputter.assign_mode_command(0, "K".to_string(), FunctionRef::CURSOR_LENGTH_UP);
+            inputter.assign_mode_command(0, "H".to_string(), FunctionRef::CURSOR_LENGTH_LEFT);
+            inputter.assign_mode_command(0, "L".to_string(), FunctionRef::CURSOR_LENGTH_RIGHT);
 
             for i in 0 .. 10 {
                 inputter.assign_mode_command(0, std::str::from_utf8(&[i + 48]).unwrap().to_string(), FunctionRef::APPEND_TO_REGISTER);
@@ -955,7 +964,7 @@ impl Editor for HunkEditor {
     }
 
     fn cursor_next_byte(&mut self) {
-        let new_position = self.cursor.get_offset() + 1;
+        let mut new_position = self.cursor.get_offset() + 1;
         self.cursor_set_offset(new_position);
     }
 
@@ -989,7 +998,7 @@ impl Editor for HunkEditor {
     fn cursor_set_offset(&mut self, new_offset: usize) {
         let mut adj_offset = min(self.active_content.len(), new_offset);
         self.cursor.set_offset(adj_offset);
-        self.cursor_set_length(self.cursor.length);
+        // self.cursor_set_length(self.cursor.length);
     }
 
     fn cursor_set_length(&mut self, new_length: isize) {
@@ -997,8 +1006,7 @@ impl Editor for HunkEditor {
         if self.cursor.offset == self.active_content.len() && new_length > 0 {
             self.cursor.set_length(1);
         } else if new_length < 0 {
-            adj_length = max(new_length, 0 - new_length);
-            self.cursor.set_length(adj_length);
+            self.cursor.set_length(max(new_length, 0 - self.cursor.offset as isize));
         } else if new_length == 0 {
         } else {
             adj_length = min(new_length as usize, self.active_content.len() - self.cursor.offset) as isize;
@@ -1041,10 +1049,9 @@ impl VisualEditor for HunkEditor {
 
     fn cursor_decrease_length_by_line(&mut self) {
         let mut new_length: isize = self.cursor.length - (self.viewport.get_width() as isize);
-        if self.cursor.length > 0 && new_length <= 0 {
+        if self.cursor.length > 0 && new_length < 0 {
             new_length -= 1;
         }
-
         self.cursor_set_length(new_length);
     }
 
@@ -1054,17 +1061,11 @@ impl VisualEditor for HunkEditor {
         let screen_buffer_length = width * height;
         let mut adj_viewport_offset = self.viewport.offset;
 
-        if (self.cursor.length >= 0) {
-            let cursor_length = self.cursor.length as usize;
-            while self.cursor.offset + cursor_length > screen_buffer_length + adj_viewport_offset {
-                adj_viewport_offset += width;
-            }
-        } else {
-            let cursor_length = (0 - self.cursor.length) as usize;
-            let adj_cursor_offset = self.cursor.offset - min(cursor_length, self.cursor.offset);
-            while adj_cursor_offset > screen_buffer_length + adj_viewport_offset {
-                adj_viewport_offset += width;
-            }
+        let cursor_length = self.cursor.get_length();
+        let adj_cursor_offset = self.cursor.get_offset();
+
+        while adj_cursor_offset > screen_buffer_length + adj_viewport_offset {
+            adj_viewport_offset += width;
         }
 
         while adj_viewport_offset > self.cursor.offset {
@@ -1099,6 +1100,9 @@ impl UI for HunkEditor {
             FunctionRef::CURSOR_UP => {
                 let current_offset = self.viewport.offset;
                 self.remove_cursor();
+                let cursor_offset = self.cursor.get_offset();
+                self.cursor_set_offset(cursor_offset);
+                self.cursor_set_length(1);
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_prev_line();
@@ -1114,6 +1118,9 @@ impl UI for HunkEditor {
                 let current_offset = self.viewport.offset;
                 self.remove_cursor();
                 let repeat = self.grab_register(1);
+                let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
+                self.cursor_set_length(1);
+                self.cursor_set_offset(end_of_cursor - 1);
                 for _ in 0 .. repeat {
                     self.cursor_next_line();
                 }
@@ -1131,6 +1138,7 @@ impl UI for HunkEditor {
                 for _ in 0 .. repeat {
                     self.cursor_prev_byte();
                 }
+                self.cursor_set_length(1);
                 self.remap_active_rows();
                 self.apply_cursor();
                 self.set_offset_display();
@@ -1141,9 +1149,71 @@ impl UI for HunkEditor {
             FunctionRef::CURSOR_RIGHT => {
                 let current_offset = self.viewport.offset;
                 self.remove_cursor();
+
+                let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
+                self.cursor_set_length(1);
+                self.cursor_set_offset(end_of_cursor - 1);
+
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_next_byte();
+                }
+
+                self.remap_active_rows();
+                self.apply_cursor();
+                self.set_offset_display();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
+            }
+            FunctionRef::CURSOR_LENGTH_UP => {
+                let current_offset = self.viewport.offset;
+                self.remove_cursor();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.cursor_decrease_length_by_line();
+                }
+                self.remap_active_rows();
+                self.apply_cursor();
+                self.set_offset_display();
+                if self.viewport.offset != current_offset {
+                    self.flag_refresh_display = true;
+                }
+            }
+            FunctionRef::CURSOR_LENGTH_DOWN => {
+                let current_offset = self.viewport.offset;
+                self.remove_cursor();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.cursor_increase_length_by_line();
+                }
+                self.remap_active_rows();
+                self.apply_cursor();
+                self.set_offset_display();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
+            }
+            FunctionRef::CURSOR_LENGTH_LEFT => {
+                let current_offset = self.viewport.offset;
+                self.remove_cursor();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.cursor_decrease_length();
+                }
+                self.remap_active_rows();
+                self.apply_cursor();
+                self.set_offset_display();
+                if (self.viewport.offset != current_offset) {
+                    self.flag_refresh_display = true;
+                }
+            }
+            FunctionRef::CURSOR_LENGTH_RIGHT => {
+                let current_offset = self.viewport.offset;
+                self.remove_cursor();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.cursor_increase_length();
                 }
                 self.remap_active_rows();
                 self.apply_cursor();
@@ -1161,6 +1231,7 @@ impl UI for HunkEditor {
             FunctionRef::JUMP_TO_REGISTER => {
                 let current_offset = self.viewport.offset;
                 self.remove_cursor();
+                self.cursor_set_length(1);
                 let new_offset = max(0, self.grab_register(std::isize::MAX)) as usize;
                 self.cursor_set_offset(new_offset);
                 self.remap_active_rows();
@@ -1180,6 +1251,9 @@ impl UI for HunkEditor {
                 }
                 self.push_to_undo_stack(offset, 0, Some(removed_bytes));
 
+                self.remove_cursor();
+                self.cursor_set_length(1);
+                self.apply_cursor();
 
                 let viewport_width = self.viewport.get_width();
                 let viewport_height = self.viewport.get_height();
@@ -1192,12 +1266,9 @@ impl UI for HunkEditor {
                 self.set_offset_display();
             }
             FunctionRef::BACKSPACE => {
-                let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    if (self.cursor.get_offset() > 0) {
-                        self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, argument_byte);
-                        self.run_cmd_from_functionref(FunctionRef::DELETE, argument_byte);
-                    }
+                if (self.cursor.get_offset() > 0) {
+                    self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, argument_byte);
+                    self.run_cmd_from_functionref(FunctionRef::DELETE, argument_byte);
                 }
             }
 
@@ -1290,6 +1361,9 @@ impl UI for HunkEditor {
                     self.overwrite_bytes_at_cursor(bytes.clone());
                     self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
                 }
+                self.remove_cursor();
+                self.cursor_set_length(1);
+                self.apply_cursor();
 
                 let viewport_width = self.viewport.get_width();
                 let viewport_height = self.viewport.get_height();
@@ -1834,9 +1908,6 @@ impl InConsole for HunkEditor {
         let offset = width * absolute_y;
 
         let mut chunk = self.get_chunk(offset, width);
-        if (self.cursor.get_offset() == self.active_content.len()) {
-            chunk.push(10);
-        }
         let relative_y = absolute_y - (self.viewport.get_offset() / width);
         match self.cell_dict.get_mut(&relative_y) {
             Some(mut cellhash) => {
