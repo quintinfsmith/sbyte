@@ -7,7 +7,6 @@ use std::io::{Write, Read, BufRead, BufReader};
 use std::{time, thread};
 use std::env;
 use std::sync::{Mutex, Arc};
-use termios::{Termios, TCSANOW, ECHO, ICANON, tcsetattr};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum FunctionRef {
@@ -32,11 +31,14 @@ enum FunctionRef {
     INSERT_TO_CMDLINE,
     RUN_CUSTOM_COMMAND,
 
+    TOGGLE_CONVERTER,
+
     MODE_SET_MOVE,
     MODE_SET_INSERT,
     MODE_SET_APPEND,
     MODE_SET_OVERWRITE,
-    MODE_SET_CMD
+    MODE_SET_CMD,
+    KILL
 }
 
 enum EditorError {
@@ -47,6 +49,7 @@ enum ConverterError {
     InvalidDigit
 }
 
+#[derive(PartialEq)]
 enum ConverterRef {
     HEX,
     BIN,
@@ -171,6 +174,103 @@ impl Converter for HexConverter {
                     break;
                 }
             }
+        }
+
+        output
+    }
+}
+
+impl Converter for BinaryConverter {
+    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
+        let mut output_bytes: Vec<u8> = Vec::new();
+
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
+                output_bytes.push(*subbyte);
+            }
+        }
+
+        output_bytes
+    }
+
+    fn encode_byte(&self, byte: u8) -> Vec<u8> {
+        let hex_digits = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
+
+        let mut output = Vec::new();
+        for i in 0 .. 8 {
+            if byte & (1 << i) == 0 {
+                output.insert(0, 48); // 0
+            } else {
+                output.insert(0, 49); // 1
+            }
+        }
+
+        output
+    }
+
+    fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
+        let bits = vec![48,49];
+        let mut output = Vec::new();
+        let mut tmp_bin_digit;
+
+        let mut passes = (integer as f64).log(2.0).ceil() as usize;
+        for i in 0 .. passes {
+            tmp_bin_digit = integer % 2;
+            output.insert(0, bits[tmp_bin_digit]);
+            integer /= 2;
+        }
+
+        output
+    }
+
+    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+        let mut output_bytes: Vec<u8> = Vec::new();
+        let mut output = Ok(Vec::new());
+
+        let mut byte_value: u8;
+        let mut lode_byte = 0;
+
+
+        for (i, byte) in bytes.iter().rev().enumerate() {
+            lode_byte *= 2;
+            if (*byte == 48 || *byte == 49) {
+                lode_byte += *byte - 48;
+            } else {
+                output = Err(ConverterError::InvalidDigit);
+                break;
+            }
+
+            if i == 7 || i == bytes.len() - 1 {
+                output_bytes.push(lode_byte);
+                lode_byte = 0;
+            }
+        }
+
+        if output.is_ok() {
+            output_bytes.reverse();
+            output = Ok(output_bytes);
+        }
+
+        output
+    }
+
+    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
+        let mut output_number: usize = 0;
+        let mut output = Ok(output_number);
+
+        for byte in byte_string.iter().rev() {
+            output_number *= 2;
+            if (*byte == 48 || *byte == 49) {
+                output_number += (*byte as usize) - 48;
+            } else {
+                output = Err(ConverterError::InvalidDigit);
+                break;
+            }
+
+        }
+
+        if output.is_ok() {
+            output = Ok(output_number);
         }
 
         output
@@ -489,13 +589,14 @@ struct HunkEditor {
     undo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
 
-    //Commandable
-    cmdline: Vec<u8>,
-
     // UI
     mode_user: u8,
     register: isize,
     register_isset: bool,
+    cmd_register: Vec<u8>,
+
+    // Commandable
+    line_commands: HashMap<Vec<u8>, FunctionRef>,
 
     // VisualEditor
     viewport: ViewPort,
@@ -551,7 +652,8 @@ impl HunkEditor {
 
             viewport: ViewPort::new(width, height),
 
-            cmdline: Vec::new(),
+            cmd_register: Vec::new(),
+            line_commands: HashMap::new(),
 
             rectmanager: rectmanager,
 
@@ -586,6 +688,7 @@ impl HunkEditor {
         let c = function_refs.clone();
         input_daemon = thread::spawn(move || {
             let mut inputter = Inputter::new();
+            inputter.assign_mode_command(0, "[".to_string(), FunctionRef::TOGGLE_CONVERTER);
             inputter.assign_mode_command(0, "j".to_string(), FunctionRef::CURSOR_DOWN);
             inputter.assign_mode_command(0, "k".to_string(), FunctionRef::CURSOR_UP);
             inputter.assign_mode_command(0, "h".to_string(), FunctionRef::CURSOR_LEFT);
@@ -634,14 +737,8 @@ impl HunkEditor {
 
 
             /////////////////////////////////
-            // TODO: Clean this shit up. for now, this is how we're reading single character input
-            let stdin = 0; // couldn't get std::os::unix::io::FromRawFd to work
-                           // on /dev/stdin or /dev/tty
-            let termios = Termios::from_fd(stdin).unwrap();
-            let mut new_termios = termios.clone();  // make a mutable copy of termios
-                                                    // that we will modify
-            new_termios.c_lflag &= !(ICANON | ECHO); // no echo and canonical mode
-            tcsetattr(stdin, TCSANOW, &mut new_termios).unwrap();
+            // Rectmanager puts stdout in non-canonical mode,
+            // so stdin will be char-by-char
             let stdout = io::stdout();
             let mut reader = io::stdin();
             let mut buffer;
@@ -666,6 +763,7 @@ impl HunkEditor {
                                             break;
                                         }
                                     }
+
                                     if do_push {
                                         mutex.push((funcref, input_byte));
                                     }
@@ -701,6 +799,7 @@ impl HunkEditor {
             self.tick();
             thread::sleep(delay);
         }
+        self.rectmanager.kill();
     }
 }
 
@@ -763,9 +862,9 @@ impl Editor for HunkEditor {
             ConverterRef::HEX => {
                 Box::new(HexConverter {})
             }
-            //ConverterRef::BIN => {
-            //    Box::new(BinaryConverter {})
-            //}
+            ConverterRef::BIN => {
+                Box::new(BinaryConverter {})
+            }
             _ => {
                 Box::new(HexConverter {})
             }
@@ -1086,10 +1185,11 @@ trait UI {
     fn set_user_mode(&mut self, mode: u8);
     fn get_user_mode(&mut self) -> u8;
 
-    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, argument_byte: u8);
     fn clear_register(&mut self);
     fn append_to_register(&mut self, new_digit: isize);
     fn grab_register(&mut self, default_if_unset: isize) -> isize;
+
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, argument_byte: u8);
 }
 
 impl UI for HunkEditor {
@@ -1332,7 +1432,7 @@ impl UI for HunkEditor {
                 self.rectmanager.unset_bg_color(self.rect_meta);
             }
             FunctionRef::MODE_SET_CMD => {
-                self.cmdline.drain(..);
+                self.cmd_register.drain(..);
             }
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
@@ -1359,7 +1459,7 @@ impl UI for HunkEditor {
                 }
             }
             FunctionRef::INSERT_TO_CMDLINE => {
-                self.cmdline.push(argument_byte);
+                self.cmd_register.push(argument_byte);
                 self.draw_cmdline();
             }
             FunctionRef::OVERWRITE => {
@@ -1385,6 +1485,21 @@ impl UI for HunkEditor {
                 }
             }
             FunctionRef::RUN_CUSTOM_COMMAND => {
+                let tmp_cmd = self.cmd_register.clone();
+                self.try_command(tmp_cmd);
+                self.cmd_register.drain(..);
+            }
+            FunctionRef::KILL => {
+                self.flag_kill = true;
+            }
+            FunctionRef::TOGGLE_CONVERTER => {
+                if self.active_converter == ConverterRef::BIN {
+                    self.active_converter = ConverterRef::HEX;
+                } else if self.active_converter == ConverterRef::HEX {
+                    self.active_converter = ConverterRef::BIN;
+                }
+                self.setup_displays();
+                self.flag_refresh_full = true;
             }
             _ => {
                 // Unknown
@@ -1413,6 +1528,7 @@ impl UI for HunkEditor {
         self.register += new_digit;
         self.register_isset = true;
     }
+
 }
 
 struct Inputter {
@@ -2060,11 +2176,34 @@ impl InConsole for HunkEditor {
     }
 
     fn draw_cmdline(&mut self) {
-        let cmd_display = std::str::from_utf8(self.cmdline.as_slice()).unwrap();
+        let cmd_display = std::str::from_utf8(self.cmd_register.as_slice()).unwrap();
         self.rectmanager.clear(self.rect_meta);
         self.rectmanager.set_string(self.rect_meta, 0, 0, &cmd_display);
 
         self.flag_refresh_meta = true;
+    }
+}
+
+trait Commandable {
+    fn assign_line_command(&mut self, command_string: String, function: FunctionRef);
+    fn try_command(&mut self, query: Vec<u8>);
+}
+
+impl Commandable for HunkEditor {
+    fn assign_line_command(&mut self, command_string: String, function: FunctionRef) {
+        let mut command_vec = command_string.as_bytes().to_vec();
+        self.line_commands.insert(command_vec, function);
+    }
+
+    fn try_command(&mut self, query: Vec<u8>) {
+        // TODO: split words.
+        let mut result = self.line_commands.get(&query);
+        match result {
+            Some(funcref) => {
+                self.run_cmd_from_functionref(*funcref, 0);
+            }
+            None => ()
+        };
     }
 }
 
@@ -2074,6 +2213,7 @@ impl InConsole for HunkEditor {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut editor = HunkEditor::new();
+    editor.assign_line_command("q".to_string(), FunctionRef::KILL);
     editor.load_file(args.get(1).unwrap().to_string());
     editor.main();
 }
