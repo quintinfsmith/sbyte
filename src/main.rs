@@ -431,6 +431,7 @@ impl InputNode {
         output
     }
 
+
     fn input(&mut self, new_input: u8) -> bool {
         match self.next_nodes.get(&new_input) {
             Some(_) => {
@@ -593,10 +594,10 @@ struct HunkEditor {
     mode_user: u8,
     register: isize,
     register_isset: bool,
-    cmd_register: Vec<u8>,
+    cmd_register: String,
 
     // Commandable
-    line_commands: HashMap<Vec<u8>, FunctionRef>,
+    line_commands: HashMap<String, FunctionRef>,
 
     // VisualEditor
     viewport: ViewPort,
@@ -652,7 +653,7 @@ impl HunkEditor {
 
             viewport: ViewPort::new(width, height),
 
-            cmd_register: Vec::new(),
+            cmd_register: "".to_string(),
             line_commands: HashMap::new(),
 
             rectmanager: rectmanager,
@@ -789,7 +790,10 @@ impl HunkEditor {
                 Ok(ref mut mutex) => {
                     if mutex.len() > 0 {
                         let (_current_func, _current_arg) = mutex.remove(0);
-                        self.run_cmd_from_functionref(_current_func, _current_arg);
+                        // Convert the u8 byte to a Vec<String> to fit the arguments data type
+                        let args = vec![std::str::from_utf8(&[_current_arg]).unwrap().to_string()];
+
+                        self.run_cmd_from_functionref(_current_func, args);
                     }
                 }
                 Err(e) => {
@@ -1010,10 +1014,13 @@ impl Editor for HunkEditor {
     fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
         let mut output;
         if (offset < self.active_content.len()) {
-            let mut i: usize = offset;
-            for new_byte in new_bytes.iter() {
+            for (i, new_byte) in new_bytes.iter().enumerate() {
                 self.active_content.insert(i, *new_byte);
-                i += 1
+            }
+            output = Ok(());
+        } else if offset == self.active_content.len() {
+            for new_byte in new_bytes.iter() {
+                self.active_content.push(*new_byte);
             }
             output = Ok(());
         } else {
@@ -1030,7 +1037,7 @@ impl Editor for HunkEditor {
 
     fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), EditorError> {
         let mut output;
-        if (position < self.active_content.len()) {
+        if (position <= self.active_content.len()) {
             if position + new_bytes.len() < self.active_content.len() {
                 for (i, new_byte) in new_bytes.iter().enumerate() {
                     self.active_content[position + i] = *new_byte;
@@ -1189,7 +1196,7 @@ trait UI {
     fn append_to_register(&mut self, new_digit: isize);
     fn grab_register(&mut self, default_if_unset: isize) -> isize;
 
-    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, argument_byte: u8);
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>);
 }
 
 impl UI for HunkEditor {
@@ -1201,7 +1208,7 @@ impl UI for HunkEditor {
         self.mode_user
     }
 
-    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, argument_byte: u8) {
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>) {
         match funcref {
             FunctionRef::CURSOR_UP => {
                 let current_offset = self.viewport.offset;
@@ -1329,7 +1336,14 @@ impl UI for HunkEditor {
                 }
             }
             FunctionRef::APPEND_TO_REGISTER => {
-                self.append_to_register((argument_byte as isize) - 48);
+                match arguments.get(0) {
+                    Some(argument) => {
+                        // TODO: This is ridiculous. maybe make a nice wrapper for String (len 1) -> u8?
+                        let digit = argument.chars().next().unwrap().to_digit(10).unwrap() as isize;
+                        self.append_to_register(digit);
+                    }
+                    None => ()
+                }
             }
             FunctionRef::CLEAR_REGISTER => {
                 self.clear_register()
@@ -1373,8 +1387,8 @@ impl UI for HunkEditor {
             }
             FunctionRef::BACKSPACE => {
                 if (self.cursor.get_offset() > 0) {
-                    self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, argument_byte);
-                    self.run_cmd_from_functionref(FunctionRef::DELETE, argument_byte);
+                    self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, arguments.clone());
+                    self.run_cmd_from_functionref(FunctionRef::DELETE, arguments.clone());
                 }
             }
 
@@ -1425,69 +1439,89 @@ impl UI for HunkEditor {
             }
             FunctionRef::MODE_SET_APPEND => {
                 self.clear_register();
-                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
+                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments);
             }
             FunctionRef::MODE_SET_MOVE => {
                 self.clear_register();
                 self.rectmanager.unset_bg_color(self.rect_meta);
             }
             FunctionRef::MODE_SET_CMD => {
-                self.cmd_register.drain(..);
+                self.cmd_register = "".to_string();
             }
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
 
-                let mut bytes =  vec![argument_byte];
-                let repeat = self.grab_register(1);
-                if repeat > 0 {
-                    for _ in 0 .. repeat {
-                        self.insert_bytes_at_cursor(bytes.clone());
-                        self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
+                match arguments.get(0) {
+                    Some(argument) => {
+                        let mut bytes = argument.as_bytes().to_vec();
+
+                        let repeat = self.grab_register(1);
+                        if repeat > 0 {
+
+                            for _ in 0 .. repeat {
+                                self.insert_bytes_at_cursor(bytes.clone());
+                                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                            }
+                            self.push_to_undo_stack(offset, (repeat as usize) * bytes.len(), None);
+
+
+                            let viewport_width = self.viewport.get_width();
+                            let viewport_height = self.viewport.get_height();
+                            let first_active_row = offset / viewport_width;
+                            let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
+
+                            for y in first_active_row .. last_active_row {
+                                self.set_row_characters(y);
+                            }
+                            self.set_offset_display();
+                        }
                     }
-                    self.push_to_undo_stack(offset, (repeat as usize) * bytes.len(), None);
-
-
-                    let viewport_width = self.viewport.get_width();
-                    let viewport_height = self.viewport.get_height();
-                    let first_active_row = offset / viewport_width;
-                    let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
-
-                    for y in first_active_row .. last_active_row {
-                        self.set_row_characters(y);
-                    }
-                    self.set_offset_display();
+                    None => ()
                 }
             }
             FunctionRef::INSERT_TO_CMDLINE => {
-                self.cmd_register.push(argument_byte);
-                self.draw_cmdline();
+                match arguments.get(0) {
+                    Some(argument) => {
+                        self.cmd_register.push_str(argument);
+                        self.draw_cmdline();
+                    }
+                    None => ()
+                }
             }
             FunctionRef::OVERWRITE => {
                 let offset = self.cursor.get_offset();
 
-                let mut bytes =  vec![argument_byte];
-                let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.overwrite_bytes_at_cursor(bytes.clone());
-                    self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, argument_byte);
-                }
-                self.remove_cursor();
-                self.cursor_set_length(1);
-                self.apply_cursor();
+                match arguments.get(0) {
+                    Some(argument) => {
+                        let mut bytes = argument.as_bytes().to_vec();
 
-                let viewport_width = self.viewport.get_width();
-                let viewport_height = self.viewport.get_height();
-                let first_active_row = offset / viewport_width;
-                let last_active_row = (offset + 1) / viewport_width;
+                        let repeat = self.grab_register(1);
+                        for _ in 0 .. repeat {
+                            self.overwrite_bytes_at_cursor(bytes.clone());
+                            self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                        }
+                        // TODO: Implement undo stack
 
-                for y in first_active_row .. last_active_row + 1 {
-                    self.set_row_characters(y);
+                        self.remove_cursor();
+                        self.cursor_set_length(1);
+                        self.apply_cursor();
+
+                        let viewport_width = self.viewport.get_width();
+                        let viewport_height = self.viewport.get_height();
+                        let first_active_row = offset / viewport_width;
+                        let last_active_row = (offset + 1) / viewport_width;
+
+                        for y in first_active_row .. last_active_row + 1 {
+                            self.set_row_characters(y);
+                        }
+                    }
+                    None => ()
                 }
             }
             FunctionRef::RUN_CUSTOM_COMMAND => {
                 let tmp_cmd = self.cmd_register.clone();
                 self.try_command(tmp_cmd);
-                self.cmd_register.drain(..);
+                self.cmd_register = "".to_string();
             }
             FunctionRef::KILL => {
                 self.flag_kill = true;
@@ -2176,9 +2210,8 @@ impl InConsole for HunkEditor {
     }
 
     fn draw_cmdline(&mut self) {
-        let cmd_display = std::str::from_utf8(self.cmd_register.as_slice()).unwrap();
         self.rectmanager.clear(self.rect_meta);
-        self.rectmanager.set_string(self.rect_meta, 0, 0, &cmd_display);
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &self.cmd_register);
 
         self.flag_refresh_meta = true;
     }
@@ -2186,27 +2219,40 @@ impl InConsole for HunkEditor {
 
 trait Commandable {
     fn assign_line_command(&mut self, command_string: String, function: FunctionRef);
-    fn try_command(&mut self, query: Vec<u8>);
+    fn try_command(&mut self, query: String);
 }
 
 impl Commandable for HunkEditor {
     fn assign_line_command(&mut self, command_string: String, function: FunctionRef) {
-        let mut command_vec = command_string.as_bytes().to_vec();
-        self.line_commands.insert(command_vec, function);
+        self.line_commands.insert(command_string, function);
     }
 
-    fn try_command(&mut self, query: Vec<u8>) {
+    fn try_command(&mut self, query: String) {
         // TODO: split words.
-        let mut result = self.line_commands.get(&query);
-        match result {
-            Some(funcref) => {
-                self.run_cmd_from_functionref(*funcref, 0);
-            }
-            None => ()
-        };
+        let mut words = parse_words(query);
+        if words.len() > 0 {
+            let mut cmd = words.remove(0);
+            let mut result = self.line_commands.get(&cmd);
+            match result {
+                Some(funcref) => {
+                    self.run_cmd_from_functionref(*funcref, words);
+                }
+                None => ()
+            };
+        }
     }
 }
 
+// TODO: Consider quotes, apostrophes  and escapes
+fn parse_words(input_string: String) -> Vec<String> {
+    let mut output = Vec::new();
+
+    for word in input_string.split_whitespace() {
+        output.push(word.to_string());
+    }
+
+    output
+}
 
 ////////////////////////////////////////////////
 
