@@ -615,7 +615,7 @@ impl VisualEditor for HunkEditor {
 
         let adj_cursor_offset = self.cursor.get_offset();
 
-        while adj_cursor_offset > screen_buffer_length + adj_viewport_offset {
+        while adj_cursor_offset >= screen_buffer_length + adj_viewport_offset {
             adj_viewport_offset += width;
         }
 
