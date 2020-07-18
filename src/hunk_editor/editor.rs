@@ -24,12 +24,12 @@ pub trait Editor {
     fn set_file_path(&mut self, new_file_path: String);
     fn find_all(&self, pattern: Vec<u8>) -> Vec<usize>;
     fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option<usize>;
-    fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8>;
-    fn remove_bytes_at_cursor(&mut self) -> Vec<u8>;
+    fn remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError>;
+    fn remove_bytes_at_cursor(&mut self) -> Result<Vec<u8>, EditorError>;
     fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError>;
     fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
-    fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, offset: usize) -> Result<(), EditorError>;
-    fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>);
+    fn overwrite_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError>;
+    fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError>;
     fn get_selected(&mut self) -> Vec<u8>;
     fn get_chunk(&mut self, offset: usize, length: usize) -> Vec<u8>;
     fn cursor_next_byte(&mut self);

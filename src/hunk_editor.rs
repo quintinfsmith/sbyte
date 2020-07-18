@@ -71,6 +71,7 @@ pub struct HunkEditor {
 }
 
 impl HunkEditor {
+
     pub fn new() -> HunkEditor {
         let mut rectmanager = RectManager::new();
         let (width, height) = rectmanager.get_rect_size(0).ok().unwrap();
@@ -250,6 +251,7 @@ row_dict: HashMap::new(),
 }
 
 impl Editor for HunkEditor {
+
     fn undo(&mut self) {
         let task = self.undo_stack.pop();
         match task {
@@ -283,7 +285,12 @@ impl Editor for HunkEditor {
 
         let mut opposite_bytes_to_insert = None;
         if bytes_to_remove > 0 {
-            opposite_bytes_to_insert = Some(self.remove_bytes(offset, bytes_to_remove));
+            opposite_bytes_to_insert = match self.remove_bytes(offset, bytes_to_remove) {
+                Ok(some_bytes) => {
+                    Some(some_bytes)
+                }
+                Err(e) => None
+            }
         }
 
         let mut opposite_bytes_to_remove = 0;
@@ -435,17 +442,23 @@ impl Editor for HunkEditor {
         output
     }
 
-    fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
+    fn remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
         let adj_length = min(self.active_content.len() - offset, length);
         let mut removed_bytes = Vec::new();
-        for i in 0..adj_length {
-            removed_bytes.push(self.active_content.remove(offset));
+        let output;
+        if (offset < self.active_content.len()) {
+            for i in 0..adj_length {
+                removed_bytes.push(self.active_content.remove(offset));
+            }
+            output = Ok(removed_bytes);
+        } else {
+            output = Err(EditorError::OutOfRange);
         }
 
-        removed_bytes
+        output
     }
 
-    fn remove_bytes_at_cursor(&mut self) -> Vec<u8> {
+    fn remove_bytes_at_cursor(&mut self) -> Result<Vec<u8>, EditorError> {
         let offset = self.cursor.get_offset();
         let length = self.cursor.get_length();
         self.remove_bytes(offset, length)
@@ -455,7 +468,7 @@ impl Editor for HunkEditor {
         let output;
         if offset < self.active_content.len() {
             for (i, new_byte) in new_bytes.iter().enumerate() {
-                self.active_content.insert(i, *new_byte);
+                self.active_content.insert(offset + i, *new_byte);
             }
             output = Ok(());
         } else if offset == self.active_content.len() {
@@ -470,25 +483,15 @@ impl Editor for HunkEditor {
         output
     }
 
-    fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
+    fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError> {
         let position = self.cursor.get_offset();
-        self.overwrite_bytes(new_bytes, position);
+        self.overwrite_bytes(position, new_bytes)
     }
 
-    fn overwrite_bytes(&mut self, new_bytes: Vec<u8>, position: usize) -> Result<(), EditorError> {
-        let output;
-        if position <= self.active_content.len() {
-            if position + new_bytes.len() < self.active_content.len() {
-                for (i, new_byte) in new_bytes.iter().enumerate() {
-                    self.active_content[position + i] = *new_byte;
-                }
-            } else {
-                self.active_content.resize(position, 0);
-                self.active_content.extend_from_slice(&new_bytes.as_slice());
-            }
-            output = Ok(());
-        } else {
-            output = Err(EditorError::OutOfRange);
+    fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError> {
+        let output = self.remove_bytes(position, new_bytes.len());
+        if output.is_ok() {
+            self.insert_bytes(position, new_bytes);
         }
 
         output
@@ -578,6 +581,7 @@ impl Editor for HunkEditor {
 }
 
 impl VisualEditor for HunkEditor {
+
     fn cursor_next_line(&mut self) {
         let new_offset = self.cursor.get_real_offset() + self.viewport.get_width();
         self.cursor_set_offset(new_offset);
@@ -1264,9 +1268,10 @@ impl Commandable for HunkEditor {
                 let current_offset = self.viewport.get_offset();
                 self.remove_cursor();
 
+                // Jump positon to the end of the cursor before moving it right
                 let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
-                self.cursor_set_length(1);
                 self.cursor_set_offset(end_of_cursor - 1);
+                self.cursor_set_length(1);
 
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
@@ -1396,7 +1401,12 @@ impl Commandable for HunkEditor {
                 let repeat = self.grab_register(1);
                 let mut removed_bytes = Vec::new();
                 for _ in 0 .. repeat {
-                   removed_bytes.extend(self.remove_bytes_at_cursor().iter().copied());
+                    match self.remove_bytes_at_cursor() {
+                        Ok(bytes) => {
+                            removed_bytes.extend(bytes.iter().copied());
+                        }
+                        Err(e) => {}
+                    }
                 }
                 self.push_to_undo_stack(offset, 0, Some(removed_bytes));
 
@@ -1528,11 +1538,20 @@ impl Commandable for HunkEditor {
                         let bytes = argument.as_bytes().to_vec();
 
                         let repeat = self.grab_register(1);
+
+                        let mut overwritten_bytes: Vec<u8> = Vec::new();
                         for _ in 0 .. repeat {
-                            self.overwrite_bytes_at_cursor(bytes.clone());
+                            match self.overwrite_bytes_at_cursor(bytes.clone()) {
+                                Ok(_overwritten) => {
+                                    overwritten_bytes.extend(_overwritten.iter().copied());
+                                }
+                                Err(e) => {}
+                            }
                             self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
                         }
-                        // TODO: Implement undo stack
+
+                        self.push_to_undo_stack(offset, bytes.len() * (repeat as usize), Some(overwritten_bytes));
+
 
                         self.remove_cursor();
                         self.cursor_set_length(1);
