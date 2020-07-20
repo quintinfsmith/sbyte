@@ -21,6 +21,7 @@ pub enum FunctionRef {
     JUMP_TO_NEXT,
 
     INSERT_TO_CMDLINE,
+    CMDLINE_BACKSPACE,
     RUN_CUSTOM_COMMAND,
 
     TOGGLE_CONVERTER,
@@ -31,5 +32,7 @@ pub enum FunctionRef {
     MODE_SET_OVERWRITE,
     MODE_SET_CMD,
     MODE_SET_SEARCH,
-    KILL
+    KILL,
+    SAVE,
+    SAVEKILL
 }

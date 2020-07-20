@@ -15,6 +15,8 @@ pub mod visual_editor;
 pub mod commandable;
 // InConsole trait
 pub mod inconsole;
+// CommandLine struct
+pub mod command_line;
 
 use editor::{Editor, EditorError};
 use editor::editor_cursor::Cursor;
@@ -24,6 +26,7 @@ use visual_editor::viewport::ViewPort;
 use commandable::Commandable;
 use commandable::inputter::Inputter;
 use commandable::inputter::function_ref::FunctionRef;
+use command_line::CommandLine;
 use inconsole::*;
 
 
@@ -39,10 +42,10 @@ pub struct HunkEditor {
 
 
     // Commandable
+    commandline: CommandLine,
     line_commands: HashMap<String, FunctionRef>,
     register: isize,
     register_isset: bool,
-    cmd_register: String,
 
     // VisualEditor
     viewport: ViewPort,
@@ -71,7 +74,6 @@ pub struct HunkEditor {
 }
 
 impl HunkEditor {
-
     pub fn new() -> HunkEditor {
         let mut rectmanager = RectManager::new();
         let (width, height) = rectmanager.get_rect_size(0).ok().unwrap();
@@ -97,9 +99,8 @@ impl HunkEditor {
 
             viewport: ViewPort::new(width, height),
 
-            cmd_register: "".to_string(),
             line_commands: HashMap::new(),
-
+            commandline: CommandLine::new(),
             rectmanager: rectmanager,
 
             active_row_map: HashMap::new(),
@@ -170,6 +171,7 @@ row_dict: HashMap::new(),
             inputter.assign_mode_command(3, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
 
             inputter.assign_mode_command(0, std::str::from_utf8(&[127]).unwrap().to_string(), FunctionRef::BACKSPACE);
+            inputter.assign_mode_command(3, std::str::from_utf8(&[127]).unwrap().to_string(), FunctionRef::CMDLINE_BACKSPACE);
 
             inputter.set_context_key(FunctionRef::MODE_SET_MOVE, 0);
             inputter.set_context_key(FunctionRef::RUN_CUSTOM_COMMAND, 0); // Switch back to move mode after calling cmd
@@ -251,7 +253,6 @@ row_dict: HashMap::new(),
 }
 
 impl Editor for HunkEditor {
-
     fn undo(&mut self) {
         let task = self.undo_stack.pop();
         match task {
@@ -432,7 +433,7 @@ impl Editor for HunkEditor {
 
         if matches.len() > 0 {
             for i in matches.iter() {
-                if *i >= offset {
+                if *i > offset {
                     output = Some(*i);
                     break;
                 }
@@ -524,8 +525,10 @@ impl Editor for HunkEditor {
     }
 
     fn cursor_prev_byte(&mut self) {
-        let new_position = self.cursor.get_offset() - 1;
-        self.cursor_set_offset(new_position);
+        if self.cursor.get_offset() != 0 {
+            let new_position = self.cursor.get_offset() - 1;
+            self.cursor_set_offset(new_position);
+        }
     }
 
     fn cursor_increase_length(&mut self) {
@@ -553,7 +556,6 @@ impl Editor for HunkEditor {
     fn cursor_set_offset(&mut self, new_offset: usize) {
         let adj_offset = min(self.active_content.len(), new_offset);
         self.cursor.set_offset(adj_offset);
-        // self.cursor_set_length(self.cursor.get_real_length());
     }
 
     fn cursor_set_length(&mut self, new_length: isize) {
@@ -581,7 +583,6 @@ impl Editor for HunkEditor {
 }
 
 impl VisualEditor for HunkEditor {
-
     fn cursor_next_line(&mut self) {
         let new_offset = self.cursor.get_real_offset() + self.viewport.get_width();
         self.cursor_set_offset(new_offset);
@@ -1110,10 +1111,18 @@ impl InConsole for HunkEditor {
     }
 
     fn set_offset_display(&mut self) {
-        let offset_display = format!("Offset: {} / {}", self.cursor.get_offset(), self.active_content.len() - 1);
+
+        let digit_count = (self.active_content.len() as f64).log10().ceil() as usize;
+        let mut cursor_string = format!("{}", self.cursor.get_offset());
+
+        let l = cursor_string.len();
+        for _ in 0 .. (digit_count - l) {
+            cursor_string = format!("{}{}", " ", cursor_string);
+        }
+
+        let offset_display = format!("Offset: {} / {}", cursor_string, self.active_content.len() - 1);
 
         self.rectmanager.clear(self.rect_meta);
-        // TODO: Right-align
         let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
         let x = meta_width - offset_display.len();
         self.rectmanager.set_string(self.rect_meta, x as isize, 0, &offset_display);
@@ -1185,7 +1194,7 @@ impl InConsole for HunkEditor {
 
     fn draw_cmdline(&mut self) {
         self.rectmanager.clear(self.rect_meta);
-        self.rectmanager.set_string(self.rect_meta, 0, 0, &self.cmd_register);
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &self.commandline.get_register());
 
         self.flag_refresh_meta = true;
     }
@@ -1371,6 +1380,7 @@ impl Commandable for HunkEditor {
                 let current_offset = self.cursor.get_offset();
                 let mut next_offset = current_offset;
                 let mut new_cursor_length = self.cursor.get_length();
+
                 match arguments.get(0) {
                     Some(pattern) => {
                         let bytes = pattern.as_bytes().to_vec();
@@ -1394,6 +1404,10 @@ impl Commandable for HunkEditor {
                 if self.viewport.get_offset() != current_offset {
                     self.flag_refresh_display = true;
                 }
+            }
+            FunctionRef::CMDLINE_BACKSPACE => {
+                self.commandline.backspace();
+                self.draw_cmdline();
             }
             FunctionRef::DELETE => {
                 let offset = self.cursor.get_offset();
@@ -1485,10 +1499,11 @@ impl Commandable for HunkEditor {
                 self.rectmanager.unset_bg_color(self.rect_meta);
             }
             FunctionRef::MODE_SET_CMD => {
-                self.cmd_register = "".to_string();
+                self.commandline.clear_register();
             }
             FunctionRef::MODE_SET_SEARCH => {
-                self.cmd_register = "find ".to_string();
+                self.commandline.set_register("find ".to_string());
+                self.draw_cmdline();
             }
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
@@ -1524,7 +1539,8 @@ impl Commandable for HunkEditor {
             FunctionRef::INSERT_TO_CMDLINE => {
                 match arguments.get(0) {
                     Some(argument) => {
-                        self.cmd_register.push_str(argument);
+                        self.commandline.insert_to_register(argument.to_string());
+                        self.commandline.move_cursor_right();
                         self.draw_cmdline();
                     }
                     None => ()
@@ -1569,12 +1585,22 @@ impl Commandable for HunkEditor {
                 }
             }
             FunctionRef::RUN_CUSTOM_COMMAND => {
-                let tmp_cmd = self.cmd_register.clone();
-                self.try_command(tmp_cmd);
-                self.cmd_register = "".to_string();
+                match self.commandline.apply_register() {
+                    Some(new_command) => {
+                        self.try_command(new_command);
+                    }
+                    None => ()
+                };
             }
             FunctionRef::KILL => {
                 self.flag_kill = true;
+            }
+            FunctionRef::SAVE => {
+                //TODO
+            }
+            FunctionRef::SAVEKILL => {
+                self.run_cmd_from_functionref(FunctionRef::SAVE, arguments.clone());
+                self.run_cmd_from_functionref(FunctionRef::KILL, arguments.clone());
             }
             FunctionRef::TOGGLE_CONVERTER => {
                 if self.active_converter == ConverterRef::BIN {
@@ -1612,7 +1638,6 @@ impl Commandable for HunkEditor {
         self.register += new_digit;
         self.register_isset = true;
     }
-
 }
 
 // TODO: Consider quotes, apostrophes  and escapes
