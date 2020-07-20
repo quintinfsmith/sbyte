@@ -180,7 +180,8 @@ row_dict: HashMap::new(),
             inputter.set_context_key(FunctionRef::MODE_SET_OVERWRITE, 2);
             inputter.set_context_key(FunctionRef::MODE_SET_CMD, 3);
             inputter.set_context_key(FunctionRef::MODE_SET_SEARCH, 3);
-
+            inputter.set_context_key(FunctionRef::MODE_SET_INSERT_SPECIAL, 3);
+            inputter.set_context_key(FunctionRef::MODE_SET_OVERWRITE_SPECIAL, 3);
 
             /////////////////////////////////
             // Rectmanager puts stdout in non-canonical mode,
@@ -1194,7 +1195,8 @@ impl InConsole for HunkEditor {
 
     fn draw_cmdline(&mut self) {
         self.rectmanager.clear(self.rect_meta);
-        self.rectmanager.set_string(self.rect_meta, 0, 0, &self.commandline.get_register());
+        self.rectmanager.set_string(self.rect_meta, 0, 0, ":");
+        self.rectmanager.set_string(self.rect_meta, 1, 0, &self.commandline.get_register());
 
         self.flag_refresh_meta = true;
     }
@@ -1505,12 +1507,29 @@ impl Commandable for HunkEditor {
                 self.commandline.set_register("find ".to_string());
                 self.draw_cmdline();
             }
+            FunctionRef::MODE_SET_INSERT_SPECIAL => {
+                let cmdstring;
+                match self.active_converter {
+                    ConverterRef::BIN => {
+                        cmdstring = "insert \\b".to_string()
+                        self.draw_cmdline();
+                    }
+                    ConverterRef::HEX => {
+                        cmdstring = "insert \\x".to_string()
+                    }
+                    _ => {
+                        cmdstring = "insert ".to_string()
+                    }
+                }
+                self.commandline.set_register(cmdstring);
+                self.draw_cmdline();
+            }
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
 
                 match arguments.get(0) {
                     Some(argument) => {
-                        let bytes = argument.as_bytes().to_vec();
+                        let bytes = self.string_to_bytes(argument);
 
                         let repeat = self.grab_register(1);
                         if repeat > 0 {
@@ -1551,8 +1570,7 @@ impl Commandable for HunkEditor {
 
                 match arguments.get(0) {
                     Some(argument) => {
-                        let bytes = argument.as_bytes().to_vec();
-
+                        let mut bytes = self.string_to_bytes(argument);
                         let repeat = self.grab_register(1);
 
                         let mut overwritten_bytes: Vec<u8> = Vec::new();
@@ -1637,6 +1655,28 @@ impl Commandable for HunkEditor {
         self.register *= 10;
         self.register += new_digit;
         self.register_isset = true;
+    }
+
+    // Convert argument string to bytes.
+    fn string_to_bytes(&mut self, input_string: String) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut input_bytes = input_string.as_bytes().to_vec();
+        if input_bytes.len() > 2 {
+            if input_bytes[0] == "\\" {
+                match input_bytes[1] {
+                    "b" => {
+                        output = BinaryConverter::decode(input_bytes.split_at(2).1);
+                    }
+                    "x" => {
+                        output = HexConverter::decode(input_bytes.split_at(2).1);
+                    }
+                    _ => {
+                    }
+                }
+            }
+        }
+
+        output
     }
 }
 
