@@ -11,4 +11,5 @@ pub trait Commandable {
     fn grab_register(&mut self, default_if_unset: isize) -> isize;
 
     fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>);
+    fn string_to_bytes(&mut self, input_string: String) -> Vec<u8>;
 }

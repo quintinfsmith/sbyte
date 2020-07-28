@@ -1511,14 +1511,13 @@ impl Commandable for HunkEditor {
                 let cmdstring;
                 match self.active_converter {
                     ConverterRef::BIN => {
-                        cmdstring = "insert \\b".to_string()
-                        self.draw_cmdline();
+                        cmdstring = "insert \\b".to_string();
                     }
                     ConverterRef::HEX => {
-                        cmdstring = "insert \\x".to_string()
+                        cmdstring = "insert \\x".to_string();
                     }
                     _ => {
-                        cmdstring = "insert ".to_string()
+                        cmdstring = "insert ".to_string();
                     }
                 }
                 self.commandline.set_register(cmdstring);
@@ -1529,7 +1528,7 @@ impl Commandable for HunkEditor {
 
                 match arguments.get(0) {
                     Some(argument) => {
-                        let bytes = self.string_to_bytes(argument);
+                        let bytes = self.string_to_bytes(argument.to_string());
 
                         let repeat = self.grab_register(1);
                         if repeat > 0 {
@@ -1570,7 +1569,7 @@ impl Commandable for HunkEditor {
 
                 match arguments.get(0) {
                     Some(argument) => {
-                        let mut bytes = self.string_to_bytes(argument);
+                        let mut bytes = self.string_to_bytes(argument.to_string());
                         let repeat = self.grab_register(1);
 
                         let mut overwritten_bytes: Vec<u8> = Vec::new();
@@ -1662,13 +1661,15 @@ impl Commandable for HunkEditor {
         let mut output = Vec::new();
         let mut input_bytes = input_string.as_bytes().to_vec();
         if input_bytes.len() > 2 {
-            if input_bytes[0] == "\\" {
+            if input_bytes[0] == 92 {
                 match input_bytes[1] {
-                    "b" => {
-                        output = BinaryConverter::decode(input_bytes.split_at(2).1);
+                    98 => { // b
+                        let converter = BinaryConverter {};
+                        output = converter.decode(input_bytes.split_at(2).1.to_vec()).ok().unwrap();
                     }
-                    "x" => {
-                        output = HexConverter::decode(input_bytes.split_at(2).1);
+                    120 => { // x
+                        let converter = HexConverter {};
+                        output = converter.decode(input_bytes.split_at(2).1.to_vec()).ok().unwrap();
                     }
                     _ => {
                     }
