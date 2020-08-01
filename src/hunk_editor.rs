@@ -70,7 +70,9 @@ pub struct HunkEditor {
     rect_meta: usize,
 
     row_dict: HashMap<usize, (usize, usize)>,
-    cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>
+    cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
+
+    search_history: Vec<String>
 }
 
 impl HunkEditor {
@@ -120,7 +122,9 @@ impl HunkEditor {
             rects_display: (id_display_bits, id_display_human),
             rect_meta: id_rect_meta,
 row_dict: HashMap::new(),
-            cell_dict: HashMap::new()
+            cell_dict: HashMap::new(),
+
+            search_history: Vec::new()
         }
     }
 
@@ -1037,7 +1041,6 @@ impl InConsole for HunkEditor {
                 }
             }
 
-            //TODO
             self.set_offset_display();
             self.flag_refresh_display = true;
         }
@@ -1053,6 +1056,7 @@ impl InConsole for HunkEditor {
 
         let chunk = self.get_chunk(offset, width);
         let relative_y = absolute_y - (self.viewport.get_offset() / width);
+
         match self.cell_dict.get_mut(&relative_y) {
             Some(cellhash) => {
                 for (_x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
@@ -1384,8 +1388,9 @@ impl Commandable for HunkEditor {
                 let mut new_cursor_length = self.cursor.get_length();
 
                 match arguments.get(0) {
-                    Some(pattern) => {
+                    Some(pattern) => { // argument was given, use that
                         let bytes = pattern.as_bytes().to_vec();
+                        self.search_history.push(pattern.clone());
                         match self.find_after(bytes, current_offset) {
                             Some(new_offset) => {
                                 new_cursor_length = pattern.len();
@@ -1394,7 +1399,21 @@ impl Commandable for HunkEditor {
                             None => ()
                         }
                     }
-                    None => ()
+                    None => { // No argument was given, check history
+                        match self.search_history.last() {
+                            Some(pattern) => {
+                                let bytes = pattern.as_bytes().to_vec();
+                                match self.find_after(bytes, current_offset) {
+                                    Some(new_offset) => {
+                                        new_cursor_length = pattern.len();
+                                        next_offset = new_offset;
+                                    }
+                                    None => ()
+                                }
+                            }
+                            None => ()
+                        }
+                    }
                 }
 
                 self.remove_cursor();
@@ -1539,12 +1558,10 @@ impl Commandable for HunkEditor {
                             }
                             self.push_to_undo_stack(offset, (repeat as usize) * bytes.len(), None);
 
-
                             let viewport_width = self.viewport.get_width();
                             let viewport_height = self.viewport.get_height();
                             let first_active_row = offset / viewport_width;
                             let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
-
                             for y in first_active_row .. last_active_row {
                                 self.set_row_characters(y);
                             }
