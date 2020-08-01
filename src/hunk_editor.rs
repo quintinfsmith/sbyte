@@ -34,7 +34,7 @@ pub struct HunkEditor {
     //Editor
     clipboard: Vec<u8>,
     active_content: Vec<u8>,
-    active_file_path: String,
+    active_file_path: Option<String>,
     cursor: Cursor,
     active_converter: ConverterRef,
     undo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
@@ -91,7 +91,7 @@ impl HunkEditor {
         HunkEditor {
             clipboard: Vec::new(),
             active_content: Vec::new(),
-            active_file_path: String::from("none"),
+            active_file_path: None,
             cursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
@@ -365,6 +365,7 @@ impl Editor for HunkEditor {
     fn load_file(&mut self, file_path: String) {
         self.active_content = Vec::new();
 
+        self.set_file_path(file_path.clone());
         match File::open(file_path) {
             Ok(mut file) => {
                 let file_length = match file.metadata() {
@@ -390,21 +391,25 @@ impl Editor for HunkEditor {
     }
 
     fn save_file(&mut self) {
-        let path = &self.active_file_path;
-        match File::create(path) {
-            Ok(mut file) => {
-                file.write_all(self.active_content.as_slice());
-                // TODO: Handle potential file system problems
-                //file.sync_all();
+        match &self.active_file_path {
+            Some(path) => {
+                match File::create(path) {
+                    Ok(mut file) => {
+                        file.write_all(self.active_content.as_slice());
+                        // TODO: Handle potential file system problems
+                        //file.sync_all();
+                    }
+                    Err(e) => {
+                    }
+                }
             }
-            Err(e) => {
-            }
+            None =>  ()
         }
 
     }
 
     fn set_file_path(&mut self, new_file_path: String) {
-        self.active_file_path = new_file_path;
+        self.active_file_path = Some(new_file_path);
     }
 
     fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
@@ -1709,3 +1714,11 @@ fn parse_words(input_string: String) -> Vec<String> {
     output
 }
 
+#[cfg (test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_initialize() {
+        let hunkeditor = HunkEditor::new();
+    }
+}
