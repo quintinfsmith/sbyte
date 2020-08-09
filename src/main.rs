@@ -1,16 +1,16 @@
 use std::env;
 
-pub mod hunk_editor;
+pub mod sbyte_editor;
 
-use hunk_editor::*;
-use hunk_editor::editor::Editor;
-use hunk_editor::commandable::Commandable;
-use hunk_editor::commandable::inputter::function_ref::FunctionRef;
+use sbyte_editor::*;
+use sbyte_editor::editor::Editor;
+use sbyte_editor::commandable::Commandable;
+use sbyte_editor::commandable::inputter::function_ref::FunctionRef;
 
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let mut editor = HunkEditor::new();
+    let mut editor = SbyteEditor::new();
     editor.assign_line_command("q".to_string(), FunctionRef::KILL);
     editor.assign_line_command("w".to_string(), FunctionRef::SAVE);
     editor.assign_line_command("wq".to_string(), FunctionRef::SAVEKILL);

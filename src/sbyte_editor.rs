@@ -30,7 +30,7 @@ use command_line::CommandLine;
 use inconsole::*;
 
 
-pub struct HunkEditor {
+pub struct SbyteEditor {
     //Editor
     clipboard: Vec<u8>,
     active_content: Vec<u8>,
@@ -75,8 +75,8 @@ pub struct HunkEditor {
     search_history: Vec<String>
 }
 
-impl HunkEditor {
-    pub fn new() -> HunkEditor {
+impl SbyteEditor {
+    pub fn new() -> SbyteEditor {
         let mut rectmanager = RectManager::new();
         let (width, height) = rectmanager.get_rect_size(0).ok().unwrap();
         let id_display_wrapper = rectmanager.new_rect(Some(0));
@@ -88,7 +88,7 @@ impl HunkEditor {
         );
         let id_rect_meta = rectmanager.new_rect(Some(0));
 
-        HunkEditor {
+        SbyteEditor {
             clipboard: Vec::new(),
             active_content: vec![0],
             active_file_path: None,
@@ -257,7 +257,7 @@ row_dict: HashMap::new(),
     }
 }
 
-impl Editor for HunkEditor {
+impl Editor for SbyteEditor {
     fn undo(&mut self) {
         let task = self.undo_stack.pop();
         match task {
@@ -590,7 +590,7 @@ impl Editor for HunkEditor {
     }
 }
 
-impl VisualEditor for HunkEditor {
+impl VisualEditor for SbyteEditor {
     fn cursor_next_line(&mut self) {
         let new_offset = self.cursor.get_real_offset() + self.viewport.get_width();
         self.cursor_set_offset(new_offset);
@@ -640,7 +640,7 @@ impl VisualEditor for HunkEditor {
     }
 }
 
-impl InConsole for HunkEditor {
+impl InConsole for SbyteEditor {
     fn tick(&mut self) {
         self.check_resize();
         let do_draw = self.flag_refresh_full
@@ -1223,7 +1223,7 @@ impl InConsole for HunkEditor {
     }
 }
 
-impl Commandable for HunkEditor {
+impl Commandable for SbyteEditor {
     fn assign_line_command(&mut self, command_string: String, function: FunctionRef) {
         self.line_commands.insert(command_string, function);
     }
@@ -1736,6 +1736,6 @@ mod tests {
     use super::*;
     #[test]
     fn test_initialize() {
-        let hunkeditor = HunkEditor::new();
+        let sbyteeditor = SbyteEditor::new();
     }
 }

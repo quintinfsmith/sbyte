@@ -1,6 +1,6 @@
 [package]
-name = "HunkEditor"
-version = "0.1.0"
+name = "SbyteEditor"
+version = "0.2.0"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 
