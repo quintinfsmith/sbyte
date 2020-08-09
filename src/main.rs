@@ -17,6 +17,12 @@ fn main() {
     editor.assign_line_command("find".to_string(), FunctionRef::JUMP_TO_NEXT);
     editor.assign_line_command("insert".to_string(), FunctionRef::INSERT);
     editor.assign_line_command("overwrite".to_string(), FunctionRef::OVERWRITE);
-    editor.load_file(args.get(1).unwrap().to_string());
+    match args.get(1) {
+        Some(path) => {
+            editor.load_file(path.to_string());
+        }
+        None => {
+        }
+    };
     editor.main();
 }

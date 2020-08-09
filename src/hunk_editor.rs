@@ -55,7 +55,7 @@ pub struct HunkEditor {
     active_row_map: HashMap<usize, bool>,
     flag_kill: bool,
     flag_force_rerow: bool,
-    file_loaded: bool,
+    ready: bool,
 
     flag_refresh_full: bool,
     flag_refresh_display: bool,
@@ -90,7 +90,7 @@ impl HunkEditor {
 
         HunkEditor {
             clipboard: Vec::new(),
-            active_content: Vec::new(),
+            active_content: vec![0],
             active_file_path: None,
             cursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
@@ -108,7 +108,7 @@ impl HunkEditor {
             active_row_map: HashMap::new(),
             flag_kill: false,
             flag_force_rerow: false,
-            file_loaded: false,
+            ready: false,
 
             flag_refresh_full: false,
             flag_refresh_display: false,
@@ -383,8 +383,6 @@ impl Editor for HunkEditor {
                 for byte in buffer.iter() {
                     self.active_content.push(*byte);
                 }
-
-                self.file_loaded = true;
             }
             Err(e) => {}
         }
@@ -644,52 +642,49 @@ impl VisualEditor for HunkEditor {
 
 impl InConsole for HunkEditor {
     fn tick(&mut self) {
-        if ! self.file_loaded {
-        } else {
-            self.check_resize();
-            let do_draw = self.flag_refresh_full
-                || self.flag_refresh_display
-                || self.flag_refresh_meta
-                || self.cells_to_refresh.len() > 0
-                || self.rows_to_refresh.len() > 0;
+        self.check_resize();
+        let do_draw = self.flag_refresh_full
+            || self.flag_refresh_display
+            || self.flag_refresh_meta
+            || self.cells_to_refresh.len() > 0
+            || self.rows_to_refresh.len() > 0;
 
-            if self.flag_refresh_full {
-                self.rectmanager.queue_draw(0);
-                self.flag_refresh_full = false;
-                self.flag_refresh_display = false;
-                self.flag_refresh_meta = false;
-                self.cells_to_refresh.drain();
-                self.rows_to_refresh.drain();
-            }
-
-            if self.flag_refresh_display {
-                self.rectmanager.queue_draw(self.rect_display_wrapper);
-                self.flag_refresh_display = false;
-                self.cells_to_refresh.drain();
-                self.rows_to_refresh.drain();
-            }
-
-            for (_bits_id, _human_id) in self.cells_to_refresh.iter() {
-                self.rectmanager.queue_draw(*_bits_id);
-                self.rectmanager.queue_draw(*_human_id);
-            }
-
-            for (_bits_id, _human_id) in self.rows_to_refresh.iter() {
-                self.rectmanager.queue_draw(*_bits_id);
-                self.rectmanager.queue_draw(*_human_id);
-            }
-
+        if self.flag_refresh_full {
+            self.rectmanager.queue_draw(0);
+            self.flag_refresh_full = false;
+            self.flag_refresh_display = false;
+            self.flag_refresh_meta = false;
             self.cells_to_refresh.drain();
             self.rows_to_refresh.drain();
+        }
 
-            if self.flag_refresh_meta {
-                self.flag_refresh_meta = false;
-                self.rectmanager.queue_draw(self.rect_meta);
-            }
+        if self.flag_refresh_display {
+            self.rectmanager.queue_draw(self.rect_display_wrapper);
+            self.flag_refresh_display = false;
+            self.cells_to_refresh.drain();
+            self.rows_to_refresh.drain();
+        }
 
-            if do_draw {
-                self.rectmanager.draw_queued();
-            }
+        for (_bits_id, _human_id) in self.cells_to_refresh.iter() {
+            self.rectmanager.queue_draw(*_bits_id);
+            self.rectmanager.queue_draw(*_human_id);
+        }
+
+        for (_bits_id, _human_id) in self.rows_to_refresh.iter() {
+            self.rectmanager.queue_draw(*_bits_id);
+            self.rectmanager.queue_draw(*_human_id);
+        }
+
+        self.cells_to_refresh.drain();
+        self.rows_to_refresh.drain();
+
+        if self.flag_refresh_meta {
+            self.flag_refresh_meta = false;
+            self.rectmanager.queue_draw(self.rect_meta);
+        }
+
+        if do_draw {
+            self.rectmanager.draw_queued();
         }
     }
 
@@ -823,11 +818,9 @@ impl InConsole for HunkEditor {
             }
         }
 
-        if self.file_loaded {
-            self.flag_force_rerow = true;
-            self.remap_active_rows();
-            self.is_resizing = false;
-        }
+        self.flag_force_rerow = true;
+        self.remap_active_rows();
+
         self.apply_cursor();
 
         self.flag_refresh_full = true;
@@ -1121,14 +1114,20 @@ impl InConsole for HunkEditor {
     }
 
     fn set_offset_display(&mut self) {
-
-        let digit_count = (self.active_content.len() as f64).log10().ceil() as usize;
         let mut cursor_string = format!("{}", self.cursor.get_offset());
 
-        let l = cursor_string.len();
-        for _ in 0 .. (digit_count - l) {
-            cursor_string = format!("{}{}", " ", cursor_string);
+        if self.active_content.len() > 0 {
+            let digit_count = (self.active_content.len() as f64).log10().ceil() as usize;
+            let l = cursor_string.len();
+            if l < digit_count {
+                for _ in 0 .. (digit_count - l) {
+                    cursor_string = format!("{}{}", " ", cursor_string);
+                }
+            }
+
         }
+
+
 
         let offset_display = format!("Offset: {} / {}", cursor_string, self.active_content.len() - 1);
 
