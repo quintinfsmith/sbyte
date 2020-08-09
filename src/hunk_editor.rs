@@ -1204,8 +1204,21 @@ impl InConsole for HunkEditor {
 
     fn draw_cmdline(&mut self) {
         self.rectmanager.clear(self.rect_meta);
+        self.rectmanager.empty(self.rect_meta);
+        let cmd = &self.commandline.get_register();
+        // +1, because of the ":" at the start
+        let cursor_x = self.commandline.get_cursor_offset() + 1;
+        let cursor_id = self.rectmanager.new_rect(Some(self.rect_meta));
+        self.rectmanager.resize(cursor_id, 1, 1);
+        self.rectmanager.set_position(cursor_id, cursor_x as isize, 0);
+        self.rectmanager.set_invert_flag(cursor_id);
+        if cursor_x < cmd.len() {
+            let chr: String = cmd.chars().skip(cursor_x).take(1).collect();
+            self.rectmanager.set_string(cursor_id, 0, 0, &chr);
+        }
+
         self.rectmanager.set_string(self.rect_meta, 0, 0, ":");
-        self.rectmanager.set_string(self.rect_meta, 1, 0, &self.commandline.get_register());
+        self.rectmanager.set_string(self.rect_meta, 1, 0, cmd);
 
         self.flag_refresh_meta = true;
     }
@@ -1694,9 +1707,14 @@ impl Commandable for HunkEditor {
                         output = converter.decode(input_bytes.split_at(2).1.to_vec()).ok().unwrap();
                     }
                     _ => {
+                        output = input_string.as_bytes().to_vec();
                     }
                 }
+            } else {
+                output = input_string.as_bytes().to_vec();
             }
+        } else {
+            output = input_string.as_bytes().to_vec();
         }
 
         output

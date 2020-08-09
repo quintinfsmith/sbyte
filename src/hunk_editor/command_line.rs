@@ -63,9 +63,9 @@ impl CommandLine {
 
     pub fn backspace(&mut self) {
         if self.cursor_offset != 0 {
-            self.remove_from_register();
             let new_offset = self.cursor_offset - 1;
             self.set_cursor_offset(new_offset);
+            self.remove_from_register();
         }
     }
 
@@ -80,6 +80,10 @@ impl CommandLine {
     pub fn set_register(&mut self, new_register: String) {
         self.register = new_register.clone();
         self.cursor_offset = new_register.len();
+    }
+
+    pub fn get_cursor_offset(&self) -> usize {
+        self.cursor_offset
     }
 
 }
