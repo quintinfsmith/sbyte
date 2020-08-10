@@ -88,9 +88,9 @@ impl SbyteEditor {
         );
         let id_rect_meta = rectmanager.new_rect(Some(0));
 
-        SbyteEditor {
+        let mut output = SbyteEditor {
             clipboard: Vec::new(),
-            active_content: vec![0],
+            active_content: Vec::new(),
             active_file_path: None,
             cursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
@@ -121,16 +121,24 @@ impl SbyteEditor {
             rect_display_wrapper: id_display_wrapper,
             rects_display: (id_display_bits, id_display_human),
             rect_meta: id_rect_meta,
-row_dict: HashMap::new(),
+            row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
 
             search_history: Vec::new()
-        }
+        };
+
+        output.assign_line_command("q".to_string(), FunctionRef::KILL);
+        output.assign_line_command("w".to_string(), FunctionRef::SAVE);
+        output.assign_line_command("wq".to_string(), FunctionRef::SAVEKILL);
+        output.assign_line_command("find".to_string(), FunctionRef::JUMP_TO_NEXT);
+        output.assign_line_command("insert".to_string(), FunctionRef::INSERT);
+        output.assign_line_command("overwrite".to_string(), FunctionRef::OVERWRITE);
+
+        output
     }
 
     pub fn main(&mut self) {
         let function_refs: Arc<Mutex<Vec<(FunctionRef, u8)>>> = Arc::new(Mutex::new(Vec::new()));
-
 
         let c = function_refs.clone();
         let mut _input_daemon = thread::spawn(move || {
@@ -253,6 +261,9 @@ row_dict: HashMap::new(),
             self.tick();
             thread::sleep(delay);
         }
+        self.kill();
+    }
+    pub fn kill(&mut self) {
         self.rectmanager.kill();
     }
 }
@@ -357,6 +368,10 @@ impl Editor for SbyteEditor {
         }
     }
 
+    fn get_clipboard(&mut self) -> Vec<u8> {
+        self.clipboard.clone()
+    }
+
     fn copy_selection(&mut self) {
         let selected_bytes = self.get_selected();
         self.copy_to_clipboard(selected_bytes);
@@ -413,22 +428,24 @@ impl Editor for SbyteEditor {
     fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
         let mut output: Vec<usize> = Vec::new();
 
-        let mut pivot: usize = 0;
-
         let search_length = search_for.len();
 
-        for (i, byte) in self.active_content.iter().enumerate() {
-            if search_for[pivot] == *byte {
-                pivot += 1;
-            } else {
-                pivot = 0;
+        let mut i = 0;
+        let mut j_offset;
+        while i <= self.active_content.len() - search_length {
+            j_offset = 0;
+            for (j, test_byte) in search_for.iter().enumerate() {
+                if self.active_content[i + j] != *test_byte {
+                    println!("{}/{}, {}/{}", i, self.active_content[i + j], j, *test_byte);
+                    break;
+                }
+                j_offset += 1;
             }
-
-            if pivot == search_length {
-                output.push(i - search_length + 1);
-                pivot = 0;
+            if j_offset == search_length {
+                println!("{}", i);
+                output.push(i);
             }
-
+            i += max(1, j_offset);
         }
 
         output
@@ -452,10 +469,11 @@ impl Editor for SbyteEditor {
     }
 
     fn remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
-        let adj_length = min(self.active_content.len() - offset, length);
         let mut removed_bytes = Vec::new();
+
         let output;
         if (offset < self.active_content.len()) {
+            let adj_length = min(self.active_content.len() - offset, length);
             for i in 0..adj_length {
                 removed_bytes.push(self.active_content.remove(offset));
             }
@@ -1127,9 +1145,13 @@ impl InConsole for SbyteEditor {
 
         }
 
+        let denominator = if self.active_content.len() == 0 {
+            0
+        } else {
+            self.active_content.len() - 1
+        };
 
-
-        let offset_display = format!("Offset: {} / {}", cursor_string, self.active_content.len() - 1);
+        let offset_display = format!("Offset: {} / {}", cursor_string, denominator);
 
         self.rectmanager.clear(self.rect_meta);
         let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
@@ -1735,7 +1757,70 @@ fn parse_words(input_string: String) -> Vec<String> {
 mod tests {
     use super::*;
     #[test]
-    fn test_initialize() {
-        let sbyteeditor = SbyteEditor::new();
+    fn test_initializes_empty() {
+        let mut editor = SbyteEditor::new();
+        // Ok to kill for the test, we don't care about the
+        // visuals at the moment
+        editor.kill();
+
+        assert_eq!(editor.active_content.as_slice(), []);
+    }
+
+    #[test]
+    fn test_insert_bytes() {
+        let mut editor = SbyteEditor::new();
+        // Ok to kill for the test, we don't care about the
+        // visuals at the moment
+        editor.kill();
+
+        assert!(editor.insert_bytes(0, vec![65]).is_ok());
+        assert_eq!(editor.active_content.as_slice(), [65]);
+        assert!(editor.insert_bytes(10, vec![65]).is_err());
+    }
+
+    #[test]
+    fn test_remove_bytes() {
+        let mut editor = SbyteEditor::new();
+        // Ok to kill for the test, we don't care about the
+        // visuals at the moment
+        editor.kill();
+        editor.insert_bytes(0, vec![65]);
+
+
+        assert!(editor.remove_bytes(0, 1).is_ok());
+        assert_eq!(editor.active_content.as_slice(), []);
+        assert!(editor.remove_bytes(1000, 300).is_err());
+    }
+
+    #[test]
+    fn test_yanking() {
+        let mut editor = SbyteEditor::new();
+        // Ok to kill for the test, we don't care about the
+        // visuals at the moment
+        editor.kill();
+        editor.insert_bytes(0, vec![65, 66, 67, 68]);
+
+        editor.make_selection(1, 3);
+        assert_eq!(editor.get_selected().as_slice(), [66, 67, 68]);
+
+        editor.copy_selection();
+        assert_eq!(editor.get_clipboard().as_slice(), [66, 67, 68]);
+    }
+
+    #[test]
+    fn test_find() {
+        let mut editor = SbyteEditor::new();
+        // Ok to kill for the test, we don't care about the
+        // visuals at the moment
+        editor.kill();
+        editor.insert_bytes(0, vec![65, 66, 0, 0, 65, 65, 66, 65]);
+
+        let found = editor.find_all(vec![65, 66]);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0], 0);
+        assert_eq!(found[1], 5);
+
+        assert_eq!(editor.find_after(vec![65, 66], 2), Some(5));
+
     }
 }
