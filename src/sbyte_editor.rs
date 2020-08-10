@@ -436,13 +436,11 @@ impl Editor for SbyteEditor {
             j_offset = 0;
             for (j, test_byte) in search_for.iter().enumerate() {
                 if self.active_content[i + j] != *test_byte {
-                    println!("{}/{}, {}/{}", i, self.active_content[i + j], j, *test_byte);
                     break;
                 }
                 j_offset += 1;
             }
             if j_offset == search_length {
-                println!("{}", i);
                 output.push(i);
             }
             i += max(1, j_offset);
