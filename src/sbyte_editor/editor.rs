@@ -14,11 +14,10 @@ pub trait Editor {
     fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>)) -> (usize, usize, Option<Vec<u8>>);
     fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>);
     fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>);
-    fn cursor_set_offset(&mut self, new_offset: usize);
-    fn cursor_set_length(&mut self, new_length: isize);
     fn make_selection(&mut self, offset: usize, length: usize);
     fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);
     fn copy_selection(&mut self);
+    fn get_clipboard(&mut self) -> Vec<u8>;
     fn load_file(&mut self, file_path: String);
     fn save_file(&mut self);
     fn set_file_path(&mut self, new_file_path: String);
@@ -32,6 +31,9 @@ pub trait Editor {
     fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError>;
     fn get_selected(&mut self) -> Vec<u8>;
     fn get_chunk(&mut self, offset: usize, length: usize) -> Vec<u8>;
+
+    fn cursor_set_offset(&mut self, new_offset: usize);
+    fn cursor_set_length(&mut self, new_length: isize);
     fn cursor_next_byte(&mut self);
     fn cursor_prev_byte(&mut self);
     fn cursor_increase_length(&mut self);
@@ -39,4 +41,5 @@ pub trait Editor {
 
     fn get_active_converter(&self) -> Box<dyn Converter>;
     fn get_display_ratio(&mut self) -> u8;
+
 }
