@@ -1,8 +1,9 @@
 [package]
-name = "SbyteEditor"
+name = "sbyte"
 version = "0.2.0"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
+description = "Console-based byte editor"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
