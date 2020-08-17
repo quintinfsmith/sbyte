@@ -1,4 +1,4 @@
-use asciibox::{RectManager, logg};
+use wrecked::{RectManager, logg};
 
 pub trait InConsole {
     fn tick(&mut self);

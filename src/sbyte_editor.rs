@@ -5,7 +5,7 @@ use std::io;
 use std::io::{Write, Read};
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
-use asciibox::{RectManager, logg};
+use wrecked::{RectManager, logg};
 
 // Editor trait
 pub mod editor;

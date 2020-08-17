@@ -7,5 +7,5 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-AsciiBox = { path = "/home/pent/Projects/100" }
+wrecked = { path = "/home/pent/Projects/100" }
 termios = "0.3"
