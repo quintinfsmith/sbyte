@@ -18,6 +18,9 @@ pub mod inconsole;
 // CommandLine struct
 pub mod command_line;
 
+//Structured data
+pub mod structured;
+
 use editor::{Editor, EditorError};
 use editor::editor_cursor::Cursor;
 use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef};
@@ -28,6 +31,7 @@ use commandable::inputter::Inputter;
 use commandable::inputter::function_ref::FunctionRef;
 use command_line::CommandLine;
 use inconsole::*;
+use structured::*;
 
 
 pub struct SbyteEditor {
@@ -72,7 +76,11 @@ pub struct SbyteEditor {
     row_dict: HashMap<usize, (usize, usize)>,
     cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
 
-    search_history: Vec<String>
+    search_history: Vec<String>,
+
+    structure_id_gen: u64,
+    structures: HashMap<u64, Box<dyn StructuredDataHandler>>,
+    structure_spans: HashMap<u64, (usize, usize)>
 }
 
 impl SbyteEditor {
@@ -124,7 +132,11 @@ impl SbyteEditor {
             row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
 
-            search_history: Vec::new()
+            search_history: Vec::new(),
+
+            structure_id_gen: 0,
+            structures: HashMap::new(),
+            structure_spans: HashMap::new()
         };
 
         output.assign_line_command("q".to_string(), FunctionRef::KILL);
@@ -143,7 +155,12 @@ impl SbyteEditor {
         let c = function_refs.clone();
         let mut _input_daemon = thread::spawn(move || {
             let mut inputter = Inputter::new();
-            inputter.assign_mode_command(0, "[".to_string(), FunctionRef::TOGGLE_CONVERTER);
+            inputter.assign_mode_command(0,"\x1B[A".to_string(), FunctionRef::NULL);
+            inputter.assign_mode_command(0,"\x1B[B".to_string(), FunctionRef::NULL);
+            inputter.assign_mode_command(0,"\x1B[C".to_string(), FunctionRef::NULL);
+            inputter.assign_mode_command(0,"\x1B[D".to_string(), FunctionRef::NULL);
+
+            inputter.assign_mode_command(0, "=".to_string(), FunctionRef::TOGGLE_CONVERTER);
             inputter.assign_mode_command(0, "j".to_string(), FunctionRef::CURSOR_DOWN);
             inputter.assign_mode_command(0, "k".to_string(), FunctionRef::CURSOR_UP);
             inputter.assign_mode_command(0, "h".to_string(), FunctionRef::CURSOR_LEFT);
@@ -263,9 +280,81 @@ impl SbyteEditor {
         }
         self.kill();
     }
+
     pub fn kill(&mut self) {
         self.rectmanager.kill();
     }
+
+    fn new_structure_handler(&mut self, handler: Box<dyn StructuredDataHandler>, index: usize, length: usize) -> u64 {
+        let new_id = self.structure_id_gen;
+        self.structure_id_gen += 1;
+        self.structures.insert(new_id, handler);
+
+        self.structure_spans.insert(new_id, (index, index + length));
+
+        new_id
+    }
+
+    fn shift_structure_handlers_after(&mut self, offset: usize, adjustment: isize) {
+        for (sid, span) in self.structure_spans.iter_mut() {
+            if span.0 >= offset {
+                *span = (
+                    span.0 + adjustment,
+                    span.1 + adjustment
+                );
+            } else if span.1 > offset {
+                *span = (
+                    span.0,
+                    span.1 + adjustment
+                );
+            }
+        }
+
+    }
+
+    fn get_structured_data_handlers(&mut self, offset: usize) -> ((usize, usize), u64) {
+        let mut output = Vec::new();
+
+        for (sid, span) in self.structures.iter() {
+            if span.0 <= offset && span.1 > offset {
+                output.push((*span, sid));
+            }
+        }
+
+        // We want inner most structures first
+        output.sort();
+        output.reverse();
+
+        output
+    }
+
+    fn run_structure_checks(&mut self, offset: usize) {
+        let mut working_bytes;
+
+        let mut difference: isize = 0;
+
+        let mut handler;
+        for (span, handler_id) in self.get_structured_data_handlers(offset) {
+            handler = self.structures[handler_id];
+            working_bytes = self.get_chunk(span.0, span.1);
+
+            match handler.mod_hook(working_bytes) {
+                Some(modified_chunk) => {
+                    for i in 0 .. working_bytes.len() {
+                        self.active_content.remove(i + offset);
+                    }
+                    for (i, byte) in modified_chunk.iter().enumerate() {
+                        self.active_content.insert(offset + i, *byte);
+                    }
+
+                    difference = working_bytes.len() - modified_chunk.len();
+                    self.shift_structure_handlers_after(span.0, difference);
+                }
+                None => {}
+            }
+        }
+    }
+
 }
 
 impl Editor for SbyteEditor {
@@ -503,6 +592,14 @@ impl Editor for SbyteEditor {
             output = Ok(());
         } else {
             output = Err(EditorError::OutOfRange);
+        }
+
+
+        // Manage structured data
+        if output.is_ok() {
+            let mut adj_byte_width = new_bytes.len();
+            self.shift_structure_handlers_after(offset, adj_byte_width as isize);
+            self.run_structure_checks(offset);
         }
 
         output

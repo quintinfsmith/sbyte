@@ -8,5 +8,5 @@ description = "Console-based byte editor"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wrecked = { path = "/home/pent/Projects/100" }
+wrecked = { path = "/home/pent/Projects/wrecked" }
 termios = "0.3"
