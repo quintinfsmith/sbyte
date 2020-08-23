@@ -171,6 +171,8 @@ impl SbyteEditor {
             inputter.assign_mode_command(0, "H".to_string(), FunctionRef::CURSOR_LENGTH_LEFT);
             inputter.assign_mode_command(0, "L".to_string(), FunctionRef::CURSOR_LENGTH_RIGHT);
 
+            inputter.assign_mode_command(0, "!".to_string(), FunctionRef::CREATE_LITTLE_ENDIAN_STRUCTURE);
+
             for i in 0 .. 10 {
                 inputter.assign_mode_command(0, std::str::from_utf8(&[i + 48]).unwrap().to_string(), FunctionRef::APPEND_TO_REGISTER);
             }
@@ -312,6 +314,20 @@ impl SbyteEditor {
 
     }
 
+    fn get_visible_structured_data_handlers(&mut self, offset: usize, search_width: usize) -> Vec<((usize, usize), u64)> {
+        let mut output = Vec::new();
+
+        for (sid, span) in self.structure_spans.iter() {
+            if (span.0 >= offset && span.0 < offset + search_width) || (span.1 >= offset && span.1 < offset + search_width) {
+                logg("!!!".to_string());
+                output.push((*span, *sid));
+            }
+        }
+        logg(format!("structures {}", output.len()));
+
+        output
+
+    }
     fn get_structured_data_handlers(&mut self, offset: usize) -> Vec<((usize, usize), u64)> {
         let mut output = Vec::new();
 
@@ -335,17 +351,17 @@ impl SbyteEditor {
         let mut difference: isize = 0;
 
         for (span, handler_id) in self.get_structured_data_handlers(offset).iter() {
-            working_bytes = self.get_chunk(span.0, span.1);
-            working_bytes_len = working_bytes.len();
+            working_bytes = self.get_chunk(span.0, span.1 - span.0);
+            working_bytes_len = span.1 - span.0;
             match self.structures.get(handler_id) {
                 Some(handler) => {
                     match handler.mod_hook(working_bytes) {
                         Some(modified_chunk) => {
                             for i in 0 .. working_bytes_len {
-                                self.active_content.remove(i + offset);
+                                self.active_content.remove(span.0);
                             }
-                            for (i, byte) in modified_chunk.iter().enumerate() {
-                                self.active_content.insert(offset + i, *byte);
+                            for byte in modified_chunk.iter().rev() {
+                                self.active_content.insert(span.0, *byte);
                             }
 
                             difference = (working_bytes_len as isize) - (modified_chunk.len() as isize);
@@ -1169,6 +1185,14 @@ impl InConsole for SbyteEditor {
         let width = viewport.get_width();
         let offset = width * absolute_y;
 
+        let structure_handlers = self.get_visible_structured_data_handlers(offset, width);
+        let mut structured_cells_map = HashMap::new();
+        for (span, _) in structure_handlers.iter() {
+            for x in span.0 .. span.1 {
+                structured_cells_map.entry(x).or_insert(true);
+            }
+        }
+
         let chunk = self.get_chunk(offset, width);
         let relative_y = absolute_y - (self.viewport.get_offset() / width);
 
@@ -1183,9 +1207,14 @@ impl InConsole for SbyteEditor {
                 let mut tmp_bits_str;
                 let mut tmp_human;
                 let mut tmp_human_str;
+                let mut in_structure;
                 for (x, byte) in chunk.iter().enumerate() {
                     tmp_bits = active_converter.encode_byte(*byte);
                     tmp_human = human_converter.encode_byte(*byte);
+                    in_structure = match structured_cells_map.get(&x) {
+                        Some(_) => { true }
+                        None => { false }
+                    };
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
                             tmp_bits_str = match std::str::from_utf8(tmp_bits.as_slice()) {
@@ -1207,6 +1236,10 @@ impl InConsole for SbyteEditor {
                             };
                             self.rectmanager.set_string(*human, 0, 0, tmp_human_str);
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
+                            if in_structure {
+                                self.rectmanager.set_underline_flag(*human);
+                                self.rectmanager.set_underline_flag(*bits);
+                            }
                         }
                         None => {
                         }
@@ -1597,6 +1630,30 @@ impl Commandable for SbyteEditor {
                 }
                 self.set_offset_display();
             }
+
+            FunctionRef::CREATE_LITTLE_ENDIAN_STRUCTURE => {
+                let prefix_width = self.cursor.get_length();
+                let handler = LittleEndianPrefixed::new(prefix_width);
+                let offset = self.cursor.get_offset();
+                let prefix = self.get_chunk(offset, prefix_width);
+                let data_width = LittleEndianPrefixed::decode_prefix(prefix);
+                logg(format!("prefix width: {}", prefix_width));
+                logg(format!("data width: {}", data_width));
+                self.new_structure_handler(
+                    Box::new(handler),
+                    offset,
+                    prefix_width + (data_width as usize)
+                );
+                let viewport_width = self.viewport.get_width();
+                let viewport_height = self.viewport.get_height();
+                let active_row = offset / viewport_width;
+                let viewport_line = self.viewport.get_offset() / viewport_width;
+
+                for y in active_row .. viewport_line + viewport_height {
+                    self.set_row_characters(y);
+                }
+            }
+
             FunctionRef::BACKSPACE => {
                 if self.cursor.get_offset() > 0 {
                     self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, arguments.clone());
