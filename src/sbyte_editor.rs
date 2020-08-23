@@ -299,25 +299,25 @@ impl SbyteEditor {
         for (sid, span) in self.structure_spans.iter_mut() {
             if span.0 >= offset {
                 *span = (
-                    span.0 + adjustment,
-                    span.1 + adjustment
+                    ((span.0 as isize) + adjustment) as usize,
+                    ((span.1 as isize) + adjustment) as usize
                 );
             } else if span.1 > offset {
                 *span = (
                     span.0,
-                    span.1 + adjustment
+                    ((span.1 as isize) + adjustment) as usize
                 );
             }
         }
 
     }
 
-    fn get_structured_data_handlers(&mut self, offset: usize) -> ((usize, usize), u64) {
+    fn get_structured_data_handlers(&mut self, offset: usize) -> Vec<((usize, usize), u64)> {
         let mut output = Vec::new();
 
-        for (sid, span) in self.structures.iter() {
+        for (sid, span) in self.structure_spans.iter() {
             if span.0 <= offset && span.1 > offset {
-                output.push((*span, sid));
+                output.push((*span, *sid));
             }
         }
 
@@ -330,28 +330,32 @@ impl SbyteEditor {
 
     fn run_structure_checks(&mut self, offset: usize) {
         let mut working_bytes;
+        let mut working_bytes_len;
 
         let mut difference: isize = 0;
 
-        let mut handler;
-        for (span, handler_id) in self.get_structured_data_handlers(offset) {
-            handler = self.structures[handler_id];
+        for (span, handler_id) in self.get_structured_data_handlers(offset).iter() {
             working_bytes = self.get_chunk(span.0, span.1);
+            working_bytes_len = working_bytes.len();
+            match self.structures.get(handler_id) {
+                Some(handler) => {
+                    match handler.mod_hook(working_bytes) {
+                        Some(modified_chunk) => {
+                            for i in 0 .. working_bytes_len {
+                                self.active_content.remove(i + offset);
+                            }
+                            for (i, byte) in modified_chunk.iter().enumerate() {
+                                self.active_content.insert(offset + i, *byte);
+                            }
 
-            match handler.mod_hook(working_bytes) {
-                Some(modified_chunk) => {
-                    for i in 0 .. working_bytes.len() {
-                        self.active_content.remove(i + offset);
+                            difference = (working_bytes_len as isize) - (modified_chunk.len() as isize);
+                            self.shift_structure_handlers_after(span.0, difference);
+                        }
+                        None => {}
                     }
-                    for (i, byte) in modified_chunk.iter().enumerate() {
-                        self.active_content.insert(offset + i, *byte);
-                    }
-
-                    difference = working_bytes.len() - modified_chunk.len();
-                    self.shift_structure_handlers_after(span.0, difference);
                 }
-                None => {}
-            }
+                None => ()
+            };
         }
     }
 
