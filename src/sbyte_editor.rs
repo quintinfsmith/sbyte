@@ -589,6 +589,12 @@ impl Editor for SbyteEditor {
             output = Err(EditorError::OutOfRange);
         }
 
+        // Manage structured data
+        if output.is_ok() {
+            self.shift_structure_handlers_after(offset, 0 - (length as isize));
+            self.run_structure_checks(offset);
+        }
+
         output
     }
 
@@ -631,9 +637,15 @@ impl Editor for SbyteEditor {
     }
 
     fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError> {
-        let output = self.remove_bytes(position, new_bytes.len());
+        let length = new_bytes.len();
+        let output = self.remove_bytes(position, length);
         if output.is_ok() {
             self.insert_bytes(position, new_bytes);
+        }
+
+        // Manage structured data
+        if output.is_ok() {
+            self.run_structure_checks(position);
         }
 
         output
@@ -1239,6 +1251,9 @@ impl InConsole for SbyteEditor {
                             if in_structure {
                                 self.rectmanager.set_underline_flag(*human);
                                 self.rectmanager.set_underline_flag(*bits);
+                            } else {
+                                self.rectmanager.unset_underline_flag(*human);
+                                self.rectmanager.unset_underline_flag(*bits);
                             }
                         }
                         None => {
@@ -1375,6 +1390,7 @@ impl InConsole for SbyteEditor {
 
         self.flag_refresh_meta = true;
     }
+
 }
 
 impl Commandable for SbyteEditor {
