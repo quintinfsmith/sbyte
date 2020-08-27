@@ -11,8 +11,8 @@ pub enum EditorError {
 pub trait Editor {
     fn undo(&mut self);
     fn redo(&mut self);
-    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>)) -> (usize, usize, Option<Vec<u8>>);
-    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>);
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)) -> (usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>);
+    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>, handler_spans: Vec<(u64, (usize,usize))>);
     fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>);
     fn make_selection(&mut self, offset: usize, length: usize);
     fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);

@@ -41,8 +41,8 @@ pub struct SbyteEditor {
     active_file_path: Option<String>,
     cursor: Cursor,
     active_converter: ConverterRef,
-    undo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
-    redo_stack: Vec<(usize, usize, Option<Vec<u8>>)>, // Position, bytes to remove, bytes to insert
+    undo_stack: Vec<(usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)>, // Position, bytes to remove, bytes to insert
+    redo_stack: Vec<(usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)>, // Position, bytes to remove, bytes to insert
 
 
     // Commandable
@@ -297,14 +297,17 @@ impl SbyteEditor {
         new_id
     }
 
-    fn shift_structure_handlers_after(&mut self, offset: usize, adjustment: isize) {
+    fn shift_structure_handlers_after(&mut self, offset: usize, adjustment: isize) -> Vec<(u64, (usize, usize))> {
+        let mut history: Vec<(u64, (usize, usize))>= Vec::new();
         for (sid, span) in self.structure_spans.iter_mut() {
             if span.0 >= offset {
+                history.push((*sid, (span.0, span.1)));
                 *span = (
                     ((span.0 as isize) + adjustment) as usize,
                     ((span.1 as isize) + adjustment) as usize
                 );
             } else if span.1 > offset {
+                history.push((*sid, (span.0, span.1)));
                 *span = (
                     span.0,
                     ((span.1 as isize) + adjustment) as usize
@@ -312,6 +315,7 @@ impl SbyteEditor {
             }
         }
 
+        history
     }
 
     fn get_visible_structured_data_handlers(&mut self, offset: usize, search_width: usize) -> Vec<((usize, usize), u64)> {
@@ -319,11 +323,9 @@ impl SbyteEditor {
 
         for (sid, span) in self.structure_spans.iter() {
             if (span.0 >= offset && span.0 < offset + search_width) || (span.1 >= offset && span.1 < offset + search_width) {
-                logg("!!!".to_string());
                 output.push((*span, *sid));
             }
         }
-        logg(format!("structures {}", output.len()));
 
         output
 
@@ -332,7 +334,7 @@ impl SbyteEditor {
         let mut output = Vec::new();
 
         for (sid, span) in self.structure_spans.iter() {
-            if span.0 <= offset && span.1 > offset {
+            if span.0 <= offset && span.1 >= offset {
                 output.push((*span, *sid));
             }
         }
@@ -350,31 +352,67 @@ impl SbyteEditor {
 
         let mut difference: isize = 0;
 
+        let mut shifted_handler_spans;
         for (span, handler_id) in self.get_structured_data_handlers(offset).iter() {
-            working_bytes = self.get_chunk(span.0, span.1 - span.0);
             working_bytes_len = span.1 - span.0;
+            working_bytes = self.get_chunk(span.0, working_bytes_len);
             match self.structures.get(handler_id) {
                 Some(handler) => {
-                    match handler.mod_hook(working_bytes) {
+                    match handler.mod_hook(working_bytes.clone()) {
                         Some(modified_chunk) => {
                             for i in 0 .. working_bytes_len {
                                 self.active_content.remove(span.0);
                             }
+
                             for byte in modified_chunk.iter().rev() {
                                 self.active_content.insert(span.0, *byte);
                             }
 
                             difference = (working_bytes_len as isize) - (modified_chunk.len() as isize);
-                            self.shift_structure_handlers_after(span.0, difference);
+
+                            shifted_handler_spans = self.shift_structure_handlers_after(span.0, difference);
+                            self.push_to_undo_stack(span.0, modified_chunk.len(), Some(working_bytes.clone()), shifted_handler_spans);
                         }
                         None => {}
                     }
                 }
                 None => ()
-            };
+            }
         }
     }
 
+    // ONLY to be used in insert_bytes and overwrite_bytes. nowhere else.
+    fn _insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
+        let output;
+        if offset < self.active_content.len() {
+            for (i, new_byte) in new_bytes.iter().enumerate() {
+                self.active_content.insert(offset + i, *new_byte);
+            }
+            output = Ok(());
+        } else if offset == self.active_content.len() {
+            for new_byte in new_bytes.iter() {
+                self.active_content.push(*new_byte);
+            }
+            output = Ok(());
+        } else {
+            output = Err(EditorError::OutOfRange);
+        }
+
+        output
+    }
+    // ONLY to be  used by remove_bytes and overwrite_bytes functions, nowhere else.
+    fn _remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
+        if (offset < self.active_content.len()) {
+            let mut removed_bytes = Vec::new();
+            let adj_length = min(self.active_content.len() - offset, length);
+            for i in 0..adj_length {
+                removed_bytes.push(self.active_content.remove(offset));
+            }
+            Ok(removed_bytes)
+        } else {
+            Err(EditorError::OutOfRange)
+        }
+    }
 }
 
 impl Editor for SbyteEditor {
@@ -404,15 +442,17 @@ impl Editor for SbyteEditor {
     }
 
 
-    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>)) -> (usize, usize, Option<Vec<u8>>) {
-        let (offset, bytes_to_remove, bytes_to_insert) = task;
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)) -> (usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>) {
+        let (offset, bytes_to_remove, bytes_to_insert, handler_spans) = task;
 
         self.cursor_set_offset(offset);
 
         let mut opposite_bytes_to_insert = None;
+        let mut insert_length: usize = 0;
         if bytes_to_remove > 0 {
-            opposite_bytes_to_insert = match self.remove_bytes(offset, bytes_to_remove) {
+            opposite_bytes_to_insert = match self._remove_bytes(offset, bytes_to_remove) {
                 Ok(some_bytes) => {
+                    insert_length += some_bytes.len();
                     Some(some_bytes)
                 }
                 Err(e) => None
@@ -423,17 +463,29 @@ impl Editor for SbyteEditor {
         match bytes_to_insert {
             Some(bytes) => {
                 opposite_bytes_to_remove = bytes.len();
-                self.insert_bytes(offset, bytes);
+                self._insert_bytes(offset, bytes);
             }
             None => ()
         }
 
-        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert)
+        let mut redo_handlers = Vec::new();
+
+        for (sid, oldspan) in handler_spans.iter() {
+            self.structure_spans.entry(*sid)
+                .and_modify(|span| {
+                    redo_handlers.push((*sid, (span.0, span.1)));
+                    *span = (oldspan.0, oldspan.1);
+                });
+        }
+
+        //self.run_structure_checks(offset);
+
+        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, redo_handlers)
     }
 
-    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>) {
+    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>, structure_handler_states: Vec<(u64, (usize, usize))>) {
         self.redo_stack.drain(..);
-        self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert));
+        self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert, structure_handler_states));
     }
 
     fn get_active_converter(&self) -> Box<dyn Converter> {
@@ -575,28 +627,26 @@ impl Editor for SbyteEditor {
         output
     }
 
+
     fn remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
-        let mut removed_bytes = Vec::new();
+        let output = self._remove_bytes(offset, length);
 
-        let output;
-        if (offset < self.active_content.len()) {
-            let adj_length = min(self.active_content.len() - offset, length);
-            for i in 0..adj_length {
-                removed_bytes.push(self.active_content.remove(offset));
+        let handlers_history = self.shift_structure_handlers_after(offset, 0 - (length as isize));
+        match output {
+            Ok(old_bytes) => {
+                self.push_to_undo_stack(offset, 0, Some(old_bytes.clone()), handlers_history);
+
+
+                self.run_structure_checks(offset);
+
+                Ok(old_bytes)
             }
-            output = Ok(removed_bytes);
-        } else {
-            output = Err(EditorError::OutOfRange);
+            Err(e) => {
+                Err(e)
+            }
         }
-
-        // Manage structured data
-        if output.is_ok() {
-            self.shift_structure_handlers_after(offset, 0 - (length as isize));
-            self.run_structure_checks(offset);
-        }
-
-        output
     }
+
 
     fn remove_bytes_at_cursor(&mut self) -> Result<Vec<u8>, EditorError> {
         let offset = self.cursor.get_offset();
@@ -604,27 +654,16 @@ impl Editor for SbyteEditor {
         self.remove_bytes(offset, length)
     }
 
-    fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
-        let output;
-        if offset < self.active_content.len() {
-            for (i, new_byte) in new_bytes.iter().enumerate() {
-                self.active_content.insert(offset + i, *new_byte);
-            }
-            output = Ok(());
-        } else if offset == self.active_content.len() {
-            for new_byte in new_bytes.iter() {
-                self.active_content.push(*new_byte);
-            }
-            output = Ok(());
-        } else {
-            output = Err(EditorError::OutOfRange);
-        }
 
+    fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
+        let mut adj_byte_width = new_bytes.len();
+        let output = self._insert_bytes(offset, new_bytes);
+
+        let handlers_history = self.shift_structure_handlers_after(offset, adj_byte_width as isize);
+        self.push_to_undo_stack(offset, adj_byte_width, None, handlers_history);
 
         // Manage structured data
         if output.is_ok() {
-            let mut adj_byte_width = new_bytes.len();
-            self.shift_structure_handlers_after(offset, adj_byte_width as isize);
             self.run_structure_checks(offset);
         }
 
@@ -638,17 +677,23 @@ impl Editor for SbyteEditor {
 
     fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError> {
         let length = new_bytes.len();
-        let output = self.remove_bytes(position, length);
-        if output.is_ok() {
-            self.insert_bytes(position, new_bytes);
-        }
+        let mut output = self._remove_bytes(position, length);
+        match output {
+            Ok(old_bytes) => {
+                self._insert_bytes(position, new_bytes);
+                self.push_to_undo_stack(position, length, Some(old_bytes.clone()), vec![]);
 
-        // Manage structured data
-        if output.is_ok() {
-            self.run_structure_checks(position);
-        }
 
-        output
+                // Manage structured data
+                self.run_structure_checks(position);
+
+
+                Ok(old_bytes)
+            }
+            Err(e) => {
+                Err(e)
+            }
+        }
     }
 
     fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
@@ -1255,6 +1300,13 @@ impl InConsole for SbyteEditor {
                                 self.rectmanager.unset_underline_flag(*human);
                                 self.rectmanager.unset_underline_flag(*bits);
                             }
+                            //if self.active_converter == ConverterRef::BIN {
+                            //    self.rectmanager.set_bg_color(*human, 3);
+                            //    self.rectmanager.set_bg_color(*bits, 2);
+                            //} else {
+                            //    self.rectmanager.set_bg_color(*human, 5);
+                            //    self.rectmanager.set_bg_color(*bits, 6);
+                            //}
                         }
                         None => {
                         }
@@ -1627,10 +1679,10 @@ impl Commandable for SbyteEditor {
                         Ok(bytes) => {
                             removed_bytes.extend(bytes.iter().copied());
                         }
-                        Err(e) => {}
+                        Err(e) => { }
                     }
                 }
-                self.push_to_undo_stack(offset, 0, Some(removed_bytes));
+
 
                 self.remove_cursor();
                 self.cursor_set_length(1);
@@ -1767,7 +1819,6 @@ impl Commandable for SbyteEditor {
                                 self.insert_bytes_at_cursor(bytes.clone());
                                 self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
                             }
-                            self.push_to_undo_stack(offset, (repeat as usize) * bytes.len(), None);
 
                             let viewport_width = self.viewport.get_width();
                             let viewport_height = self.viewport.get_height();
@@ -1802,16 +1853,10 @@ impl Commandable for SbyteEditor {
 
                         let mut overwritten_bytes: Vec<u8> = Vec::new();
                         for _ in 0 .. repeat {
-                            match self.overwrite_bytes_at_cursor(bytes.clone()) {
-                                Ok(_overwritten) => {
-                                    overwritten_bytes.extend(_overwritten.iter().copied());
-                                }
-                                Err(e) => {}
-                            }
+                            self.overwrite_bytes_at_cursor(bytes.clone());
                             self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
                         }
 
-                        self.push_to_undo_stack(offset, bytes.len() * (repeat as usize), Some(overwritten_bytes));
 
 
                         self.remove_cursor();
