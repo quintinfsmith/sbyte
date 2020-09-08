@@ -23,7 +23,7 @@ pub mod structured;
 
 use editor::{Editor, EditorError};
 use editor::editor_cursor::Cursor;
-use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef};
+use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError};
 use visual_editor::*;
 use visual_editor::viewport::ViewPort;
 use commandable::Commandable;
@@ -172,6 +172,7 @@ impl SbyteEditor {
             inputter.assign_mode_command(0, "L".to_string(), FunctionRef::CURSOR_LENGTH_RIGHT);
 
             inputter.assign_mode_command(0, "!".to_string(), FunctionRef::CREATE_LITTLE_ENDIAN_STRUCTURE);
+            inputter.assign_mode_command(0, "@".to_string(), FunctionRef::REMOVE_STRUCTURE);
 
             for i in 0 .. 10 {
                 inputter.assign_mode_command(0, std::str::from_utf8(&[i + 48]).unwrap().to_string(), FunctionRef::APPEND_TO_REGISTER);
@@ -185,9 +186,13 @@ impl SbyteEditor {
             inputter.assign_mode_command(0, std::str::from_utf8(&[18]).unwrap().to_string(), FunctionRef::REDO);
 
             inputter.assign_mode_command(0, "i".to_string(), FunctionRef::MODE_SET_INSERT);
+            inputter.assign_mode_command(0, "I".to_string(), FunctionRef::MODE_SET_INSERT_SPECIAL);
             inputter.assign_mode_command(0, "a".to_string(), FunctionRef::MODE_SET_APPEND);
             inputter.assign_mode_command(0, "o".to_string(), FunctionRef::MODE_SET_OVERWRITE);
             inputter.assign_mode_command(0, ":".to_string(), FunctionRef::MODE_SET_CMD);
+
+            inputter.assign_mode_command(0, "+".to_string(), FunctionRef::INCREMENT);
+            inputter.assign_mode_command(0, "-".to_string(), FunctionRef::DECREMENT);
 
             inputter.assign_mode_command(1, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
             inputter.assign_mode_command(2, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
@@ -246,17 +251,21 @@ impl SbyteEditor {
                                         mutex.push((funcref, input_byte));
                                     }
                                 }
-                                Err(e) => {}
+                                Err(e) => {
+                                    //logg(e.to_string());
+                                }
                             }
                         }
-                        None => ()
+                        None => {
+                            ()
+                        }
                     }
                 }
             }
         });
 
 
-        let fps = 60.0;
+        let fps = 30.0;
 
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
@@ -295,6 +304,11 @@ impl SbyteEditor {
         self.structure_spans.insert(new_id, (index, index + length));
 
         new_id
+    }
+
+    fn remove_structure_handler(&mut self, handler_id: u64) {
+        self.structures.remove(&handler_id);
+        self.structure_spans.remove(&handler_id);
     }
 
     fn shift_structure_handlers_after(&mut self, offset: usize, adjustment: isize) -> Vec<(u64, (usize, usize))> {
@@ -379,6 +393,60 @@ impl SbyteEditor {
                 None => ()
             }
         }
+    }
+
+    fn increment_byte(&mut self, offset: usize) -> Result<(), EditorError> {
+        let mut current_byte_offset = offset;
+        let mut current_byte_value = self.active_content[current_byte_offset];
+        let mut undo_bytes = vec![];
+
+        while true {
+            if current_byte_value < 255 {
+                undo_bytes.insert(0, current_byte_value);
+
+                self.active_content[current_byte_offset] = current_byte_value + 1;
+                break;
+            } else {
+                self.active_content[current_byte_offset] = 0;
+                if current_byte_offset > 0 {
+                    current_byte_offset -= 1;
+                } else {
+                    break;
+                }
+                current_byte_value = self.active_content[current_byte_offset];
+            }
+        }
+
+        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), Some(undo_bytes), vec![]);
+
+        Ok(())
+    }
+
+    fn decrement_byte(&mut self, offset: usize) -> Result<(), EditorError> {
+        let mut current_byte_offset = offset;
+        let mut current_byte_value = self.active_content[current_byte_offset];
+
+        let mut undo_bytes = vec![];
+
+        while true {
+            if current_byte_value > 0 {
+                undo_bytes.insert(0, current_byte_value);
+                self.active_content[current_byte_offset] = current_byte_value - 1;
+                break;
+            } else {
+                self.active_content[current_byte_offset] = 255;
+                if current_byte_offset > 0 {
+                    current_byte_offset -= 1;
+                } else {
+                    break;
+                }
+                current_byte_value = self.active_content[current_byte_offset];
+            }
+        }
+
+        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), Some(undo_bytes), vec![]);
+
+        Ok(())
     }
 
     // ONLY to be used in insert_bytes and overwrite_bytes. nowhere else.
@@ -790,6 +858,7 @@ impl VisualEditor for SbyteEditor {
         let viewport_width = self.viewport.get_width();
         let new_offset = self.cursor.get_real_offset() - min(self.cursor.get_real_offset(), viewport_width);
         self.cursor_set_offset(new_offset);
+        //logg(format!("moved to {}", new_offset));
     }
 
     fn cursor_increase_length_by_line(&mut self) {
@@ -840,7 +909,7 @@ impl InConsole for SbyteEditor {
             || self.rows_to_refresh.len() > 0;
 
         if self.flag_refresh_full {
-            self.rectmanager.queue_draw(0);
+            self.rectmanager.flag_refresh(0);
             self.flag_refresh_full = false;
             self.flag_refresh_display = false;
             self.flag_refresh_meta = false;
@@ -849,20 +918,20 @@ impl InConsole for SbyteEditor {
         }
 
         if self.flag_refresh_display {
-            self.rectmanager.queue_draw(self.rect_display_wrapper);
+            self.rectmanager.flag_refresh(self.rect_display_wrapper);
             self.flag_refresh_display = false;
             self.cells_to_refresh.drain();
             self.rows_to_refresh.drain();
         }
 
         for (_bits_id, _human_id) in self.cells_to_refresh.iter() {
-            self.rectmanager.queue_draw(*_bits_id);
-            self.rectmanager.queue_draw(*_human_id);
+            self.rectmanager.flag_refresh(*_bits_id);
+            self.rectmanager.flag_refresh(*_human_id);
         }
 
         for (_bits_id, _human_id) in self.rows_to_refresh.iter() {
-            self.rectmanager.queue_draw(*_bits_id);
-            self.rectmanager.queue_draw(*_human_id);
+            self.rectmanager.flag_refresh(*_bits_id);
+            self.rectmanager.flag_refresh(*_human_id);
         }
 
         self.cells_to_refresh.drain();
@@ -870,11 +939,11 @@ impl InConsole for SbyteEditor {
 
         if self.flag_refresh_meta {
             self.flag_refresh_meta = false;
-            self.rectmanager.queue_draw(self.rect_meta);
+            self.rectmanager.flag_refresh(self.rect_meta);
         }
 
         if do_draw {
-            self.rectmanager.draw_queued();
+            self.rectmanager.draw(0);
         }
     }
 
@@ -1021,6 +1090,7 @@ impl InConsole for SbyteEditor {
             self.is_resizing = true;
             // Viewport offset needs to be set to zero to ensure each line has the correct width
             self.viewport.set_offset(0);
+            self.cursor_set_offset(0);
             self.setup_displays();
             self.flag_force_rerow = true;
             self.remap_active_rows();
@@ -1699,14 +1769,35 @@ impl Commandable for SbyteEditor {
                 self.set_offset_display();
             }
 
+            FunctionRef::REMOVE_STRUCTURE => {
+                let offset = self.cursor.get_offset();
+                let mut structures = self.get_structured_data_handlers(offset);
+
+                match structures.first() {
+                    Some((span, sid)) => {
+                        self.remove_structure_handler(*sid);
+
+                        let viewport_width = self.viewport.get_width();
+                        let viewport_height = self.viewport.get_height();
+
+                        let active_row = self.viewport.get_offset() / viewport_width;
+                        let span_offset_a = max((span.0 / viewport_width), active_row) - active_row;
+                        let span_offset_b = min((span.1 / viewport_width), viewport_height + active_row) - active_row;
+                        for y in span_offset_a .. max(span_offset_b, span_offset_a + 1) {
+                            self.set_row_characters(y);
+                        }
+
+                    }
+                    None => {}
+                }
+            }
+
             FunctionRef::CREATE_LITTLE_ENDIAN_STRUCTURE => {
                 let prefix_width = self.cursor.get_length();
                 let handler = LittleEndianPrefixed::new(prefix_width);
                 let offset = self.cursor.get_offset();
                 let prefix = self.get_chunk(offset, prefix_width);
                 let data_width = LittleEndianPrefixed::decode_prefix(prefix);
-                logg(format!("prefix width: {}", prefix_width));
-                logg(format!("data width: {}", data_width));
                 self.new_structure_handler(
                     Box::new(handler),
                     offset,
@@ -1733,7 +1824,10 @@ impl Commandable for SbyteEditor {
                 let current_viewport_offset = self.viewport.get_offset();
                 self.remove_cursor();
 
-                self.undo();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.undo();
+                }
 
                 self.remap_active_rows();
                 if self.viewport.get_offset() == current_viewport_offset {
@@ -1754,8 +1848,10 @@ impl Commandable for SbyteEditor {
                 let current_viewport_offset = self.viewport.get_offset();
                 self.remove_cursor();
 
-                self.redo();
-
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.redo();
+                }
 
                 self.remap_active_rows();
                 if self.viewport.get_offset() == current_viewport_offset {
@@ -1810,24 +1906,29 @@ impl Commandable for SbyteEditor {
 
                 match arguments.get(0) {
                     Some(argument) => {
-                        let bytes = self.string_to_bytes(argument.to_string());
+                        match self.string_to_bytes(argument.to_string()) {
+                            Ok(bytes) => {
+                                let repeat = self.grab_register(1);
+                                if repeat > 0 {
 
-                        let repeat = self.grab_register(1);
-                        if repeat > 0 {
+                                    for _ in 0 .. repeat {
+                                        self.insert_bytes_at_cursor(bytes.clone());
+                                        self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                                    }
 
-                            for _ in 0 .. repeat {
-                                self.insert_bytes_at_cursor(bytes.clone());
-                                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                                    let viewport_width = self.viewport.get_width();
+                                    let viewport_height = self.viewport.get_height();
+                                    let first_active_row = offset / viewport_width;
+                                    let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
+                                    for y in first_active_row .. last_active_row {
+                                        self.set_row_characters(y);
+                                    }
+                                    self.set_offset_display();
+                                }
                             }
-
-                            let viewport_width = self.viewport.get_width();
-                            let viewport_height = self.viewport.get_height();
-                            let first_active_row = offset / viewport_width;
-                            let last_active_row = (self.viewport.get_offset() / viewport_width) + viewport_height;
-                            for y in first_active_row .. last_active_row {
-                                self.set_row_characters(y);
+                            Err(e) => {
+                                // TODO: Display converter error in meta display
                             }
-                            self.set_offset_display();
                         }
                     }
                     None => ()
@@ -1848,30 +1949,74 @@ impl Commandable for SbyteEditor {
 
                 match arguments.get(0) {
                     Some(argument) => {
-                        let mut bytes = self.string_to_bytes(argument.to_string());
-                        let repeat = self.grab_register(1);
+                        match self.string_to_bytes(argument.to_string()) {
+                            Ok(bytes) => {
+                                let repeat = self.grab_register(1);
 
-                        let mut overwritten_bytes: Vec<u8> = Vec::new();
-                        for _ in 0 .. repeat {
-                            self.overwrite_bytes_at_cursor(bytes.clone());
-                            self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
-                        }
+                                let mut overwritten_bytes: Vec<u8> = Vec::new();
+                                for _ in 0 .. repeat {
+                                    self.overwrite_bytes_at_cursor(bytes.clone());
+                                    self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                                }
 
 
 
-                        self.remove_cursor();
-                        self.cursor_set_length(1);
-                        self.apply_cursor();
+                                self.remove_cursor();
+                                self.cursor_set_length(1);
+                                self.apply_cursor();
 
-                        let viewport_width = self.viewport.get_width();
-                        let first_active_row = offset / viewport_width;
-                        let last_active_row = (offset + 1) / viewport_width;
+                                let viewport_width = self.viewport.get_width();
+                                let first_active_row = offset / viewport_width;
+                                let last_active_row = (offset + 1) / viewport_width;
 
-                        for y in first_active_row .. last_active_row + 1 {
-                            self.set_row_characters(y);
+                                for y in first_active_row .. last_active_row + 1 {
+                                    self.set_row_characters(y);
+                                }
+                            }
+                            Err(e) => {
+                                // TODO: Display converter error in meta display
+                            }
                         }
                     }
                     None => ()
+                }
+            }
+            FunctionRef::DECREMENT => {
+                let offset = self.cursor.get_offset();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.decrement_byte(offset);
+                }
+
+                self.remove_cursor();
+                self.cursor_set_length(1);
+                self.apply_cursor();
+
+                let viewport_width = self.viewport.get_width();
+                let first_active_row = offset / viewport_width;
+                let last_active_row = (offset + 1) / viewport_width;
+
+                for y in first_active_row .. last_active_row + 1 {
+                    self.set_row_characters(y);
+                }
+            }
+            FunctionRef::INCREMENT => {
+                let offset = self.cursor.get_offset();
+                let repeat = self.grab_register(1);
+                for _ in 0 .. repeat {
+                    self.increment_byte(offset);
+                }
+
+                self.remove_cursor();
+                self.cursor_set_length(1);
+                self.apply_cursor();
+
+                let viewport_width = self.viewport.get_width();
+                let first_active_row = offset / viewport_width;
+                let last_active_row = (offset + 1) / viewport_width;
+
+                for y in first_active_row .. last_active_row + 1 {
+                    self.set_row_characters(y);
                 }
             }
             FunctionRef::RUN_CUSTOM_COMMAND => {
@@ -1930,32 +2075,32 @@ impl Commandable for SbyteEditor {
     }
 
     // Convert argument string to bytes.
-    fn string_to_bytes(&mut self, input_string: String) -> Vec<u8> {
-        let mut output = Vec::new();
+    fn string_to_bytes(&mut self, input_string: String) -> Result<Vec<u8>, ConverterError> {
+        let mut use_converter: Option<Box<dyn Converter>> = None;
+
         let mut input_bytes = input_string.as_bytes().to_vec();
         if input_bytes.len() > 2 {
             if input_bytes[0] == 92 {
                 match input_bytes[1] {
                     98 => { // b
-                        let converter = BinaryConverter {};
-                        output = converter.decode(input_bytes.split_at(2).1.to_vec()).ok().unwrap();
+                        use_converter = Some(Box::new(BinaryConverter {}));
                     }
                     120 => { // x
-                        let converter = HexConverter {};
-                        output = converter.decode(input_bytes.split_at(2).1.to_vec()).ok().unwrap();
+                        use_converter = Some(Box::new(HexConverter {}));
                     }
-                    _ => {
-                        output = input_string.as_bytes().to_vec();
-                    }
+                    _ => { }
                 }
-            } else {
-                output = input_string.as_bytes().to_vec();
             }
-        } else {
-            output = input_string.as_bytes().to_vec();
         }
 
-        output
+        match use_converter {
+            Some(converter) => {
+                converter.decode(input_bytes.split_at(2).1.to_vec())
+            }
+            None => {
+                Ok(input_string.as_bytes().to_vec())
+            }
+        }
     }
 }
 

@@ -17,6 +17,12 @@ pub trait Converter {
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
     fn encode_integer(&self, integer: usize) -> Vec<u8>;
 }
+impl Converter {
+    fn decode_string(&self, string: String) -> Result<Vec<u8>, ConverterError> {
+        let mut bytes = string.as_bytes().to_vec();
+        self.decode(bytes)
+    }
+}
 
 pub struct HexConverter { }
 pub struct HumanConverter { }
@@ -181,7 +187,7 @@ impl Converter for BinaryConverter {
         let mut lode_byte = 0;
 
 
-        for (i, byte) in bytes.iter().rev().enumerate() {
+        for (i, byte) in bytes.iter().enumerate() {
             lode_byte *= 2;
             if *byte == 48 || *byte == 49 {
                 lode_byte += *byte - 48;

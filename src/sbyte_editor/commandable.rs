@@ -1,4 +1,5 @@
 pub mod inputter;
+use super::editor::converter::ConverterError;
 use inputter::*;
 use inputter::function_ref::*;
 
@@ -11,5 +12,5 @@ pub trait Commandable {
     fn grab_register(&mut self, default_if_unset: isize) -> isize;
 
     fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>);
-    fn string_to_bytes(&mut self, input_string: String) -> Vec<u8>;
+    fn string_to_bytes(&mut self, input_string: String) -> Result<Vec<u8>, ConverterError>;
 }

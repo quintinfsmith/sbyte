@@ -19,6 +19,8 @@ pub enum FunctionRef {
     UNDO,
     REDO,
     JUMP_TO_NEXT,
+    INCREMENT,
+    DECREMENT,
 
     INSERT_TO_CMDLINE,
     CMDLINE_BACKSPACE,
@@ -43,6 +45,8 @@ pub enum FunctionRef {
 
     CREATE_BIG_ENDIAN_STRUCTURE,
     CREATE_LITTLE_ENDIAN_STRUCTURE,
+
+    REMOVE_STRUCTURE,
 
 
     KILL,
