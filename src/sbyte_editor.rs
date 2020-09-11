@@ -81,6 +81,7 @@ pub struct SbyteEditor {
     structure_id_gen: u64,
     structures: HashMap<u64, Box<dyn StructuredDataHandler>>,
     structure_spans: HashMap<u64, (usize, usize)>,
+    structure_map: HashMap<usize, HashSet<u64>>,
     structure_validity: HashMap<u64, bool>
 }
 
@@ -138,7 +139,8 @@ impl SbyteEditor {
             structure_id_gen: 0,
             structures: HashMap::new(),
             structure_spans: HashMap::new(),
-            structure_validity: HashMap::new()
+            structure_validity: HashMap::new(),
+            structure_map: HashMap::new()
         };
 
         output.assign_line_command("q".to_string(), FunctionRef::KILL);
@@ -189,6 +191,7 @@ impl SbyteEditor {
 
             inputter.assign_mode_command(0, "i".to_string(), FunctionRef::MODE_SET_INSERT);
             inputter.assign_mode_command(0, "I".to_string(), FunctionRef::MODE_SET_INSERT_SPECIAL);
+            inputter.assign_mode_command(0, "O".to_string(), FunctionRef::MODE_SET_OVERWRITE_SPECIAL);
             inputter.assign_mode_command(0, "a".to_string(), FunctionRef::MODE_SET_APPEND);
             inputter.assign_mode_command(0, "o".to_string(), FunctionRef::MODE_SET_OVERWRITE);
             inputter.assign_mode_command(0, ":".to_string(), FunctionRef::MODE_SET_CMD);
@@ -298,12 +301,52 @@ impl SbyteEditor {
         self.rectmanager.kill();
     }
 
+    fn unmap_structure(&mut self, structure_id: u64) {
+        // Clear out any old mapping
+        match self.structure_spans.get(&structure_id) {
+            Some((span_i, span_f)) => {
+                for i in *span_i .. *span_f {
+                    match self.structure_map.get_mut(&i) {
+                        Some(sid_hashset) => {
+                            sid_hashset.remove(&structure_id);
+                        }
+                        None => {}
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn set_structure_span(&mut self, structure_id: u64, new_span: (usize, usize)) {
+        self.unmap_structure(structure_id);
+        // update the span
+        self.structure_spans.entry(structure_id)
+            .and_modify(|span| *span = new_span)
+            .or_insert(new_span);
+
+        // update the map
+        match self.structure_spans.get(&structure_id) {
+            Some((span_i, span_f)) => {
+                for i in *span_i .. *span_f {
+                    self.structure_map.entry(i)
+                        .or_insert(HashSet::new());
+
+                    self.structure_map.entry(i)
+                        .and_modify(|sid_set| { sid_set.insert(structure_id); });
+                }
+            }
+            None => { } // Should be unreachable
+        }
+    }
+
     fn new_structure_handler(&mut self, index: usize, length: usize, handler: Box<dyn StructuredDataHandler>) -> u64 {
         let new_id = self.structure_id_gen;
         self.structure_id_gen += 1;
         self.structures.insert(new_id, handler);
 
-        self.structure_spans.insert(new_id, (index, index + length));
+        self.set_structure_span(new_id, (index, index + length));
+
         self.structure_validity.insert(new_id, true);
 
         new_id
@@ -311,26 +354,41 @@ impl SbyteEditor {
 
     fn remove_structure_handler(&mut self, handler_id: u64) {
         self.structures.remove(&handler_id);
+        self.unmap_structure(handler_id);
         self.structure_spans.remove(&handler_id);
         self.structure_validity.remove(&handler_id);
     }
 
     fn shift_structure_handlers_after(&mut self, offset: usize, adjustment: isize) -> Vec<(u64, (usize, usize))> {
         let mut history: Vec<(u64, (usize, usize))>= Vec::new();
+        let mut new_spans = Vec::new();
         for (sid, span) in self.structure_spans.iter_mut() {
             if span.0 >= offset {
                 history.push((*sid, (span.0, span.1)));
-                *span = (
-                    ((span.0 as isize) + adjustment) as usize,
-                    ((span.1 as isize) + adjustment) as usize
+                new_spans.push(
+                    (
+                        *sid,
+                        (
+                            ((span.0 as isize) + adjustment) as usize,
+                            ((span.1 as isize) + adjustment) as usize
+                        )
+                    )
                 );
             } else if span.1 > offset {
                 history.push((*sid, (span.0, span.1)));
-                *span = (
-                    span.0,
-                    ((span.1 as isize) + adjustment) as usize
+                new_spans.push(
+                    (
+                        *sid,
+                        (
+                            span.0,
+                            ((span.1 as isize) + adjustment) as usize
+                        )
+                    )
                 );
             }
+        }
+        for (sid, new_span) in new_spans.iter() {
+            self.set_structure_span(*sid, *new_span);
         }
 
         history
@@ -357,10 +415,19 @@ impl SbyteEditor {
     fn get_structured_data_handlers(&mut self, offset: usize) -> Vec<((usize, usize), u64)> {
         let mut output = Vec::new();
 
-        for (sid, span) in self.structure_spans.iter() {
-            if span.0 <= offset && span.1 >= offset {
-                output.push((*span, *sid));
+        match self.structure_map.get(&offset) {
+            Some(ids) => {
+                for sid in ids.iter() {
+                    match self.structure_spans.get(sid) {
+                        Some(span) => {
+                            output.push((*span, *sid));
+                        }
+                        None => {}
+                    }
+                }
+
             }
+            None => {}
         }
 
         // We want inner most structures first
@@ -707,7 +774,6 @@ impl Editor for SbyteEditor {
                 self.push_to_undo_stack(offset, 0, Some(old_bytes.clone()), handlers_history);
 
 
-                self.run_structure_checks(offset);
 
                 Ok(old_bytes)
             }
@@ -732,11 +798,6 @@ impl Editor for SbyteEditor {
         let handlers_history = self.shift_structure_handlers_after(offset, adj_byte_width as isize);
         self.push_to_undo_stack(offset, adj_byte_width, None, handlers_history);
 
-        // Manage structured data
-        if output.is_ok() {
-            self.run_structure_checks(offset);
-        }
-
         output
     }
 
@@ -753,9 +814,6 @@ impl Editor for SbyteEditor {
                 self._insert_bytes(position, new_bytes);
                 self.push_to_undo_stack(position, length, Some(old_bytes.clone()), vec![]);
 
-
-                // Manage structured data
-                self.run_structure_checks(position);
 
 
                 Ok(old_bytes)
@@ -886,14 +944,22 @@ impl VisualEditor for SbyteEditor {
         let screen_buffer_length = width * height;
         let mut adj_viewport_offset = self.viewport.get_offset();
 
-        let adj_cursor_offset = self.cursor.get_offset();
+        let adj_cursor_offset = if self.cursor.get_real_length() <= 0 {
+            self.cursor.get_offset()
+        } else {
+            self.cursor.get_offset() + self.cursor.get_length() - 1
+        };
 
         while adj_cursor_offset >= screen_buffer_length + adj_viewport_offset {
             adj_viewport_offset += width;
         }
 
-        while adj_viewport_offset > self.cursor.get_real_offset() {
-            adj_viewport_offset = max(adj_viewport_offset - width, 0);
+        while adj_viewport_offset > adj_cursor_offset {
+            if (width > adj_viewport_offset) {
+                adj_viewport_offset = 0;
+            } else {
+                adj_viewport_offset -= width;
+            }
         }
 
         self.viewport.set_offset(adj_viewport_offset);
@@ -1146,7 +1212,6 @@ impl InConsole for SbyteEditor {
     }
 
     fn remap_active_rows(&mut self) {
-        //TODO: Desparately needs to be sped up
         let width = self.viewport.get_width();
         let height = self.viewport.get_height();
         let initial_y = (self.viewport.get_offset() / width) as isize;
@@ -1445,7 +1510,13 @@ impl InConsole for SbyteEditor {
             self.active_content.len() - 1
         };
 
-        let offset_display = format!("Offset: {} / {}", cursor_string, denominator);
+        let cursor_len = self.cursor.get_length();
+        let offset_display = if cursor_len == 1 {
+                format!("Offset: {} / {}", cursor_string, denominator)
+            } else {
+                format!("Offset: {} ({}) / {}", cursor_string, cursor_len, denominator)
+
+            };
 
         self.rectmanager.clear(self.rect_meta);
         let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
@@ -1462,28 +1533,39 @@ impl InConsole for SbyteEditor {
     fn apply_cursor(&mut self) {
         let viewport_width = self.viewport.get_width();
         let viewport_height = self.viewport.get_height();
-        let cursor_offset = self.cursor.get_offset() - self.viewport.get_offset();
+        let viewport_offset = self.viewport.get_offset();
+        let cursor_offset = self.cursor.get_offset();
         let cursor_length = self.cursor.get_length();
+
+        let start = if cursor_offset < viewport_offset {
+            viewport_offset
+        } else {
+            cursor_offset
+        };
+
+        let end = if cursor_offset + cursor_length > viewport_offset + (viewport_height * viewport_width) {
+            viewport_offset + (viewport_height * viewport_width)
+        } else {
+            cursor_offset + cursor_length
+        };
 
         let mut y;
         let mut x;
-        for i in cursor_offset .. cursor_offset + cursor_length {
-            y = i / viewport_width;
-            if y < viewport_height {
-                match self.cell_dict.get(&y) {
-                    Some(cellhash) => {
-                        x = i % viewport_width;
-                        match cellhash.get(&x) {
-                            Some((bits, human)) => {
-                                self.rectmanager.set_invert_flag(*bits);
-                                self.rectmanager.set_invert_flag(*human);
-                                self.cells_to_refresh.insert((*bits, *human));
-                            }
-                            None => ()
+        for i in start .. end {
+            y = (i - viewport_offset) / viewport_width;
+            match self.cell_dict.get(&y) {
+                Some(cellhash) => {
+                    x = (i - viewport_offset) % viewport_width;
+                    match cellhash.get(&x) {
+                        Some((bits, human)) => {
+                            self.rectmanager.set_invert_flag(*bits);
+                            self.rectmanager.set_invert_flag(*human);
+                            self.cells_to_refresh.insert((*bits, *human));
                         }
+                        None => ()
                     }
-                    None => ()
                 }
+                None => ()
             }
         }
     }
@@ -1491,17 +1573,30 @@ impl InConsole for SbyteEditor {
     fn remove_cursor(&mut self) {
         let viewport_width = self.viewport.get_width();
         let viewport_height = self.viewport.get_height();
-        let cursor_offset = self.cursor.get_offset() - self.viewport.get_offset();
+        let viewport_offset = self.viewport.get_offset();
+        let cursor_offset = self.cursor.get_offset();
         let cursor_length = self.cursor.get_length();
+
+        let start = if cursor_offset < viewport_offset {
+            viewport_offset
+        } else {
+            cursor_offset
+        };
+
+        let end = if cursor_offset + cursor_length > viewport_offset + (viewport_height * viewport_width) {
+            viewport_offset + (viewport_height * viewport_width)
+        } else {
+            cursor_offset + cursor_length
+        };
 
         let mut y;
         let mut x;
-        for i in cursor_offset .. cursor_offset + cursor_length {
-            y = i / viewport_width;
+        for i in start .. end {
+            y = (i - viewport_offset) / viewport_width;
             if y < viewport_height {
                 match self.cell_dict.get(&y) {
                     Some(cellhash) => {
-                        x = i % viewport_width;
+                        x = (i - viewport_offset) % viewport_width;
                         match cellhash.get(&x) {
                             Some((bits, human)) => {
                                 self.rectmanager.unset_invert_flag(*bits);
@@ -1786,6 +1881,8 @@ impl Commandable for SbyteEditor {
                     }
                 }
 
+                self.run_structure_checks(offset);
+
 
                 self.remove_cursor();
                 self.cursor_set_length(1);
@@ -1944,6 +2041,22 @@ impl Commandable for SbyteEditor {
                 self.commandline.set_register(cmdstring);
                 self.draw_cmdline();
             }
+            FunctionRef::MODE_SET_OVERWRITE_SPECIAL => {
+                let cmdstring;
+                match self.active_converter {
+                    ConverterRef::BIN => {
+                        cmdstring = "overwrite \\b".to_string();
+                    }
+                    ConverterRef::HEX => {
+                        cmdstring = "overwrite \\x".to_string();
+                    }
+                    _ => {
+                        cmdstring = "overwrite ".to_string();
+                    }
+                }
+                self.commandline.set_register(cmdstring);
+                self.draw_cmdline();
+            }
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
 
@@ -1958,6 +2071,8 @@ impl Commandable for SbyteEditor {
                                         self.insert_bytes_at_cursor(bytes.clone());
                                         self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
                                     }
+
+                                    self.run_structure_checks(offset);
 
                                     let viewport_width = self.viewport.get_width();
                                     let viewport_height = self.viewport.get_height();
@@ -2003,6 +2118,9 @@ impl Commandable for SbyteEditor {
                                 }
 
 
+                                // Manage structured data
+                                self.run_structure_checks(offset);
+
 
                                 self.remove_cursor();
                                 self.cursor_set_length(1);
@@ -2030,6 +2148,7 @@ impl Commandable for SbyteEditor {
                 for _ in 0 .. repeat {
                     self.decrement_byte(offset);
                 }
+                self.run_structure_checks(offset);
 
                 self.remove_cursor();
                 self.cursor_set_length(1);
@@ -2049,6 +2168,7 @@ impl Commandable for SbyteEditor {
                 for _ in 0 .. repeat {
                     self.increment_byte(offset);
                 }
+                self.run_structure_checks(offset);
 
                 self.remove_cursor();
                 self.cursor_set_length(1);
@@ -2065,6 +2185,9 @@ impl Commandable for SbyteEditor {
             FunctionRef::RUN_CUSTOM_COMMAND => {
                 match self.commandline.apply_register() {
                     Some(new_command) => {
+                        self.rectmanager.clear(self.rect_meta);
+                        self.rectmanager.empty(self.rect_meta);
+
                         self.try_command(new_command);
                     }
                     None => ()
