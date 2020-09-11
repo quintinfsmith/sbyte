@@ -5,7 +5,7 @@ use std::io;
 use std::io::{Write, Read};
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
-use wrecked::{RectManager, logg};
+use wrecked::{RectManager, logg, RectColor};
 
 // Editor trait
 pub mod editor;
@@ -80,7 +80,8 @@ pub struct SbyteEditor {
 
     structure_id_gen: u64,
     structures: HashMap<u64, Box<dyn StructuredDataHandler>>,
-    structure_spans: HashMap<u64, (usize, usize)>
+    structure_spans: HashMap<u64, (usize, usize)>,
+    structure_validity: HashMap<u64, bool>
 }
 
 impl SbyteEditor {
@@ -136,7 +137,8 @@ impl SbyteEditor {
 
             structure_id_gen: 0,
             structures: HashMap::new(),
-            structure_spans: HashMap::new()
+            structure_spans: HashMap::new(),
+            structure_validity: HashMap::new()
         };
 
         output.assign_line_command("q".to_string(), FunctionRef::KILL);
@@ -171,7 +173,7 @@ impl SbyteEditor {
             inputter.assign_mode_command(0, "H".to_string(), FunctionRef::CURSOR_LENGTH_LEFT);
             inputter.assign_mode_command(0, "L".to_string(), FunctionRef::CURSOR_LENGTH_RIGHT);
 
-            inputter.assign_mode_command(0, "!".to_string(), FunctionRef::CREATE_LITTLE_ENDIAN_STRUCTURE);
+            inputter.assign_mode_command(0, "!".to_string(), FunctionRef::CREATE_BIG_ENDIAN_STRUCTURE);
             inputter.assign_mode_command(0, "@".to_string(), FunctionRef::REMOVE_STRUCTURE);
 
             for i in 0 .. 10 {
@@ -296,12 +298,13 @@ impl SbyteEditor {
         self.rectmanager.kill();
     }
 
-    fn new_structure_handler(&mut self, handler: Box<dyn StructuredDataHandler>, index: usize, length: usize) -> u64 {
+    fn new_structure_handler(&mut self, index: usize, length: usize, handler: Box<dyn StructuredDataHandler>) -> u64 {
         let new_id = self.structure_id_gen;
         self.structure_id_gen += 1;
         self.structures.insert(new_id, handler);
 
         self.structure_spans.insert(new_id, (index, index + length));
+        self.structure_validity.insert(new_id, true);
 
         new_id
     }
@@ -309,6 +312,7 @@ impl SbyteEditor {
     fn remove_structure_handler(&mut self, handler_id: u64) {
         self.structures.remove(&handler_id);
         self.structure_spans.remove(&handler_id);
+        self.structure_validity.remove(&handler_id);
     }
 
     fn shift_structure_handlers_after(&mut self, offset: usize, adjustment: isize) -> Vec<(u64, (usize, usize))> {
@@ -336,7 +340,12 @@ impl SbyteEditor {
         let mut output = Vec::new();
 
         for (sid, span) in self.structure_spans.iter() {
-            if (span.0 >= offset && span.0 < offset + search_width) || (span.1 >= offset && span.1 < offset + search_width) {
+            // If span starts after first point, but before last
+            // if span ends after first point but before last
+            // if span start before first point, but ends after
+            if (span.0 >= offset && span.0 < offset + search_width)
+            || (span.1 >= offset && span.1 < offset + search_width)
+            || (span.0 <= offset && span.1 > offset) {
                 output.push((*span, *sid));
             }
         }
@@ -344,6 +353,7 @@ impl SbyteEditor {
         output
 
     }
+
     fn get_structured_data_handlers(&mut self, offset: usize) -> Vec<((usize, usize), u64)> {
         let mut output = Vec::new();
 
@@ -366,28 +376,20 @@ impl SbyteEditor {
 
         let mut difference: isize = 0;
 
-        let mut shifted_handler_spans;
+        let mut new_structure: Option<Box<dyn StructuredDataHandler>>;
         for (span, handler_id) in self.get_structured_data_handlers(offset).iter() {
             working_bytes_len = span.1 - span.0;
             working_bytes = self.get_chunk(span.0, working_bytes_len);
-            match self.structures.get(handler_id) {
+            new_structure = None;
+            match self.structures.get_mut(handler_id) {
                 Some(handler) => {
-                    match handler.mod_hook(working_bytes.clone()) {
-                        Some(modified_chunk) => {
-                            for i in 0 .. working_bytes_len {
-                                self.active_content.remove(span.0);
-                            }
-
-                            for byte in modified_chunk.iter().rev() {
-                                self.active_content.insert(span.0, *byte);
-                            }
-
-                            difference = (working_bytes_len as isize) - (modified_chunk.len() as isize);
-
-                            shifted_handler_spans = self.shift_structure_handlers_after(span.0, difference);
-                            self.push_to_undo_stack(span.0, modified_chunk.len(), Some(working_bytes.clone()), shifted_handler_spans);
+                    match handler.update(working_bytes) {
+                        Ok(_) => {
+                            self.structure_validity.entry(*handler_id).and_modify(|e| *e = true);
                         }
-                        None => {}
+                        Err(e) => {
+                            self.structure_validity.entry(*handler_id).and_modify(|e| *e = false);
+                        }
                     }
                 }
                 None => ()
@@ -546,7 +548,7 @@ impl Editor for SbyteEditor {
                 });
         }
 
-        //self.run_structure_checks(offset);
+        self.run_structure_checks(offset);
 
         (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, redo_handlers)
     }
@@ -571,7 +573,7 @@ impl Editor for SbyteEditor {
     }
 
     fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
-        let mut matches = self.find_all(search_for);
+        let mut matches = self.find_all(&search_for);
         // replace in reverse order
         matches.reverse();
 
@@ -654,7 +656,7 @@ impl Editor for SbyteEditor {
         self.active_file_path = Some(new_file_path);
     }
 
-    fn find_all(&self, search_for: Vec<u8>) -> Vec<usize> {
+    fn find_all(&self, search_for: &Vec<u8>) -> Vec<usize> {
         let mut output: Vec<usize> = Vec::new();
 
         let search_length = search_for.len();
@@ -678,7 +680,7 @@ impl Editor for SbyteEditor {
         output
     }
 
-    fn find_after(&self, pattern: Vec<u8>, offset: usize) -> Option<usize> {
+    fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize> {
         //TODO: This could definitely be sped up.
         let matches = self.find_all(pattern);
         let mut output = None;
@@ -858,7 +860,6 @@ impl VisualEditor for SbyteEditor {
         let viewport_width = self.viewport.get_width();
         let new_offset = self.cursor.get_real_offset() - min(self.cursor.get_real_offset(), viewport_width);
         self.cursor_set_offset(new_offset);
-        //logg(format!("moved to {}", new_offset));
     }
 
     fn cursor_increase_length_by_line(&mut self) {
@@ -1314,9 +1315,15 @@ impl InConsole for SbyteEditor {
 
         let structure_handlers = self.get_visible_structured_data_handlers(offset, width);
         let mut structured_cells_map = HashMap::new();
-        for (span, _) in structure_handlers.iter() {
-            for x in span.0 .. span.1 {
-                structured_cells_map.entry(x).or_insert(true);
+        let mut x;
+        let mut y;
+
+        for (span, sid) in structure_handlers.iter() {
+            for i in span.0 .. span.1 {
+                x = i % width;
+                y = i / width;
+
+                structured_cells_map.entry((x, y)).or_insert(self.structure_validity[sid]);
             }
         }
 
@@ -1335,13 +1342,22 @@ impl InConsole for SbyteEditor {
                 let mut tmp_human;
                 let mut tmp_human_str;
                 let mut in_structure;
+                let mut structure_valid;
                 for (x, byte) in chunk.iter().enumerate() {
                     tmp_bits = active_converter.encode_byte(*byte);
                     tmp_human = human_converter.encode_byte(*byte);
-                    in_structure = match structured_cells_map.get(&x) {
-                        Some(_) => { true }
-                        None => { false }
+
+                    match structured_cells_map.get(&(x, absolute_y)) {
+                        Some(is_valid) => {
+                            in_structure = true;
+                            structure_valid = *is_valid;
+                        }
+                        None => {
+                            structure_valid = false;
+                            in_structure = false;
+                        }
                     };
+
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
                             tmp_bits_str = match std::str::from_utf8(tmp_bits.as_slice()) {
@@ -1370,6 +1386,15 @@ impl InConsole for SbyteEditor {
                                 self.rectmanager.unset_underline_flag(*human);
                                 self.rectmanager.unset_underline_flag(*bits);
                             }
+
+                            if in_structure && !structure_valid {
+                                self.rectmanager.set_fg_color(*human, RectColor::RED);
+                                self.rectmanager.set_fg_color(*bits, RectColor::RED);
+                            } else {
+                                self.rectmanager.unset_fg_color(*human);
+                                self.rectmanager.unset_fg_color(*bits);
+                            }
+
                             //if self.active_converter == ConverterRef::BIN {
                             //    self.rectmanager.set_bg_color(*human, 3);
                             //    self.rectmanager.set_bg_color(*bits, 2);
@@ -1698,26 +1723,34 @@ impl Commandable for SbyteEditor {
 
                 match arguments.get(0) {
                     Some(pattern) => { // argument was given, use that
-                        let bytes = pattern.as_bytes().to_vec();
-                        self.search_history.push(pattern.clone());
-                        match self.find_after(bytes, current_offset) {
-                            Some(new_offset) => {
-                                new_cursor_length = pattern.len();
-                                next_offset = new_offset;
+                        match self.string_to_bytes(pattern.to_string()) {
+                            Ok(bytes) => {
+                                self.search_history.push(pattern.clone());
+                                match self.find_after(&bytes, current_offset) {
+                                    Some(new_offset) => {
+                                        new_cursor_length = bytes.len();
+                                        next_offset = new_offset;
+                                    }
+                                    None => ()
+                                }
                             }
-                            None => ()
+                            Err(e) => {}
                         }
                     }
                     None => { // No argument was given, check history
                         match self.search_history.last() {
                             Some(pattern) => {
-                                let bytes = pattern.as_bytes().to_vec();
-                                match self.find_after(bytes, current_offset) {
-                                    Some(new_offset) => {
-                                        new_cursor_length = pattern.len();
-                                        next_offset = new_offset;
+                                match self.string_to_bytes(pattern.to_string()) {
+                                    Ok(bytes) => {
+                                        match self.find_after(&bytes, current_offset) {
+                                            Some(new_offset) => {
+                                                new_cursor_length = bytes.len();
+                                                next_offset = new_offset;
+                                            }
+                                            None => ()
+                                        }
                                     }
-                                    None => ()
+                                    Err(e) => {}
                                 }
                             }
                             None => ()
@@ -1781,9 +1814,9 @@ impl Commandable for SbyteEditor {
                         let viewport_height = self.viewport.get_height();
 
                         let active_row = self.viewport.get_offset() / viewport_width;
-                        let span_offset_a = max((span.0 / viewport_width), active_row) - active_row;
-                        let span_offset_b = min((span.1 / viewport_width), viewport_height + active_row) - active_row;
-                        for y in span_offset_a .. max(span_offset_b, span_offset_a + 1) {
+                        let span_offset_a = (span.0 / viewport_width);
+                        let span_offset_b = (span.1 / viewport_width);
+                        for y in span_offset_a .. max(span_offset_b, span_offset_a + 1) + 1 {
                             self.set_row_characters(y);
                         }
 
@@ -1792,25 +1825,35 @@ impl Commandable for SbyteEditor {
                 }
             }
 
-            FunctionRef::CREATE_LITTLE_ENDIAN_STRUCTURE => {
+            FunctionRef::CREATE_BIG_ENDIAN_STRUCTURE => {
                 let prefix_width = self.cursor.get_length();
-                let handler = LittleEndianPrefixed::new(prefix_width);
                 let offset = self.cursor.get_offset();
                 let prefix = self.get_chunk(offset, prefix_width);
-                let data_width = LittleEndianPrefixed::decode_prefix(prefix);
-                self.new_structure_handler(
-                    Box::new(handler),
-                    offset,
-                    prefix_width + (data_width as usize)
-                );
-                let viewport_width = self.viewport.get_width();
-                let viewport_height = self.viewport.get_height();
-                let active_row = offset / viewport_width;
-                let viewport_line = self.viewport.get_offset() / viewport_width;
+                let data_width = BigEndianPrefixed::decode_prefix(prefix);
+                let chunk = self.get_chunk(offset, prefix_width + data_width);
+                match BigEndianPrefixed::read_in(chunk) {
+                    Ok(new_structure) => {
+                        self.new_structure_handler(
+                            offset,
+                            prefix_width + data_width,
+                            Box::new(new_structure)
+                        );
 
-                for y in active_row .. viewport_line + viewport_height {
-                    self.set_row_characters(y);
+                        let viewport_width = self.viewport.get_width();
+                        let viewport_height = self.viewport.get_height();
+
+                        let viewport_row = self.viewport.get_offset() / viewport_width;
+                        let first_row = offset / viewport_width;
+                        let last_row = (offset + prefix_width + (data_width as usize)) / viewport_width;
+
+                        for y in max(viewport_row, first_row) .. min(viewport_row + viewport_height, max(last_row, first_row + 1) + 1) {
+                            self.set_row_characters(y);
+                        }
+                    }
+                    Err(e) => {
+                    }
                 }
+
             }
 
             FunctionRef::BACKSPACE => {
