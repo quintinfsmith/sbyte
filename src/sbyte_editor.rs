@@ -51,8 +51,8 @@ pub struct SbyteEditor {
     active_file_path: Option<String>,
     cursor: Cursor,
     active_converter: ConverterRef,
-    undo_stack: Vec<(usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)>, // Position, bytes to remove, bytes to insert
-    redo_stack: Vec<(usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)>, // Position, bytes to remove, bytes to insert
+    undo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
+    redo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
 
 
     // Commandable
@@ -527,7 +527,7 @@ impl SbyteEditor {
             }
         }
 
-        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), Some(undo_bytes), vec![]);
+        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
         Ok(())
     }
 
@@ -553,7 +553,7 @@ impl SbyteEditor {
             }
         }
 
-        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), Some(undo_bytes), vec![]);
+        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
         Ok(())
     }
 
@@ -600,8 +600,7 @@ impl Editor for SbyteEditor {
                 let redo_task = self.do_undo_or_redo(_task);
                 self.redo_stack.push(redo_task);
             }
-            None => {
-            }
+            None => ()
         }
     }
 
@@ -613,56 +612,74 @@ impl Editor for SbyteEditor {
                 // NOTE: Not using self.push_to_undo_stack. don't want to clear the redo stack
                 self.undo_stack.push(undo_task);
             }
-            None => {
-            }
+            None => ()
         }
     }
 
 
-    fn do_undo_or_redo(&mut self, task: (usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>)) -> (usize, usize, Option<Vec<u8>>, Vec<(u64, (usize, usize))>) {
-        let (offset, bytes_to_remove, bytes_to_insert, handler_spans) = task;
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>)) -> (usize, usize, Vec<u8>) {
+        let (offset, bytes_to_remove, bytes_to_insert) = task;
 
         self.cursor_set_offset(offset);
 
-        let mut opposite_bytes_to_insert = None;
+        let mut opposite_bytes_to_insert = vec![];
         let mut insert_length: usize = 0;
         if bytes_to_remove > 0 {
-            opposite_bytes_to_insert = match self._remove_bytes(offset, bytes_to_remove) {
+            match self._remove_bytes(offset, bytes_to_remove) {
                 Ok(some_bytes) => {
                     insert_length += some_bytes.len();
-                    Some(some_bytes)
+                    opposite_bytes_to_insert = some_bytes;
                 }
-                Err(e) => None
+                Err(e) => ()
             }
         }
 
         let mut opposite_bytes_to_remove = 0;
-        match bytes_to_insert {
-            Some(bytes) => {
-                opposite_bytes_to_remove = bytes.len();
-                self._insert_bytes(offset, bytes);
+        if bytes_to_insert.len() > 0 {
+            opposite_bytes_to_remove = bytes_to_insert.len();
+            self._insert_bytes(offset, bytes_to_insert);
+        }
+        self.run_structure_checks(offset);
+
+        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert)
+    }
+
+    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Vec<u8>) {
+
+        self.redo_stack.drain(..);
+        let is_insert = bytes_to_remove == 0 && bytes_to_insert.len() > 0;
+        let is_remove = bytes_to_remove > 0 && bytes_to_insert.len() == 0;
+        let is_overwrite = !is_insert && !is_remove;
+
+        let mut was_merged = false;
+        match self.undo_stack.last_mut() {
+            Some((next_offset, next_bytes_to_remove, next_bytes_to_insert)) => {
+                let will_insert = *next_bytes_to_remove == 0 && next_bytes_to_insert.len() > 0;
+                let will_remove = *next_bytes_to_remove > 0 && next_bytes_to_insert.len() == 0;
+                let will_overwrite = !will_insert && !will_remove;
+
+                if is_insert && will_insert {
+                    if (*next_offset == offset + bytes_to_insert.len()) {
+                        let mut new_bytes = bytes_to_insert.clone();
+                        new_bytes.extend(next_bytes_to_insert.iter().copied());
+                        *next_bytes_to_insert = new_bytes;
+                        *next_offset = offset;
+                        was_merged = true;
+                    }
+                } else if is_remove && will_remove {
+                    if (*next_offset + *next_bytes_to_remove == offset) {
+                        *next_bytes_to_remove += bytes_to_remove;
+                        was_merged = true;
+                    }
+                } else if is_overwrite && will_overwrite {
+                }
             }
             None => ()
         }
 
-        let mut redo_handlers = Vec::new();
-
-        for (sid, oldspan) in handler_spans.iter() {
-            self.structure_spans.entry(*sid)
-                .and_modify(|span| {
-                    redo_handlers.push((*sid, (span.0, span.1)));
-                    *span = (oldspan.0, oldspan.1);
-                });
+        if !was_merged {
+            self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert));
         }
-
-        self.run_structure_checks(offset);
-
-        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, redo_handlers)
-    }
-
-    fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Option<Vec<u8>>, structure_handler_states: Vec<(u64, (usize, usize))>) {
-        self.redo_stack.drain(..);
-        self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert, structure_handler_states));
     }
 
     fn get_active_converter(&self) -> Box<dyn Converter> {
@@ -816,7 +833,7 @@ impl Editor for SbyteEditor {
         let handlers_history = self.shift_structure_handlers_after(offset, 0 - (length as isize));
         match output {
             Ok(old_bytes) => {
-                self.push_to_undo_stack(offset, 0, Some(old_bytes.clone()), handlers_history);
+                self.push_to_undo_stack(offset, 0, old_bytes.clone());
 
                 Ok(old_bytes)
             }
@@ -838,8 +855,8 @@ impl Editor for SbyteEditor {
         let mut adj_byte_width = new_bytes.len();
         let output = self._insert_bytes(offset, new_bytes);
 
-        let handlers_history = self.shift_structure_handlers_after(offset, adj_byte_width as isize);
-        self.push_to_undo_stack(offset, adj_byte_width, None, handlers_history);
+        self.shift_structure_handlers_after(offset, adj_byte_width as isize);
+        self.push_to_undo_stack(offset, adj_byte_width, vec![]);
 
         output
     }
@@ -855,7 +872,7 @@ impl Editor for SbyteEditor {
         match output {
             Ok(old_bytes) => {
                 self._insert_bytes(position, new_bytes);
-                self.push_to_undo_stack(position, length, Some(old_bytes.clone()), vec![]);
+                self.push_to_undo_stack(position, length, old_bytes.clone());
 
 
                 Ok(old_bytes)
@@ -1651,7 +1668,7 @@ impl InConsole for SbyteEditor {
             self.rectmanager.set_string(cursor_id, 0, 0, &chr);
         }
 
-        self.rectmanager.set_string(self.rect_meta, 0, 0, ">");
+        self.rectmanager.set_string(self.rect_meta, 0, 0, ":");
         self.rectmanager.set_string(self.rect_meta, 1, 0, cmd);
     }
 
