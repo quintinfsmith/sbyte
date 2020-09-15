@@ -27,18 +27,11 @@ impl Inputter {
 
         let input_buffer = self.input_buffer.clone();
         let mut clear_buffer = false;
-        let mut new_context = self.context;
         match self.input_managers.get_mut(&self.context) {
             Some(root_node) => {
                 let (cmd, completed_path) = root_node.fetch_command(input_buffer);
                 match cmd {
                     Some(funcref) => {
-                        match self.context_keys.get(&funcref) {
-                            Some(_new_context) => {
-                                new_context = *_new_context;
-                            }
-                            None => ()
-                        };
                         output = Some((funcref, input_byte));
                     }
                     None => ()
@@ -47,8 +40,6 @@ impl Inputter {
             }
             None => ()
         }
-
-        self.context = new_context;
 
         if (clear_buffer) {
             self.input_buffer.drain(..);
@@ -63,11 +54,10 @@ impl Inputter {
         mode_node.assign_command(command_vec, hook);
     }
 
-    pub fn set_context_key(&mut self, funcref: FunctionRef, mode: u8) {
-        self.context_keys.entry(funcref)
-            .and_modify(|e| { *e = mode })
-            .or_insert(mode);
+    pub fn set_context(&mut self, new_context: u8) {
+        self.context = new_context;
     }
+
 }
 
 struct InputNode {

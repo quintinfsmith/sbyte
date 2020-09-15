@@ -69,6 +69,10 @@ impl CommandLine {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.register.len() == 0
+    }
+
     pub fn get_register(&self) -> String {
         self.register.clone()
     }

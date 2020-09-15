@@ -13,4 +13,6 @@ pub trait Commandable {
 
     fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>);
     fn string_to_bytes(&mut self, input_string: String) -> Result<Vec<u8>, ConverterError>;
+
+    fn set_input_context(&mut self, context: u8);
 }
