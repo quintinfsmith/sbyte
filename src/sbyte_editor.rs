@@ -297,7 +297,7 @@ impl SbyteEditor {
         });
 
 
-        let fps = 30.0;
+        let fps = 59.97;
 
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
@@ -311,8 +311,8 @@ impl SbyteEditor {
                         let (_current_func, _current_arg) = (mutex.0).remove(0);
                         // Convert the u8 byte to a Vec<String> to fit the arguments data type
                         let args = vec![std::str::from_utf8(&[_current_arg]).unwrap().to_string()];
-
                         self.run_cmd_from_functionref(_current_func, args);
+
                     }
 
                     match self.flag_input_context {
@@ -328,6 +328,7 @@ impl SbyteEditor {
             self.tick();
             thread::sleep(delay);
         }
+
         self.kill();
     }
 
@@ -574,21 +575,32 @@ impl SbyteEditor {
             output = Err(EditorError::OutOfRange);
         }
 
+        if output.is_ok() {
+            self.shift_structure_handlers_after(offset, new_bytes.len() as isize);
+        }
+
         output
     }
 
     // ONLY to be  used by remove_bytes and overwrite_bytes functions, nowhere else.
     fn _remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
+        let mut output;
         if (offset < self.active_content.len()) {
             let mut removed_bytes = Vec::new();
             let adj_length = min(self.active_content.len() - offset, length);
             for i in 0..adj_length {
                 removed_bytes.push(self.active_content.remove(offset));
             }
-            Ok(removed_bytes)
+            output = Ok(removed_bytes);
         } else {
-            Err(EditorError::OutOfRange)
+            output = Err(EditorError::OutOfRange);
         }
+
+        if output.is_ok() {
+            self.shift_structure_handlers_after(offset, 0 - (length as isize));
+        }
+
+        output
     }
 }
 
@@ -664,6 +676,9 @@ impl Editor for SbyteEditor {
                         new_bytes.extend(next_bytes_to_insert.iter().copied());
                         *next_bytes_to_insert = new_bytes;
                         *next_offset = offset;
+                        was_merged = true;
+                    } else if (*next_offset == offset) {
+                        next_bytes_to_insert.extend(bytes_to_insert.iter().copied());
                         was_merged = true;
                     }
                 } else if is_remove && will_remove {
@@ -830,11 +845,9 @@ impl Editor for SbyteEditor {
     fn remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
         let output = self._remove_bytes(offset, length);
 
-        let handlers_history = self.shift_structure_handlers_after(offset, 0 - (length as isize));
         match output {
             Ok(old_bytes) => {
                 self.push_to_undo_stack(offset, 0, old_bytes.clone());
-
                 Ok(old_bytes)
             }
             Err(e) => {
@@ -855,7 +868,6 @@ impl Editor for SbyteEditor {
         let mut adj_byte_width = new_bytes.len();
         let output = self._insert_bytes(offset, new_bytes);
 
-        self.shift_structure_handlers_after(offset, adj_byte_width as isize);
         self.push_to_undo_stack(offset, adj_byte_width, vec![]);
 
         output
@@ -1653,7 +1665,6 @@ impl InConsole for SbyteEditor {
         }
     }
 
-
     fn display_command_line(&mut self) {
         self.clear_meta_rect();
         let cmd = &self.commandline.get_register();
@@ -1681,7 +1692,6 @@ impl InConsole for SbyteEditor {
             self.rows_to_refresh.push(y);
         }
     }
-
 }
 
 impl Commandable for SbyteEditor {
@@ -1964,7 +1974,8 @@ impl Commandable for SbyteEditor {
             }
 
             FunctionRef::BACKSPACE => {
-                if self.cursor.get_offset() > 0 {
+                let remove_count = min(self.cursor.get_offset(), max(1, self.grab_register(1)) as usize);
+                for i in 0 .. remove_count {
                     self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, arguments.clone());
                     self.run_cmd_from_functionref(FunctionRef::DELETE, arguments.clone());
                 }
@@ -1976,6 +1987,7 @@ impl Commandable for SbyteEditor {
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.undo();
+                    self.run_structure_checks(self.cursor.get_offset());
                 }
 
                 self.flag_remap_active_rows = true;
