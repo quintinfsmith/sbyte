@@ -11,8 +11,8 @@ pub trait Commandable {
     fn append_to_register(&mut self, new_digit: isize);
     fn grab_register(&mut self, default_if_unset: isize) -> isize;
 
-    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>);
-    fn string_to_bytes(&mut self, input_string: String) -> Result<Vec<u8>, ConverterError>;
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<Vec<u8>>);
+    fn string_to_bytes(&self, input_string: String) -> Result<Vec<u8>, ConverterError>;
 
     fn set_input_context(&mut self, context: u8);
 }

@@ -87,7 +87,7 @@ pub struct SbyteEditor {
     row_dict: HashMap<usize, (usize, usize)>,
     cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
 
-    search_history: Vec<String>,
+    search_history: Vec<Vec<u8>>,
 
     structure_id_gen: u64,
     structures: HashMap<u64, Box<dyn StructuredDataHandler>>,
@@ -176,7 +176,7 @@ impl SbyteEditor {
     }
 
     pub fn main(&mut self) {
-        let function_refs: Arc<Mutex<(Vec<(FunctionRef, u8)>, Option<u8>)>> = Arc::new(Mutex::new((Vec::new(), None)));
+        let function_refs: Arc<Mutex<(Vec<(FunctionRef, Vec<u8>)>, Option<u8>)>> = Arc::new(Mutex::new((Vec::new(), None)));
 
         let c = function_refs.clone();
         let mut _input_daemon = thread::spawn(move || {
@@ -208,6 +208,8 @@ impl SbyteEditor {
             inputter.assign_mode_command(0, "/".to_string(), FunctionRef::MODE_SET_SEARCH);
             inputter.assign_mode_command(0, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::CLEAR_REGISTER);
             inputter.assign_mode_command(0, "x".to_string(), FunctionRef::DELETE);
+            inputter.assign_mode_command(0, "y".to_string(), FunctionRef::YANK);
+            inputter.assign_mode_command(0, "p".to_string(), FunctionRef::PASTE);
             inputter.assign_mode_command(0, "u".to_string(), FunctionRef::UNDO);
             inputter.assign_mode_command(0, std::str::from_utf8(&[18]).unwrap().to_string(), FunctionRef::REDO);
 
@@ -269,20 +271,20 @@ impl SbyteEditor {
                         Err(e) => ()
                     }
                     match inputter.read_input(*character) {
-                        Some((funcref, input_byte)) => {
+                        Some((funcref, input_sequence)) => {
                             match c.try_lock() {
                                 Ok(ref mut mutex) => {
                                     do_push = true;
 
                                     for (current_func, current_arg) in (mutex.0).iter() {
-                                        if *current_func == funcref && *current_arg == input_byte {
+                                        if *current_func == funcref && *current_arg == input_sequence {
                                             do_push = false;
                                             break;
                                         }
                                     }
 
                                     if do_push {
-                                        (mutex.0).push((funcref, input_byte));
+                                        (mutex.0).push((funcref, input_sequence));
                                     }
                                 }
                                 Err(e) => {
@@ -309,9 +311,7 @@ impl SbyteEditor {
 
                     if (mutex.0).len() > 0 {
                         let (_current_func, _current_arg) = (mutex.0).remove(0);
-                        // Convert the u8 byte to a Vec<String> to fit the arguments data type
-                        let args = vec![std::str::from_utf8(&[_current_arg]).unwrap().to_string()];
-                        self.run_cmd_from_functionref(_current_func, args);
+                        self.run_cmd_from_functionref(_current_func, vec![_current_arg]);
 
                     }
 
@@ -1708,6 +1708,10 @@ impl Commandable for SbyteEditor {
         let mut words = parse_words(query);
         if words.len() > 0 {
             let cmd = words.remove(0);
+            let mut arguments: Vec<Vec<u8>> = vec![];
+            for word in words.iter() {
+                arguments.push(word.as_bytes().to_vec());
+            }
             let mut funcref = FunctionRef::NULL;
             match self.line_commands.get(&cmd) {
                 Some(_funcref) => {
@@ -1718,11 +1722,11 @@ impl Commandable for SbyteEditor {
                 }
             };
 
-            self.run_cmd_from_functionref(funcref, words);
+            self.run_cmd_from_functionref(funcref, arguments);
         }
     }
 
-    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<String>) {
+    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<Vec<u8>>) {
         match funcref {
             FunctionRef::CURSOR_UP => {
 
@@ -1818,7 +1822,7 @@ impl Commandable for SbyteEditor {
                 match arguments.get(0) {
                     Some(argument) => {
                         // TODO: This is ridiculous. maybe make a nice wrapper for String (len 1) -> u8?
-                        let digit = argument.chars().next().unwrap().to_digit(10).unwrap() as isize;
+                        let digit = *argument.iter().next().unwrap() as isize;
                         self.append_to_register(digit);
                     }
                     None => ()
@@ -1845,54 +1849,48 @@ impl Commandable for SbyteEditor {
                 let mut new_user_msg = None;
                 let mut new_user_error_msg = None;
 
-                match arguments.get(0) {
-                    Some(pattern) => { // argument was given, use that
-                        match self.string_to_bytes(pattern.to_string()) {
-                            Ok(bytes) => {
-                                self.search_history.push(pattern.clone());
-                                match self.find_after(&bytes, current_offset) {
+                let option_pattern = match arguments.get(0) {
+                    Some(byte_pattern) => { // argument was given, use that
+                        Some(byte_pattern.clone())
+                    }
+                    None => { // No argument was given, check history
+                        match self.search_history.last() {
+                            Some(byte_pattern) => {
+                                Some(byte_pattern.clone())
+                            }
+                            None => {
+                                None
+                            }
+                        }
+                    }
+                };
+
+                match option_pattern {
+                    Some(raw_bytes) => {
+                        // First, convert utf8 bytes to a string...
+                        let string_rep = std::str::from_utf8(&raw_bytes).unwrap();
+                        // Then, convert the special characters in that string (eg, \x41 -> A)
+                        match self.string_to_bytes(string_rep.to_string()) {
+                            Ok(byte_pattern) => {
+                                self.search_history.push(byte_pattern.clone());
+                                match self.find_after(&byte_pattern, current_offset) {
                                     Some(new_offset) => {
-                                        new_cursor_length = bytes.len();
+                                        new_cursor_length = byte_pattern.len();
                                         next_offset = new_offset;
-                                        new_user_msg = Some(format!("Found \"{}\" at byte {}", pattern.to_string(), next_offset));
+                                        new_user_msg = Some(format!("Found \"{}\" at byte {}", string_rep, next_offset));
                                     }
                                     None => {
-                                        new_user_error_msg = Some(format!("Pattern \"{}\" not found", pattern.to_string()));
+                                        new_user_error_msg = Some(format!("Pattern \"{}\" not found", string_rep));
                                     }
                                 }
                             }
                             Err(e) => {
-                                new_user_error_msg = Some(format!("Invalid pattern \"{}\"", pattern.to_string()));
+                                new_user_error_msg = Some(format!("Invalid pattern: {}", string_rep));
                             }
                         }
                     }
-                    None => { // No argument was given, check history
-                        match self.search_history.last() {
-                            Some(pattern) => {
-                                let string_pattern = pattern.to_string();
-                                match self.string_to_bytes(string_pattern.clone()) {
-                                    Ok(bytes) => {
-                                        match self.find_after(&bytes, current_offset) {
-                                            Some(new_offset) => {
-                                                new_cursor_length = bytes.len();
-                                                next_offset = new_offset;
-                                                new_user_msg = Some(format!("Found \"{}\" at byte {}", string_pattern, next_offset));
-                                            }
-                                            None => {
-                                                new_user_error_msg = Some(format!("Pattern \"{}\" not found", string_pattern));
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        new_user_error_msg = Some(format!("Invalid pattern \"{}\"", string_pattern));
-                                    }
-                                }
-                            }
-                            None => {
-                                new_user_error_msg = Some("Some pattern required to search".to_string());
-                            }
-
-                        }
+                    None => {
+                        new_user_error_msg = Some("Need a pattern to search".to_string());
                     }
                 }
 
@@ -1916,6 +1914,18 @@ impl Commandable for SbyteEditor {
                 self.flag_update_cmdline = true;
             }
 
+            FunctionRef::YANK => {
+                self.copy_selection();
+                self.cursor_set_length(1);
+
+                self.flag_cursor_moved = true;
+            }
+
+            FunctionRef::PASTE => {
+                let to_insert = vec![self.get_clipboard()];
+                self.run_cmd_from_functionref(FunctionRef::INSERT, to_insert);
+            }
+
             FunctionRef::DELETE => {
                 let offset = self.cursor.get_offset();
 
@@ -1929,7 +1939,7 @@ impl Commandable for SbyteEditor {
                         Err(e) => { }
                     }
                 }
-
+                self.copy_to_clipboard(removed_bytes);
 
                 self.cursor_set_length(1);
 
@@ -2078,27 +2088,20 @@ impl Commandable for SbyteEditor {
             FunctionRef::INSERT => {
                 let offset = self.cursor.get_offset();
                 match arguments.get(0) {
-                    Some(argument) => {
-                        match self.string_to_bytes(argument.to_string()) {
-                            Ok(bytes) => {
-                                let repeat = self.grab_register(1);
-                                if repeat > 0 {
-
-                                    for _ in 0 .. repeat {
-                                        self.insert_bytes_at_cursor(bytes.clone());
-                                        self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
-                                    }
-
-                                    self.run_structure_checks(offset);
-
-                                    self.flag_row_update_by_offset(offset);
-
-                                    self.flag_update_offset_display = true;
-                                }
+                    Some(argument_bytes) => {
+                        let argument = std::str::from_utf8(argument_bytes).unwrap();
+                        let repeat = self.grab_register(1);
+                        if repeat > 0 {
+                            for _ in 0 .. repeat {
+                                self.insert_bytes_at_cursor(argument_bytes.clone());
+                                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
                             }
-                            Err(e) => {
-                                // TODO: Display converter error in meta display
-                            }
+
+                            self.run_structure_checks(offset);
+
+                            self.flag_row_update_by_offset(offset);
+
+                            self.flag_update_offset_display = true;
                         }
                     }
                     None => ()
@@ -2106,7 +2109,8 @@ impl Commandable for SbyteEditor {
             }
             FunctionRef::INSERT_TO_CMDLINE => {
                 match arguments.get(0) {
-                    Some(argument) => {
+                    Some(argument_bytes) => {
+                        let argument = std::str::from_utf8(argument_bytes).unwrap();
                         self.commandline.insert_to_register(argument.to_string());
                         self.commandline.move_cursor_right();
                         self.display_command_line();
@@ -2116,32 +2120,26 @@ impl Commandable for SbyteEditor {
             }
             FunctionRef::OVERWRITE => {
                 let offset = self.cursor.get_offset();
+                let repeat = self.grab_register(1);
 
                 match arguments.get(0) {
-                    Some(argument) => {
-                        match self.string_to_bytes(argument.to_string()) {
-                            Ok(bytes) => {
-                                let repeat = self.grab_register(1);
+                    Some(argument_bytes) => {
+                        let argument = std::str::from_utf8(argument_bytes).unwrap();
 
-                                let mut overwritten_bytes: Vec<u8> = Vec::new();
-                                for _ in 0 .. repeat {
-                                    self.overwrite_bytes_at_cursor(bytes.clone());
-                                    self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
-                                }
-
-
-                                // Manage structured data
-                                self.run_structure_checks(offset);
-
-                                self.cursor_set_length(1);
-                                self.flag_cursor_moved = true;
-
-                                self.flag_row_update_by_offset(offset);
-                            }
-                            Err(e) => {
-                                // TODO: Display converter error in meta display
-                            }
+                        let mut overwritten_bytes: Vec<u8> = Vec::new();
+                        for _ in 0 .. repeat {
+                            self.overwrite_bytes_at_cursor(argument_bytes.clone());
+                            self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
                         }
+
+
+                        // Manage structured data
+                        self.run_structure_checks(offset);
+
+                        self.cursor_set_length(1);
+                        self.flag_cursor_moved = true;
+
+                        self.flag_row_update_by_offset(offset);
                     }
                     None => ()
                 }
@@ -2243,7 +2241,7 @@ impl Commandable for SbyteEditor {
     }
 
     // Convert argument string to bytes.
-    fn string_to_bytes(&mut self, input_string: String) -> Result<Vec<u8>, ConverterError> {
+    fn string_to_bytes(&self, input_string: String) -> Result<Vec<u8>, ConverterError> {
         let mut use_converter: Option<Box<dyn Converter>> = None;
 
         let mut input_bytes = input_string.as_bytes().to_vec();

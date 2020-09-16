@@ -20,7 +20,7 @@ impl Inputter {
         }
     }
 
-    pub fn read_input(&mut self, input_byte: u8) -> Option<(FunctionRef, u8)> {
+    pub fn read_input(&mut self, input_byte: u8) -> Option<(FunctionRef, Vec<u8>)> {
         let mut output = None;
 
         self.input_buffer.push(input_byte);
@@ -32,7 +32,7 @@ impl Inputter {
                 let (cmd, completed_path) = root_node.fetch_command(input_buffer);
                 match cmd {
                     Some(funcref) => {
-                        output = Some((funcref, input_byte));
+                        output = Some((funcref, self.input_buffer.clone()));
                     }
                     None => ()
                 }

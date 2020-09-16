@@ -13,6 +13,8 @@ pub enum FunctionRef {
     OVERWRITE,
     DELETE,
     BACKSPACE,
+    YANK,
+    PASTE,
     APPEND_TO_REGISTER,
     JUMP_TO_REGISTER,
     CLEAR_REGISTER,
