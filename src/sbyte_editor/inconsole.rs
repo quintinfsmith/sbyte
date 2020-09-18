@@ -1,5 +1,21 @@
 use wrecked::{RectManager, logg};
 
+#[derive(Hash, PartialEq, Eq)]
+pub enum Flag {
+    CURSOR_MOVED,
+    FULL_REFRESH,
+    DISPLAY_REFRESH,
+    SETUP_DISPLAYS,
+    REMAP_ACTIVE_ROWS,
+    UPDATE_OFFSET,
+    DISPLAY_CMDLINE,
+    UPDATE_ROW(usize)
+}
+
+pub enum FlagError {
+    NotFound
+}
+
 pub trait InConsole {
     fn tick(&mut self);
 
@@ -21,6 +37,12 @@ pub trait InConsole {
 
     fn clear_meta_rect(&mut self);
 
+    fn flag_row_update_by_range(&mut self, range: std::ops::Range<usize>);
     fn flag_row_update_by_offset(&mut self, offset: usize);
+
+    fn check_flag(&mut self, key: Flag) -> bool;
+    fn raise_flag(&mut self, key: Flag);
+    fn lower_flag(&mut self, key: Flag);
+    fn raise_row_update_flag(&mut self, absolute_y: usize);
 }
 
