@@ -33,8 +33,27 @@ use command_line::CommandLine;
 use inconsole::*;
 use structured::*;
 
+pub struct InputterEditorInterface {
+    function_queue: Vec<(String, Vec<u8>)>,
+
+    new_context: Option<String>,
+    new_input_sequences: Vec<(String, String, String)>
+}
+
+impl InputterEditorInterface {
+    pub fn new() -> InputterEditorInterface {
+        InputterEditorInterface {
+            function_queue: Vec::new(),
+
+            new_context: None,
+            new_input_sequences: Vec::new()
+        }
+    }
+}
 
 pub struct SbyteEditor {
+    surpress_tick: bool, // Used to prevent visual feedback
+
     // Flags for tick() to know when to arrange/edit rects
     display_flags: HashMap<Flag, (usize, bool)>,
     display_flag_timeouts: HashMap<Flag, usize>,
@@ -55,11 +74,12 @@ pub struct SbyteEditor {
 
     // Commandable
     commandline: CommandLine,
-    line_commands: HashMap<String, FunctionRef>,
+    line_commands: HashMap<String, String>,
     register: usize,
     register_isset: bool,
     register_is_negative: bool,
-    flag_input_context: Option<u8>,
+    flag_input_context: Option<String>,
+    new_input_sequences: Vec<(String, String, String)>,
 
     // VisualEditor
     viewport: ViewPort,
@@ -70,6 +90,7 @@ pub struct SbyteEditor {
     flag_kill: bool,
     flag_force_rerow: bool,
     ready: bool,
+    locked_viewport_width: Option<usize>,
 
     cells_to_refresh: HashSet<(usize, usize)>, // rect ids, rather than coords
     rows_to_refresh: Vec<usize>, // absolute row numbers
@@ -90,7 +111,7 @@ pub struct SbyteEditor {
     structures: HashMap<u64, Box<dyn StructuredDataHandler>>,
     structure_spans: HashMap<u64, (usize, usize)>,
     structure_map: HashMap<usize, HashSet<u64>>,
-    structure_validity: HashMap<u64, bool>
+    structure_validity: HashMap<u64, bool>,
 }
 
 impl SbyteEditor {
@@ -104,19 +125,22 @@ impl SbyteEditor {
         let id_display_human = rectmanager.new_rect(
             Some(id_display_wrapper)
         );
+
         let id_rect_meta = rectmanager.new_rect(Some(0));
 
         let mut flag_timeouts = HashMap::new();
-        flag_timeouts.insert(Flag::CURSOR_MOVED, 0);
+        flag_timeouts.insert(Flag::CURSOR_MOVED, 1);
         flag_timeouts.insert(Flag::SETUP_DISPLAYS, 0);
-        flag_timeouts.insert(Flag::REMAP_ACTIVE_ROWS, 1);
+        flag_timeouts.insert(Flag::REMAP_ACTIVE_ROWS, 2);
         flag_timeouts.insert(Flag::UPDATE_OFFSET, 0);
 
         for i in 0 .. 60 {
-            flag_timeouts.insert(Flag::UPDATE_ROW(i), 10);
+            flag_timeouts.insert(Flag::UPDATE_ROW(i), 5);
         }
 
         let mut output = SbyteEditor {
+            surpress_tick: false,
+
             display_flags: HashMap::new(),
             display_flag_timeouts: flag_timeouts,
 
@@ -133,7 +157,8 @@ impl SbyteEditor {
             register: 0,
             register_isset: false,
             register_is_negative: false,
-            flag_input_context: Some(0),
+            flag_input_context: None,
+            new_input_sequences: Vec::new(),
 
             viewport: ViewPort::new(width, height),
 
@@ -145,6 +170,7 @@ impl SbyteEditor {
             flag_kill: false,
             flag_force_rerow: false,
             ready: false,
+            locked_viewport_width: None,
 
             cells_to_refresh: HashSet::new(),
             rows_to_refresh: Vec::new(),
@@ -168,82 +194,119 @@ impl SbyteEditor {
             structure_map: HashMap::new()
         };
 
-
-        output.assign_line_command("q".to_string(), FunctionRef::KILL);
-        output.assign_line_command("w".to_string(), FunctionRef::SAVE);
-        output.assign_line_command("wq".to_string(), FunctionRef::SAVEKILL);
-        output.assign_line_command("find".to_string(), FunctionRef::JUMP_TO_NEXT);
-        output.assign_line_command("insert".to_string(), FunctionRef::INSERT);
-        output.assign_line_command("overwrite".to_string(), FunctionRef::OVERWRITE);
+        output.assign_line_command("q".to_string(), "KILL");
+        output.assign_line_command("w".to_string(), "SAVE");
+        output.assign_line_command("wq".to_string(), "SAVEKILL");
+        output.assign_line_command("find".to_string(), "JUMP_TO_NEXT");
+        output.assign_line_command("insert".to_string(), "INSERT");
+        output.assign_line_command("overwrite".to_string(), "OVERWRITE");
+        output.assign_line_command("setcmd".to_string(), "ASSIGN_INPUT");
+        output.assign_line_command("lw".to_string(), "SET_WIDTH");
 
         output.raise_flag(Flag::SETUP_DISPLAYS);
         output.raise_flag(Flag::REMAP_ACTIVE_ROWS);
         output
     }
 
+    pub fn load_config(&mut self, file_path: String) {
+        match File::open(file_path) {
+            Ok(mut file) => {
+                let file_length = match file.metadata() {
+                    Ok(metadata) => {
+                        metadata.len()
+                    }
+                    Err(e) => {
+                        0
+                    }
+                };
+
+                let mut buffer: Vec<u8> = vec![0; file_length as usize];
+                file.read(&mut buffer);
+                let working_cmds: Vec<&str> = std::str::from_utf8(buffer.as_slice()).unwrap().split("\n").collect();
+                self.surpress_tick = true;
+                for cmd in working_cmds.iter() {
+                    self.try_command(cmd);
+                }
+                self.surpress_tick = false;
+            }
+            Err(e) => { }
+        }
+    }
+
     pub fn main(&mut self) {
-        let function_refs: Arc<Mutex<(Vec<(FunctionRef, Vec<u8>)>, Option<u8>)>> = Arc::new(Mutex::new((Vec::new(), None)));
+        let function_refs: Arc<Mutex<InputterEditorInterface>> = Arc::new(Mutex::new(InputterEditorInterface::new()));
 
         let c = function_refs.clone();
         let mut _input_daemon = thread::spawn(move || {
             let mut inputter = Inputter::new();
-            //inputter.assign_mode_command(0,"\x1B[A".to_string(), FunctionRef::NULL);
-            //inputter.assign_mode_command(0,"\x1B[B".to_string(), FunctionRef::NULL);
-            //inputter.assign_mode_command(0,"\x1B[C".to_string(), FunctionRef::NULL);
-            //inputter.assign_mode_command(0,"\x1B[D".to_string(), FunctionRef::NULL);
 
-            inputter.assign_mode_command(0, "=".to_string(), FunctionRef::TOGGLE_CONVERTER);
-            inputter.assign_mode_command(0, "j".to_string(), FunctionRef::CURSOR_DOWN);
-            inputter.assign_mode_command(0, "k".to_string(), FunctionRef::CURSOR_UP);
-            inputter.assign_mode_command(0, "h".to_string(), FunctionRef::CURSOR_LEFT);
-            inputter.assign_mode_command(0, "l".to_string(), FunctionRef::CURSOR_RIGHT);
+            let mode_default = "DEFAULT";
+            let mode_insert = "INSERT";
+            let mode_overwrite = "OVERWRITE";
+            let mode_cmd = "CMD";
 
-            inputter.assign_mode_command(0, "J".to_string(), FunctionRef::CURSOR_LENGTH_DOWN);
-            inputter.assign_mode_command(0, "K".to_string(), FunctionRef::CURSOR_LENGTH_UP);
-            inputter.assign_mode_command(0, "H".to_string(), FunctionRef::CURSOR_LENGTH_LEFT);
-            inputter.assign_mode_command(0, "L".to_string(), FunctionRef::CURSOR_LENGTH_RIGHT);
+            inputter.assign_context_switch("MODE_SET_INSERT", mode_insert);
+            inputter.assign_context_switch("MODE_SET_OVERWRITE", mode_overwrite);
+            inputter.assign_context_switch("MODE_SET_APPEND", mode_insert);
+            inputter.assign_context_switch("MODE_SET_DEFAULT", mode_default);
+            inputter.assign_context_switch("MODE_SET_CMD", mode_cmd);
+            inputter.assign_context_switch("MODE_SET_SEARCH", mode_cmd);
+            inputter.assign_context_switch("MODE_SET_INSERT_SPECIAL", mode_cmd);
+            inputter.assign_context_switch("MODE_SET_OVERWRITE_SPECIAL", mode_cmd);
+            inputter.assign_context_switch("RUN_CUSTOM_COMMAND", mode_default);
 
-            inputter.assign_mode_command(0, "!".to_string(), FunctionRef::CREATE_BIG_ENDIAN_STRUCTURE);
-            inputter.assign_mode_command(0, "@".to_string(), FunctionRef::REMOVE_STRUCTURE);
+            //inputter.assign_mode_command(mode_default, "=".to_string(), "TOGGLE_CONVERTER");
+            //inputter.assign_mode_command(mode_default, "j".to_string(), "CURSOR_DOWN");
+            //inputter.assign_mode_command(mode_default, "k".to_string(), "CURSOR_UP");
+            //inputter.assign_mode_command(mode_default, "h".to_string(), "CURSOR_LEFT");
+            //inputter.assign_mode_command(mode_default, "l".to_string(), "CURSOR_RIGHT");
+
+            //inputter.assign_mode_command(mode_default, "J".to_string(), "CURSOR_LENGTH_DOWN");
+            //inputter.assign_mode_command(mode_default, "K".to_string(), "CURSOR_LENGTH_UP");
+            //inputter.assign_mode_command(mode_default, "H".to_string(), "CURSOR_LENGTH_LEFT");
+            //inputter.assign_mode_command(mode_default, "L".to_string(), "CURSOR_LENGTH_RIGHT");
+            //inputter.assign_mode_command(mode_default, "G".to_string(), "JUMP_TO_REGISTER");
 
             for i in 0 .. 10 {
-                inputter.assign_mode_command(0, std::str::from_utf8(&[i + 48]).unwrap().to_string(), FunctionRef::APPEND_TO_REGISTER);
+                inputter.assign_mode_command(mode_default, std::str::from_utf8(&[i + 48]).unwrap().to_string(), "APPEND_TO_REGISTER");
             }
 
-            inputter.assign_mode_command(0, "G".to_string(), FunctionRef::JUMP_TO_REGISTER);
-            inputter.assign_mode_command(0, "/".to_string(), FunctionRef::MODE_SET_SEARCH);
-            inputter.assign_mode_command(0, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::CLEAR_REGISTER);
-            inputter.assign_mode_command(0, "x".to_string(), FunctionRef::DELETE);
-            inputter.assign_mode_command(0, "y".to_string(), FunctionRef::YANK);
-            inputter.assign_mode_command(0, "p".to_string(), FunctionRef::PASTE);
-            inputter.assign_mode_command(0, "u".to_string(), FunctionRef::UNDO);
-            inputter.assign_mode_command(0, std::str::from_utf8(&[18]).unwrap().to_string(), FunctionRef::REDO);
 
-            inputter.assign_mode_command(0, "i".to_string(), FunctionRef::MODE_SET_INSERT);
-            inputter.assign_mode_command(0, "I".to_string(), FunctionRef::MODE_SET_INSERT_SPECIAL);
-            inputter.assign_mode_command(0, "O".to_string(), FunctionRef::MODE_SET_OVERWRITE_SPECIAL);
-            inputter.assign_mode_command(0, "a".to_string(), FunctionRef::MODE_SET_APPEND);
-            inputter.assign_mode_command(0, "o".to_string(), FunctionRef::MODE_SET_OVERWRITE);
-            inputter.assign_mode_command(0, ":".to_string(), FunctionRef::MODE_SET_CMD);
+            inputter.assign_mode_command(mode_default, "!".to_string(), "CREATE_BIG_ENDIAN_STRUCTURE");
+            inputter.assign_mode_command(mode_default, "@".to_string(), "REMOVE_STRUCTURE");
+            inputter.assign_mode_command(mode_default, "/".to_string(), "MODE_SET_SEARCH");
+            //inputter.assign_mode_command(mode_default, std::str::from_utf8(&[27]).unwrap().to_string(), "CLEAR_REGISTER");
 
-            inputter.assign_mode_command(0, "+".to_string(), FunctionRef::INCREMENT);
-            inputter.assign_mode_command(0, "-".to_string(), FunctionRef::DECREMENT);
-            inputter.assign_mode_command(0, std::str::from_utf8(&[127]).unwrap().to_string(), FunctionRef::BACKSPACE);
+            //inputter.assign_mode_command(mode_default, "x".to_string(), "DELETE");
+            //inputter.assign_mode_command(mode_default, "y".to_string(), "YANK");
+            //inputter.assign_mode_command(mode_default, "p".to_string(), "PASTE");
+            //inputter.assign_mode_command(mode_default, "u".to_string(), "UNDO");
+            //inputter.assign_mode_command(mode_default, std::str::from_utf8(&[18]).unwrap().to_string(), "REDO");
 
+            inputter.assign_mode_command(mode_default, "i".to_string(), "MODE_SET_INSERT");
+            inputter.assign_mode_command(mode_default, "I".to_string(), "MODE_SET_INSERT_SPECIAL");
+            inputter.assign_mode_command(mode_default, "O".to_string(), "MODE_SET_OVERWRITE_SPECIAL");
+            inputter.assign_mode_command(mode_default, "a".to_string(), "MODE_SET_APPEND");
+            inputter.assign_mode_command(mode_default, "o".to_string(), "MODE_SET_OVERWRITE");
+            inputter.assign_mode_command(mode_default, ":".to_string(), "MODE_SET_CMD");
 
-            inputter.assign_mode_command(1, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
-            inputter.assign_mode_command(2, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
+            //inputter.assign_mode_command(mode_default, "+".to_string(), "INCREMENT");
+            //inputter.assign_mode_command(mode_default, "-".to_string(), "DECREMENT");
+            //inputter.assign_mode_command(mode_default, std::str::from_utf8(&[127]).unwrap().to_string(), "BACKSPACE");
+
+            inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
+            inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
 
             for i in 32 .. 127 {
-                inputter.assign_mode_command(1, std::str::from_utf8(&[i]).unwrap().to_string(), FunctionRef::INSERT);
-                inputter.assign_mode_command(2, std::str::from_utf8(&[i]).unwrap().to_string(), FunctionRef::OVERWRITE);
-                inputter.assign_mode_command(3, std::str::from_utf8(&[i]).unwrap().to_string(), FunctionRef::INSERT_TO_CMDLINE);
+                inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT");
+                inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[i]).unwrap().to_string(), "OVERWRITE");
+                inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT_TO_CMDLINE");
             }
 
-            inputter.assign_mode_command(3, std::str::from_utf8(&[10]).unwrap().to_string(), FunctionRef::RUN_CUSTOM_COMMAND);
-            inputter.assign_mode_command(3, std::str::from_utf8(&[27]).unwrap().to_string(), FunctionRef::MODE_SET_MOVE);
+            inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[10]).unwrap().to_string(), "RUN_CUSTOM_COMMAND");
+            inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
+            inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[127]).unwrap().to_string(), "CMDLINE_BACKSPACE");
 
-            inputter.assign_mode_command(3, std::str::from_utf8(&[127]).unwrap().to_string(), FunctionRef::CMDLINE_BACKSPACE);
 
             /////////////////////////////////
             // Rectmanager puts stdout in non-canonical mode,
@@ -265,24 +328,30 @@ impl SbyteEditor {
                         Ok(ref mut mutex) => {
                             do_push = true;
 
-                            match (mutex.1) {
+                            match &mutex.new_context {
                                 Some(context) => {
-                                    inputter.set_context(context);
+                                    inputter.set_context(&context);
                                 }
                                 None => ()
                             }
 
-                            mutex.1 = None;
+                            mutex.new_context = None;
+
+                            for (context, sequence, funcref) in mutex.new_input_sequences.drain(..) {
+                                inputter.assign_mode_command(&context, sequence, &funcref);
+                            }
                         }
                         Err(e) => ()
                     }
+
+                    //logg(format!("{}", *character));
                     match inputter.read_input(*character) {
                         Some((funcref, input_sequence)) => {
                             match c.try_lock() {
                                 Ok(ref mut mutex) => {
                                     do_push = true;
 
-                                    for (current_func, current_arg) in (mutex.0).iter() {
+                                    for (current_func, current_arg) in (mutex.function_queue).iter() {
                                         if *current_func == funcref && *current_arg == input_sequence {
                                             do_push = false;
                                             break;
@@ -290,8 +359,10 @@ impl SbyteEditor {
                                     }
 
                                     if do_push {
-                                        (mutex.0).push((funcref, input_sequence));
+                                        (mutex.function_queue).push((funcref, input_sequence));
+                     //                   logg("____".to_string());
                                     }
+
                                 }
                                 Err(e) => {
                                     //logg(e.to_string());
@@ -304,28 +375,37 @@ impl SbyteEditor {
             }
         });
 
-
         let fps = 59.97;
 
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
-        self.setup_displays();
+        self.raise_flag(Flag::SETUP_DISPLAYS);
 
         while ! self.flag_kill {
             match function_refs.try_lock() {
                 Ok(ref mut mutex) => {
-
-                    if (mutex.0).len() > 0 {
-                        let (_current_func, _current_arg) = (mutex.0).remove(0);
-                        self.run_cmd_from_functionref(_current_func, vec![_current_arg]);
-
+                    if (mutex.function_queue).len() > 0 {
+                        let (_current_func, _current_arg) = (mutex.function_queue).remove(0);
+                        // Ignore input while waiting for the inputter to set new context.
+                        match mutex.new_context {
+                            Some(_) => { }
+                            None => {
+                                self.run_cmd_from_functionref(&_current_func, vec![_current_arg]);
+                            }
+                        }
                     }
 
-                    match self.flag_input_context {
+                    match &self.flag_input_context {
                         Some(context_key) => {
-                            (mutex.1) = Some(context_key);
+                            (mutex.new_context) = Some(context_key.to_string());
                         }
                         None => { }
+                    }
+
+                    self.flag_input_context = None;
+
+                    for (context, sequence, funcref) in self.new_input_sequences.drain(..) {
+                        (mutex.new_input_sequences).push((context, sequence, funcref));
                     }
                 }
                 Err(e) => ()
@@ -385,9 +465,7 @@ impl SbyteEditor {
         let new_id = self.structure_id_gen;
         self.structure_id_gen += 1;
         self.structures.insert(new_id, handler);
-
         self.set_structure_span(new_id, (index, index + length));
-
         self.structure_validity.insert(new_id, true);
 
         new_id
@@ -514,54 +592,63 @@ impl SbyteEditor {
 
     fn increment_byte(&mut self, offset: usize) -> Result<(), EditorError> {
         let mut current_byte_offset = offset;
-        let mut current_byte_value = self.active_content[current_byte_offset];
-        let mut undo_bytes = vec![];
+        if self.active_content.len() > current_byte_offset {
+            let mut current_byte_value = self.active_content[current_byte_offset];
+            let mut undo_bytes = vec![];
 
-        while true {
-            undo_bytes.insert(0, current_byte_value);
-            if current_byte_value < 255 {
+            while true {
+                undo_bytes.insert(0, current_byte_value);
+                if current_byte_value < 255 {
 
-                self.active_content[current_byte_offset] = current_byte_value + 1;
-                break;
-            } else {
-                self.active_content[current_byte_offset] = 0;
-                if current_byte_offset > 0 {
-                    current_byte_offset -= 1;
-                } else {
+                    self.active_content[current_byte_offset] = current_byte_value + 1;
                     break;
+                } else {
+                    self.active_content[current_byte_offset] = 0;
+                    if current_byte_offset > 0 {
+                        current_byte_offset -= 1;
+                    } else {
+                        break;
+                    }
+                    current_byte_value = self.active_content[current_byte_offset];
                 }
-                current_byte_value = self.active_content[current_byte_offset];
             }
-        }
 
-        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
-        Ok(())
+            self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
+            Ok(())
+        } else {
+            Err(EditorError::OutOfRange)
+        }
     }
 
     fn decrement_byte(&mut self, offset: usize) -> Result<(), EditorError> {
         let mut current_byte_offset = offset;
-        let mut current_byte_value = self.active_content[current_byte_offset];
 
-        let mut undo_bytes = vec![];
+        if self.active_content.len() > current_byte_offset {
+            let mut current_byte_value = self.active_content[current_byte_offset];
 
-        while true {
-            undo_bytes.insert(0, current_byte_value);
-            if current_byte_value > 0 {
-                self.active_content[current_byte_offset] = current_byte_value - 1;
-                break;
-            } else {
-                self.active_content[current_byte_offset] = 255;
-                if current_byte_offset > 0 {
-                    current_byte_offset -= 1;
-                } else {
+            let mut undo_bytes = vec![];
+
+            while true {
+                undo_bytes.insert(0, current_byte_value);
+                if current_byte_value > 0 {
+                    self.active_content[current_byte_offset] = current_byte_value - 1;
                     break;
+                } else {
+                    self.active_content[current_byte_offset] = 255;
+                    if current_byte_offset > 0 {
+                        current_byte_offset -= 1;
+                    } else {
+                        break;
+                    }
+                    current_byte_value = self.active_content[current_byte_offset];
                 }
-                current_byte_value = self.active_content[current_byte_offset];
             }
-        }
 
-        self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
-        Ok(())
+            self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
+            Ok(())
+        } else {
+            Err(EditorError::OutOfRange)
+        }
     }
 
     // ONLY to be used in insert_bytes and overwrite_bytes. nowhere else.
@@ -607,6 +694,149 @@ impl SbyteEditor {
         }
 
         output
+    }
+
+    fn build_key_map() -> HashMap<String, String> {
+        let mut key_map = HashMap::new();
+        // Common control characters
+        key_map.insert("BACKSPACE".to_string(), "\x7F".to_string());
+        key_map.insert("TAB".to_string(), "\x09".to_string());
+        key_map.insert("LINE_FEED".to_string(), "\x0A".to_string());
+        key_map.insert("RETURN".to_string(), "\x0D".to_string());
+        key_map.insert("ESCAPE".to_string(), "\x1B".to_string());
+        key_map.insert("ARROW_UP".to_string(), "\x1B[A".to_string());
+        key_map.insert("ARROW_LEFT".to_string(), "\x1B[D".to_string());
+        key_map.insert("ARROW_DOWN".to_string(), "\x1B[B".to_string());
+        key_map.insert("ARROW_RIGHT".to_string(), "\x1B[C".to_string());
+        key_map.insert("DELETE".to_string(), "\x1B[3\x7e".to_string());
+
+        // lesser control characters
+        key_map.insert("NULL".to_string(), "\x00".to_string());
+        key_map.insert("STX".to_string(), "\x01".to_string());
+        key_map.insert("SOT".to_string(), "\x02".to_string());
+        key_map.insert("ETX".to_string(), "\x03".to_string());
+        key_map.insert("EOT".to_string(), "\x04".to_string());
+        key_map.insert("ENQ".to_string(), "\x05".to_string());
+        key_map.insert("ACK".to_string(), "\x06".to_string());
+        key_map.insert("BELL".to_string(), "\x07".to_string());
+        key_map.insert("VTAB".to_string(), "\x0B".to_string());
+        key_map.insert("FORM_FEED".to_string(), "\x0C".to_string());
+        key_map.insert("SHIFT_OUT".to_string(), "\x0E".to_string());
+        key_map.insert("SHIFT_IN".to_string(), "\x0F".to_string());
+        key_map.insert("DATA_LINK_ESCAPE".to_string(), "\x10".to_string());
+        key_map.insert("XON".to_string(), "\x11".to_string());
+        key_map.insert("CTRL+R".to_string(), "\x12".to_string());
+        key_map.insert("XOFF".to_string(), "\x13".to_string());
+        key_map.insert("DC4".to_string(), "\x14".to_string());
+        key_map.insert("NAK".to_string(), "\x15".to_string());
+        key_map.insert("SYN".to_string(), "\x16".to_string());
+        key_map.insert("ETB".to_string(), "\x17".to_string());
+        key_map.insert("CANCEL".to_string(), "\x18".to_string());
+        key_map.insert("EM".to_string(), "\x19".to_string());
+        key_map.insert("SUB".to_string(), "\x1A".to_string());
+        key_map.insert("FILE_SEPARATOR".to_string(), "\x1C".to_string());
+        key_map.insert("GROUP_SEPARATOR".to_string(), "\x1D".to_string());
+        key_map.insert("RECORD_SEPARATOR".to_string(), "\x1E".to_string());
+        key_map.insert("UNITS_EPARATOR".to_string(), "\x1F".to_string());
+
+        // Regular character Keys
+        key_map.insert("ONE".to_string(), "1".to_string());
+        key_map.insert("TWO".to_string(), "2".to_string());
+        key_map.insert("THREE".to_string(), "3".to_string());
+        key_map.insert("FOUR".to_string(), "4".to_string());
+        key_map.insert("FIVE".to_string(), "5".to_string());
+        key_map.insert("SIX".to_string(), "6".to_string());
+        key_map.insert("SEVEN".to_string(), "7".to_string());
+        key_map.insert("EIGHT".to_string(), "8".to_string());
+        key_map.insert("NINE".to_string(), "9".to_string());
+        key_map.insert("ZERO".to_string(), "0".to_string());
+        key_map.insert("BANG".to_string(), "!".to_string());
+        key_map.insert("AT".to_string(), "@".to_string());
+        key_map.insert("OCTOTHORPE".to_string(), "#".to_string());
+        key_map.insert("DOLLAR".to_string(), "$".to_string());
+        key_map.insert("PERCENT".to_string(), "%".to_string());
+        key_map.insert("CARET".to_string(), "^".to_string());
+        key_map.insert("AMPERSAND".to_string(), "&".to_string());
+        key_map.insert("ASTERISK".to_string(), "*".to_string());
+        key_map.insert("PARENTHESIS_OPEN".to_string(), "(".to_string());
+        key_map.insert("PARENTHESIS_CLOSE".to_string(), ")".to_string());
+        key_map.insert("BRACKET_OPEN".to_string(), "[".to_string());
+        key_map.insert("BRACKET_CLOSE".to_string(), "]".to_string());
+        key_map.insert("BRACE_OPEN".to_string(), "{".to_string());
+        key_map.insert("BRACE_CLOSE".to_string(), "}".to_string());
+        key_map.insert("BAR".to_string(), "|".to_string());
+        key_map.insert("BACKSLASH".to_string(), "\\".to_string());
+        key_map.insert("COLON".to_string(), ":".to_string());
+        key_map.insert("SEMICOLON".to_string(), ";".to_string());
+        key_map.insert("QUOTE".to_string(), "\"".to_string());
+        key_map.insert("APOSTROPHE".to_string(), "'".to_string());
+        key_map.insert("LESSTHAN".to_string(), "<".to_string());
+        key_map.insert("GREATERTHAN".to_string(), ">".to_string());
+        key_map.insert("COMMA".to_string(), ",".to_string());
+        key_map.insert("PERIOD".to_string(), ".".to_string());
+        key_map.insert("SLASH".to_string(), "/".to_string());
+        key_map.insert("QUESTIONMARK".to_string(), "?".to_string());
+        key_map.insert("DASH".to_string(), "-".to_string());
+        key_map.insert("UNDERSCORE".to_string(), "_".to_string());
+        key_map.insert("SPACE".to_string(), " ".to_string());
+        key_map.insert("PLUS".to_string(), "+".to_string());
+        key_map.insert("EQUALS".to_string(), "=".to_string());
+        key_map.insert("TILDE".to_string(), "~".to_string());
+        key_map.insert("BACKTICK".to_string(), "`".to_string());
+        key_map.insert("A_UPPER".to_string(), "A".to_string());
+        key_map.insert("B_UPPER".to_string(), "B".to_string());
+        key_map.insert("C_UPPER".to_string(), "C".to_string());
+        key_map.insert("D_UPPER".to_string(), "D".to_string());
+        key_map.insert("E_UPPER".to_string(), "E".to_string());
+        key_map.insert("F_UPPER".to_string(), "F".to_string());
+        key_map.insert("G_UPPER".to_string(), "G".to_string());
+        key_map.insert("H_UPPER".to_string(), "H".to_string());
+        key_map.insert("I_UPPER".to_string(), "I".to_string());
+        key_map.insert("J_UPPER".to_string(), "J".to_string());
+        key_map.insert("K_UPPER".to_string(), "K".to_string());
+        key_map.insert("L_UPPER".to_string(), "L".to_string());
+        key_map.insert("M_UPPER".to_string(), "M".to_string());
+        key_map.insert("N_UPPER".to_string(), "N".to_string());
+        key_map.insert("O_UPPER".to_string(), "O".to_string());
+        key_map.insert("P_UPPER".to_string(), "P".to_string());
+        key_map.insert("Q_UPPER".to_string(), "Q".to_string());
+        key_map.insert("R_UPPER".to_string(), "R".to_string());
+        key_map.insert("S_UPPER".to_string(), "S".to_string());
+        key_map.insert("T_UPPER".to_string(), "T".to_string());
+        key_map.insert("U_UPPER".to_string(), "U".to_string());
+        key_map.insert("V_UPPER".to_string(), "V".to_string());
+        key_map.insert("W_UPPER".to_string(), "W".to_string());
+        key_map.insert("X_UPPER".to_string(), "X".to_string());
+        key_map.insert("Y_UPPER".to_string(), "Y".to_string());
+        key_map.insert("Z_UPPER".to_string(), "Z".to_string());
+        key_map.insert("A_LOWER".to_string(), "a".to_string());
+        key_map.insert("B_LOWER".to_string(), "b".to_string());
+        key_map.insert("C_LOWER".to_string(), "c".to_string());
+        key_map.insert("D_LOWER".to_string(), "d".to_string());
+        key_map.insert("E_LOWER".to_string(), "e".to_string());
+        key_map.insert("F_LOWER".to_string(), "f".to_string());
+        key_map.insert("G_LOWER".to_string(), "g".to_string());
+        key_map.insert("H_LOWER".to_string(), "h".to_string());
+        key_map.insert("I_LOWER".to_string(), "i".to_string());
+        key_map.insert("J_LOWER".to_string(), "j".to_string());
+        key_map.insert("K_LOWER".to_string(), "k".to_string());
+        key_map.insert("L_LOWER".to_string(), "l".to_string());
+        key_map.insert("M_LOWER".to_string(), "m".to_string());
+        key_map.insert("N_LOWER".to_string(), "n".to_string());
+        key_map.insert("O_LOWER".to_string(), "o".to_string());
+        key_map.insert("P_LOWER".to_string(), "p".to_string());
+        key_map.insert("Q_LOWER".to_string(), "q".to_string());
+        key_map.insert("R_LOWER".to_string(), "r".to_string());
+        key_map.insert("S_LOWER".to_string(), "s".to_string());
+        key_map.insert("T_LOWER".to_string(), "t".to_string());
+        key_map.insert("U_LOWER".to_string(), "u".to_string());
+        key_map.insert("V_LOWER".to_string(), "v".to_string());
+        key_map.insert("W_LOWER".to_string(), "w".to_string());
+        key_map.insert("X_LOWER".to_string(), "x".to_string());
+        key_map.insert("Y_LOWER".to_string(), "y".to_string());
+        key_map.insert("Z_LOWER".to_string(), "z".to_string());
+
+        key_map
     }
 }
 
@@ -915,7 +1145,7 @@ impl Editor for SbyteEditor {
 
     fn get_chunk(&mut self, offset: usize, length: usize) -> Vec<u8> {
         let mut output: Vec<u8> = Vec::new();
-        for i in offset .. min(self.active_content.len(), offset + length) {
+        for i in min(offset, self.active_content.len()) .. min(self.active_content.len(), offset + length) {
             output.push(self.active_content[i]);
         }
 
@@ -1041,71 +1271,75 @@ impl VisualEditor for SbyteEditor {
 
         self.viewport.set_offset(adj_viewport_offset);
     }
+
 }
 
 impl InConsole for SbyteEditor {
     fn tick(&mut self) {
-        self.check_resize();
+        if (! self.surpress_tick) {
 
-        if self.check_flag(Flag::SETUP_DISPLAYS) {
-            self.setup_displays();
-        }
+            self.check_resize();
 
-        if self.check_flag(Flag::REMAP_ACTIVE_ROWS) {
-            self.remap_active_rows();
-        }
+            if self.check_flag(Flag::SETUP_DISPLAYS) {
+                self.setup_displays();
+            }
 
-        let len = self.rows_to_refresh.len();
-        if len > 0 {
-            let mut in_timeout = Vec::new();
-            let mut y;
-            while self.rows_to_refresh.len() > 0 {
-                y = self.rows_to_refresh.pop().unwrap();
-                if self.check_flag(Flag::UPDATE_ROW(y)) {
-                    self.set_row_characters(y);
-                } else {
-                    in_timeout.push(y);
+            if self.check_flag(Flag::REMAP_ACTIVE_ROWS) {
+                self.remap_active_rows();
+            }
+
+            let len = self.rows_to_refresh.len();
+            if len > 0 {
+                let mut in_timeout = Vec::new();
+                let mut y;
+                while self.rows_to_refresh.len() > 0 {
+                    y = self.rows_to_refresh.pop().unwrap();
+                    if self.check_flag(Flag::UPDATE_ROW(y)) {
+                        self.set_row_characters(y);
+                    } else {
+                        in_timeout.push(y);
+                    }
                 }
+                self.rows_to_refresh = in_timeout;
             }
-            self.rows_to_refresh = in_timeout;
-        }
 
 
-        if self.check_flag(Flag::CURSOR_MOVED) {
-            self.apply_cursor();
-        }
-
-
-        match &self.user_error_msg {
-            Some(msg) => {
-                self.display_user_error(msg.clone());
-                self.user_error_msg = None;
-
-                // Prevent any user msg from clobbering this msg
-                self.user_msg = None;
-                self.lower_flag(Flag::UPDATE_OFFSET);
+            if self.check_flag(Flag::CURSOR_MOVED) {
+                self.apply_cursor();
             }
-            None => {
-                if self.check_flag(Flag::DISPLAY_CMDLINE) {
-                    self.display_command_line();
-                } else {
-                    match &self.user_msg {
-                        Some(msg) => {
-                            self.display_user_message(msg.clone());
-                            self.user_msg = None;
-                            self.lower_flag(Flag::UPDATE_OFFSET);
-                        }
-                        None => {
-                            if self.check_flag(Flag::UPDATE_OFFSET) {
-                                self.display_user_offset();
+
+
+            match &self.user_error_msg {
+                Some(msg) => {
+                    self.display_user_error(msg.clone());
+                    self.user_error_msg = None;
+
+                    // Prevent any user msg from clobbering this msg
+                    self.user_msg = None;
+                    self.lower_flag(Flag::UPDATE_OFFSET);
+                }
+                None => {
+                    if self.check_flag(Flag::DISPLAY_CMDLINE) {
+                        self.display_command_line();
+                    } else {
+                        match &self.user_msg {
+                            Some(msg) => {
+                                self.display_user_message(msg.clone());
+                                self.user_msg = None;
+                                self.lower_flag(Flag::UPDATE_OFFSET);
+                            }
+                            None => {
+                                if self.check_flag(Flag::UPDATE_OFFSET) {
+                                    self.display_user_offset();
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        self.rectmanager.draw(0);
+            self.rectmanager.draw(0);
+        }
     }
 
     fn autoset_viewport_size(&mut self) {
@@ -1116,12 +1350,24 @@ impl InConsole for SbyteEditor {
         let display_ratio = self.get_display_ratio() as f64;
         let r: f64 = (1f64 / display_ratio);
         let a: f64 = (1f64 - ( 1f64 / (r + 1f64)));
-        let base_width = (full_width as f64) * a;
+        let mut base_width = ((full_width as f64) * a) as usize;
+
+        match self.locked_viewport_width {
+            Some(locked_width) => {
+                base_width = min(locked_width, base_width);
+            }
+            None => ()
+        }
 
         self.viewport.set_size(
-            base_width as usize,
+            base_width,
             full_height - meta_height
         );
+
+        // adjust viewport
+        let old_offset = self.viewport.get_offset();
+        self.viewport.set_offset((old_offset / base_width) * base_width);
+
 
         self.active_row_map.drain();
         for i in 0 .. self.viewport.get_height() {
@@ -1145,8 +1391,8 @@ impl InConsole for SbyteEditor {
         );
 
         let (bits_display, human_display) = self.rects_display;
-        self.rectmanager.empty(bits_display);
-        self.rectmanager.empty(human_display);
+        self.rectmanager.clear_children(bits_display);
+        self.rectmanager.clear_children(human_display);
 
         self.arrange_displays();
 
@@ -1251,8 +1497,8 @@ impl InConsole for SbyteEditor {
             self.cursor_set_offset(0);
 
             self.raise_flag(Flag::SETUP_DISPLAYS);
-            self.flag_force_rerow = true;
             self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+            self.flag_force_rerow = true;
             self.is_resizing = false;
         }
     }
@@ -1270,7 +1516,7 @@ impl InConsole for SbyteEditor {
 
 
         let display_height = full_height - meta_height;
-        self.rectmanager.clear(self.rect_display_wrapper);
+        self.rectmanager.clear_characters(self.rect_display_wrapper);
 
         self.rectmanager.resize(
             self.rect_display_wrapper,
@@ -1295,11 +1541,11 @@ impl InConsole for SbyteEditor {
         // TODO: Fill in a separator
 
         let human_display_width = self.viewport.get_width();
-        let human_display_x = (full_width - human_display_width) as isize;
+        //let human_display_x = (full_width - human_display_width) as isize;
+        let human_display_x = bits_display_width as isize;
 
         self.rectmanager.resize(human_id, human_display_width, display_height);
         self.rectmanager.set_position(human_id, human_display_x, 0);
-
     }
 
     fn remap_active_rows(&mut self) {
@@ -1461,6 +1707,7 @@ impl InConsole for SbyteEditor {
         }
 
         self.flag_force_rerow = false;
+        self.raise_flag(Flag::CURSOR_MOVED);
     }
 
     fn set_row_characters(&mut self, absolute_y: usize) {
@@ -1489,8 +1736,8 @@ impl InConsole for SbyteEditor {
         match self.cell_dict.get_mut(&relative_y) {
             Some(cellhash) => {
                 for (_x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
-                    self.rectmanager.clear(*rect_id_human);
-                    self.rectmanager.clear(*rect_id_bits);
+                    self.rectmanager.clear_characters(*rect_id_human);
+                    self.rectmanager.clear_characters(*rect_id_bits);
                 }
 
                 let mut tmp_bits;
@@ -1546,8 +1793,6 @@ impl InConsole for SbyteEditor {
                             if in_structure && !structure_valid {
                                 self.rectmanager.set_fg_color(*human, RectColor::RED);
                                 self.rectmanager.set_fg_color(*bits, RectColor::RED);
-                                self.rectmanager.set_bg_color(*human, RectColor::YELLOW);
-                                self.rectmanager.set_bg_color(*bits, RectColor::YELLOW);
                             } else {
                                 self.rectmanager.unset_color(*human);
                                 self.rectmanager.unset_color(*bits);
@@ -1605,15 +1850,16 @@ impl InConsole for SbyteEditor {
     }
 
     fn clear_meta_rect(&mut self) {
-        self.rectmanager.clear(self.rect_meta);
-        self.rectmanager.empty(self.rect_meta);
+        self.rectmanager.clear_characters(self.rect_meta);
+        self.rectmanager.clear_children(self.rect_meta);
         self.rectmanager.clear_effects(self.rect_meta);
     }
 
     fn display_user_message(&mut self, msg: String) {
         self.clear_meta_rect();
         self.rectmanager.set_string(self.rect_meta, 0, 0, &msg);
-        self.rectmanager.set_fg_color(self.rect_meta, RectColor::GREEN);
+        self.rectmanager.set_bold_flag(self.rect_meta);
+        self.rectmanager.set_fg_color(self.rect_meta, RectColor::BRIGHTCYAN);
     }
 
     fn display_user_error(&mut self, msg: String) {
@@ -1693,7 +1939,7 @@ impl InConsole for SbyteEditor {
         let first_active_row = range.start / viewport_width;
         let last_active_row = range.end / viewport_width;
 
-        for y in first_active_row .. last_active_row {
+        for y in first_active_row .. max(last_active_row, first_active_row + 1) {
             self.raise_flag(Flag::UPDATE_ROW(y));
             self.raise_row_update_flag(y);
         }
@@ -1754,44 +2000,110 @@ impl InConsole for SbyteEditor {
 
         output
     }
+
+    fn unlock_viewport_width(&mut self) {
+        self.locked_viewport_width = None;
+    }
+
+    fn lock_viewport_width(&mut self, new_width: usize) {
+        self.locked_viewport_width = Some(new_width);
+    }
 }
 
 impl Commandable for SbyteEditor {
-    fn set_input_context(&mut self, context: u8) {
-        self.flag_input_context = Some(context);
+    fn set_input_context(&mut self, context: &str) {
+        self.flag_input_context = Some(context.to_string());
     }
 
-    fn assign_line_command(&mut self, command_string: String, function: FunctionRef) {
-        self.line_commands.insert(command_string, function);
+    fn assign_line_command(&mut self, command_string: String, function: &str) {
+        self.line_commands.insert(command_string, function.to_string());
     }
 
-    fn try_command(&mut self, query: String) {
+    fn try_command(&mut self, query: &str) {
         // TODO: split words.
-        let mut words = parse_words(query);
+        let mut words = parse_words(query.to_string());
         if words.len() > 0 {
             let cmd = words.remove(0);
             let mut arguments: Vec<Vec<u8>> = vec![];
+
             for word in words.iter() {
                 arguments.push(word.as_bytes().to_vec());
             }
-            let mut funcref = FunctionRef::NULL;
-            match self.line_commands.get(&cmd) {
+
+
+            let funcref = match self.line_commands.get(&cmd) {
                 Some(_funcref) => {
-                    funcref = *_funcref;
+                   _funcref.to_string()
                 }
                 None => {
                     self.user_error_msg = Some(format!("Command not found: {}", cmd.clone()));
+                    "NULL".to_string()
                 }
             };
 
-            self.run_cmd_from_functionref(funcref, arguments);
+            self.run_cmd_from_functionref(&funcref, arguments);
         }
     }
 
-    fn run_cmd_from_functionref(&mut self, funcref: FunctionRef, arguments: Vec<Vec<u8>>) {
+    fn run_cmd_from_functionref(&mut self, funcref: &str, arguments: Vec<Vec<u8>>) {
         match funcref {
-            FunctionRef::CURSOR_UP => {
+            "ASSIGN_INPUT" => {
+                let mut is_ok = true;
 
+                let new_funcref: String = match arguments.get(0) {
+                    Some(_new_funcref) => {
+                        std::str::from_utf8(_new_funcref).unwrap().to_string()
+                    }
+                    None => {
+                        is_ok = false;
+                        "".to_string()
+                    }
+                };
+
+                let new_input_string: String = match arguments.get(1) {
+                    Some(_new_inputs) => {
+                        let tmp = std::str::from_utf8(_new_inputs).unwrap().to_string();
+                        let key_map = SbyteEditor::build_key_map();
+                        let mut output = "".to_string();
+                        for word in tmp.split(",") {
+                            match key_map.get(word) {
+                                Some(seq) => {
+                                    output += &seq.to_string();
+                                }
+                                None => () // TODO: ERROR
+                            }
+                        }
+                        output
+                    }
+                    None => {
+                        is_ok = false;
+                        "".to_string()
+                    }
+                };
+
+                if (is_ok) {
+                    self.new_input_sequences.push(("DEFAULT".to_string(), new_input_string, new_funcref));
+                }
+            }
+
+           // "SET_CONTEXT" => {
+           //     let mut is_ok = true;
+           //     let context = match arguments.get(0) {
+           //         Some(byte_rep) => {
+           //             std::str::from_utf8(byte_rep).unwrap()
+           //         }
+           //         None => {
+           //             is_ok = false;
+           //             ""
+           //         }
+           //     };
+
+           //     if is_ok {
+           //         self.set_context(context);
+           //     }
+           // }
+
+            "CURSOR_UP" => {
                 let cursor_offset = self.cursor.get_offset();
                 self.cursor_set_offset(cursor_offset);
                 self.cursor_set_length(1);
@@ -1804,7 +2116,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::UPDATE_OFFSET);
                 self.raise_flag(Flag::CURSOR_MOVED);
             }
-            FunctionRef::CURSOR_DOWN => {
+
+            "CURSOR_DOWN" => {
                 let repeat = self.grab_register(1);
                 let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
                 self.cursor_set_length(1);
@@ -1817,7 +2130,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::UPDATE_OFFSET);
                 self.raise_flag(Flag::CURSOR_MOVED);
             }
-            FunctionRef::CURSOR_LEFT => {
+
+            "CURSOR_LEFT" => {
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_prev_byte();
@@ -1828,7 +2142,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::CURSOR_RIGHT => {
+
+            "CURSOR_RIGHT" => {
                 // Jump positon to the end of the cursor before moving it right
                 let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
                 self.cursor_set_offset(end_of_cursor - 1);
@@ -1843,7 +2158,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::CURSOR_LENGTH_UP => {
+
+            "CURSOR_LENGTH_UP" => {
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_decrease_length_by_line();
@@ -1853,7 +2169,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::CURSOR_LENGTH_DOWN => {
+
+            "CURSOR_LENGTH_DOWN" => {
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_increase_length_by_line();
@@ -1862,7 +2179,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::CURSOR_LENGTH_LEFT => {
+
+            "CURSOR_LENGTH_LEFT" => {
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_decrease_length();
@@ -1871,7 +2189,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::CURSOR_LENGTH_RIGHT => {
+
+            "CURSOR_LENGTH_RIGHT" => {
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
                     self.cursor_increase_length();
@@ -1880,7 +2199,8 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::APPEND_TO_REGISTER => {
+
+            "APPEND_TO_REGISTER" => {
                 match arguments.get(0) {
                     Some(argument) => {
                         // TODO: This is ridiculous. maybe make a nice wrapper for String (len 1) -> u8?
@@ -1899,10 +2219,12 @@ impl Commandable for SbyteEditor {
                     None => ()
                 }
             }
-            FunctionRef::CLEAR_REGISTER => {
+
+            "CLEAR_REGISTER" => {
                 self.clear_register()
             }
-            FunctionRef::JUMP_TO_REGISTER => {
+
+            "JUMP_TO_REGISTER" => {
                 self.cursor_set_length(1);
                 let new_offset = max(0, self.grab_register(std::isize::MAX)) as usize;
                 self.cursor_set_offset(new_offset);
@@ -1913,7 +2235,7 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
-            FunctionRef::JUMP_TO_NEXT => {
+            "JUMP_TO_NEXT" => {
                 let current_offset = self.cursor.get_offset();
                 let mut next_offset = current_offset;
                 let mut new_cursor_length = self.cursor.get_length();
@@ -1943,7 +2265,7 @@ impl Commandable for SbyteEditor {
                         // Then, convert the special characters in that string (eg, \x41 -> A)
                         match self.string_to_bytes(string_rep.to_string()) {
                             Ok(byte_pattern) => {
-                                self.search_history.push(byte_pattern.clone());
+                                self.search_history.push(raw_bytes.clone());
                                 match self.find_after(&byte_pattern, current_offset) {
                                     Some(new_offset) => {
                                         new_cursor_length = byte_pattern.len();
@@ -1976,28 +2298,29 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
-            FunctionRef::CMDLINE_BACKSPACE => {
+            "CMDLINE_BACKSPACE" => {
                 if self.commandline.is_empty() {
-                    self.run_cmd_from_functionref(FunctionRef::MODE_SET_MOVE, arguments.clone());
+                    self.set_input_context("DEFAULT");
+                    self.raise_flag(Flag::UPDATE_OFFSET);
                 } else {
                     self.commandline.backspace();
+                    self.raise_flag(Flag::DISPLAY_CMDLINE);
                 }
-                self.raise_flag(Flag::DISPLAY_CMDLINE);
             }
 
-            FunctionRef::YANK => {
+            "YANK" => {
                 self.copy_selection();
                 self.cursor_set_length(1);
 
                 self.raise_flag(Flag::CURSOR_MOVED);
             }
 
-            FunctionRef::PASTE => {
+            "PASTE" => {
                 let to_insert = vec![self.get_clipboard()];
-                self.run_cmd_from_functionref(FunctionRef::INSERT, to_insert);
+                self.run_cmd_from_functionref("INSERT", to_insert);
             }
 
-            FunctionRef::DELETE => {
+            "DELETE" => {
                 let offset = self.cursor.get_offset();
 
                 let repeat = self.grab_register(1);
@@ -2019,7 +2342,7 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
-            FunctionRef::REMOVE_STRUCTURE => {
+            "REMOVE_STRUCTURE" => {
                 let offset = self.cursor.get_offset();
                 let mut structures = self.get_structured_data_handlers(offset);
 
@@ -2033,7 +2356,7 @@ impl Commandable for SbyteEditor {
                 }
             }
 
-            FunctionRef::CREATE_BIG_ENDIAN_STRUCTURE => {
+            "CREATE_BIG_ENDIAN_STRUCTURE" => {
                 let prefix_width = self.cursor.get_length();
                 let offset = self.cursor.get_offset();
                 let prefix = self.get_chunk(offset, prefix_width);
@@ -2051,24 +2374,30 @@ impl Commandable for SbyteEditor {
                     Err(e) => {
                     }
                 }
-
             }
 
-            FunctionRef::BACKSPACE => {
+            "BACKSPACE" => {
                 let remove_count = min(self.cursor.get_offset(), max(1, self.grab_register(1)) as usize);
                 for i in 0 .. remove_count {
-                    self.run_cmd_from_functionref(FunctionRef::CURSOR_LEFT, arguments.clone());
-                    self.run_cmd_from_functionref(FunctionRef::DELETE, arguments.clone());
+                    self.run_cmd_from_functionref("CURSOR_LEFT", arguments.clone());
+                    self.run_cmd_from_functionref("DELETE", arguments.clone());
                 }
             }
 
-            FunctionRef::UNDO => {
+            "UNDO" => {
                 let current_viewport_offset = self.viewport.get_offset();
 
-                let repeat = self.grab_register(1);
+                let repeat = min(self.undo_stack.len(), self.grab_register(1) as usize);
                 for _ in 0 .. repeat {
                     self.undo();
                     self.run_structure_checks(self.cursor.get_offset());
+                }
+                if repeat > 1 {
+                    self.user_msg = Some(format!("Undone x{}", repeat));
+                } else if repeat == 1 {
+                    self.user_msg = Some("Undid last change".to_string());
+                } else {
+                    self.user_msg = Some("Nothing to undo".to_string());
                 }
 
                 self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
@@ -2083,7 +2412,7 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
-            FunctionRef::REDO => {
+            "REDO" => {
                 let current_viewport_offset = self.viewport.get_offset();
 
                 let repeat = self.grab_register(1);
@@ -2102,35 +2431,41 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::CURSOR_MOVED);
                 self.raise_flag(Flag::UPDATE_OFFSET);
             }
-            FunctionRef::MODE_SET_INSERT => {
-                self.set_input_context(1);
+
+            "MODE_SET_INSERT" => {
                 self.clear_register();
+                self.user_msg = Some("--INSERT--".to_string());
             }
-            FunctionRef::MODE_SET_OVERWRITE => {
-                self.set_input_context(2);
-            }
-            FunctionRef::MODE_SET_APPEND => {
-                self.set_input_context(1);
+
+            "MODE_SET_OVERWRITE" => {
                 self.clear_register();
-                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments);
+                self.user_msg = Some("--OVERWRITE--".to_string());
             }
-            FunctionRef::MODE_SET_MOVE => {
+
+            "MODE_SET_APPEND" => {
+                self.clear_register();
+                self.run_cmd_from_functionref("CURSOR_RIGHT", arguments);
+                self.user_msg = Some("--INSERT--".to_string());
+            }
+
+            "MODE_SET_DEFAULT" => {
                 self.clear_register();
                 self.clear_meta_rect();
                 self.raise_flag(Flag::UPDATE_OFFSET);
                 self.raise_flag(Flag::CURSOR_MOVED);
-                self.set_input_context(0);
             }
-            FunctionRef::MODE_SET_CMD => {
+
+            "MODE_SET_CMD" => {
                 self.commandline.clear_register();
-                self.set_input_context(3);
+                self.raise_flag(Flag::DISPLAY_CMDLINE);
             }
-            FunctionRef::MODE_SET_SEARCH => {
+
+            "MODE_SET_SEARCH" => {
                 self.commandline.set_register("find ".to_string());
                 self.display_command_line();
-                self.set_input_context(3);
             }
-            FunctionRef::MODE_SET_INSERT_SPECIAL => {
+
+            "MODE_SET_INSERT_SPECIAL" => {
                 let cmdstring;
                 match self.active_converter {
                     ConverterRef::BIN => {
@@ -2145,9 +2480,9 @@ impl Commandable for SbyteEditor {
                 }
                 self.commandline.set_register(cmdstring);
                 self.display_command_line();
-                self.set_input_context(3);
             }
-            FunctionRef::MODE_SET_OVERWRITE_SPECIAL => {
+
+            "MODE_SET_OVERWRITE_SPECIAL" => {
                 let cmdstring;
                 match self.active_converter {
                     ConverterRef::BIN => {
@@ -2162,31 +2497,37 @@ impl Commandable for SbyteEditor {
                 }
                 self.commandline.set_register(cmdstring);
                 self.display_command_line();
-                self.set_input_context(3);
             }
-            FunctionRef::INSERT => {
+
+            "INSERT" => {
                 let offset = self.cursor.get_offset();
                 match arguments.get(0) {
                     Some(argument_bytes) => {
                         let argument = std::str::from_utf8(argument_bytes).unwrap();
-                        let repeat = self.grab_register(1);
-                        if repeat > 0 {
-                            for _ in 0 .. repeat {
-                                self.insert_bytes_at_cursor(argument_bytes.clone());
-                                self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                        match self.string_to_bytes(argument.to_string()) {
+                            Ok(converted_bytes) => {
+                                let repeat = self.grab_register(1);
+                                if repeat > 0 {
+                                    for _ in 0 .. repeat {
+                                        self.insert_bytes_at_cursor(converted_bytes.clone());
+                                        self.run_cmd_from_functionref("CURSOR_RIGHT", arguments.clone());
+                                    }
+
+                                    self.run_structure_checks(offset);
+                                    self.flag_row_update_by_offset(offset);
+                                    self.raise_flag(Flag::UPDATE_OFFSET);
+                                }
                             }
-
-                            self.run_structure_checks(offset);
-
-                            self.flag_row_update_by_offset(offset);
-
-                            self.raise_flag(Flag::UPDATE_OFFSET);
+                            Err(e) => {
+                                self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
+                            }
                         }
                     }
                     None => ()
                 }
             }
-            FunctionRef::INSERT_TO_CMDLINE => {
+
+            "INSERT_TO_CMDLINE" => {
                 match arguments.get(0) {
                     Some(argument_bytes) => {
                         let argument = std::str::from_utf8(argument_bytes).unwrap();
@@ -2197,35 +2538,43 @@ impl Commandable for SbyteEditor {
                     None => ()
                 }
             }
-            FunctionRef::OVERWRITE => {
+
+            "OVERWRITE" => {
                 let offset = self.cursor.get_offset();
                 let repeat = self.grab_register(1);
 
                 match arguments.get(0) {
                     Some(argument_bytes) => {
                         let argument = std::str::from_utf8(argument_bytes).unwrap();
+                        match self.string_to_bytes(argument.to_string()) {
+                            Ok(converted_bytes) => {
+                                let mut overwritten_bytes: Vec<u8> = Vec::new();
 
-                        let mut overwritten_bytes: Vec<u8> = Vec::new();
-                        for _ in 0 .. repeat {
-                            self.overwrite_bytes_at_cursor(argument_bytes.clone());
-                            self.run_cmd_from_functionref(FunctionRef::CURSOR_RIGHT, arguments.clone());
+                                for _ in 0 .. repeat {
+                                    self.overwrite_bytes_at_cursor(converted_bytes.clone());
+                                    self.run_cmd_from_functionref("CURSOR_RIGHT", arguments.clone());
+                                }
+
+                                // Manage structured data
+                                self.run_structure_checks(offset);
+
+                                self.cursor_set_length(1);
+                                self.raise_flag(Flag::CURSOR_MOVED);
+
+                                self.flag_row_update_by_range(offset..offset);
+                            }
+                            Err(e) => {
+                                self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
+                            }
                         }
-
-
-                        // Manage structured data
-                        self.run_structure_checks(offset);
-
-                        self.cursor_set_length(1);
-                        self.raise_flag(Flag::CURSOR_MOVED);
-
-                        self.flag_row_update_by_range(offset..offset);
                     }
                     None => ()
                 }
             }
-            FunctionRef::DECREMENT => {
+
+            "DECREMENT" => {
                 let offset = self.cursor.get_offset();
-                let repeat = self.grab_register(1);
+                let repeat = max(1, self.grab_register(1));
                 for _ in 0 .. repeat {
                     self.decrement_byte(offset);
                 }
@@ -2234,18 +2583,22 @@ impl Commandable for SbyteEditor {
                 self.cursor_set_length(1);
                 self.raise_flag(Flag::CURSOR_MOVED);
 
+                let mut chunk;
+                let mut suboffset: usize = 0;
+                while offset > suboffset {
+                    chunk = self.get_chunk(offset - suboffset, 1);
+                    if chunk.len() > 0 && (chunk[0] as u32) > (repeat >> (8 * suboffset)) as u32 {
+                        suboffset += 1;
+                    } else {
+                        break;
+                    }
+                }
 
-                //let mut rows_updated: HashSet<usize> = HashSet::new();
-                //for (handler_id, (span_i, span_f)) in self.run_structure_checks(offset).iter() {
-                //    for y in (span_i / viewport_width) .. (span_f / viewport_width) + 1 {
-                //        if !rows_updated.contains(&y) {
-                //            self.raise_row_update_flag(y);
-                //        }
-                //    }
-                //}
-
+                self.flag_row_update_by_range(offset - suboffset .. offset);
+                self.raise_flag(Flag::CURSOR_MOVED);
             }
-            FunctionRef::INCREMENT => {
+
+            "INCREMENT" => {
                 let offset = self.cursor.get_offset();
                 let repeat = self.grab_register(1);
                 for _ in 0 .. repeat {
@@ -2256,8 +2609,10 @@ impl Commandable for SbyteEditor {
                 self.cursor_set_length(1);
 
                 let mut suboffset: usize = 0;
+                let mut chunk;
                 while offset > suboffset {
-                    if (self.get_chunk(offset - suboffset, 1)[0] as u32) < ((repeat as u32) / 256u32.pow(suboffset as u32)) {
+                    chunk = self.get_chunk(offset - suboffset, 1);
+                    if chunk.len() > 0 && (chunk[0] as u32) < (repeat >> (8 * suboffset)) as u32 {
                         suboffset += 1;
                     } else {
                         break;
@@ -2265,44 +2620,65 @@ impl Commandable for SbyteEditor {
                 }
 
                 self.flag_row_update_by_range(offset - suboffset .. offset);
-
-
                 self.raise_flag(Flag::CURSOR_MOVED);
             }
-            FunctionRef::RUN_CUSTOM_COMMAND => {
+
+            "RUN_CUSTOM_COMMAND" => {
                 match self.commandline.apply_register() {
                     Some(new_command) => {
                         self.clear_meta_rect();
-                        self.try_command(new_command);
+                        self.try_command(&new_command);
                     }
                     None => {
                     }
                 };
-                self.set_input_context(0);
             }
-            FunctionRef::KILL => {
+
+            "KILL" => {
                 self.flag_kill = true;
             }
-            FunctionRef::SAVE => {
+            "SAVE" => {
                 //TODO
             }
-            FunctionRef::SAVEKILL => {
-                self.run_cmd_from_functionref(FunctionRef::SAVE, arguments.clone());
-                self.run_cmd_from_functionref(FunctionRef::KILL, arguments.clone());
+            "SAVEKILL" => {
+                self.run_cmd_from_functionref("SAVE", arguments.clone());
+                self.run_cmd_from_functionref("KILL", arguments.clone());
             }
-            FunctionRef::TOGGLE_CONVERTER => {
+            "TOGGLE_CONVERTER" => {
                 if self.active_converter == ConverterRef::BIN {
                     self.active_converter = ConverterRef::HEX;
                 } else if self.active_converter == ConverterRef::HEX {
                     self.active_converter = ConverterRef::BIN;
                 }
-                self.setup_displays();
+                self.raise_flag(Flag::SETUP_DISPLAYS);
+                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+            }
+            "SET_WIDTH" => {
+                match arguments.get(0) {
+                    Some(bytes) => {
+                        let str_rep = std::str::from_utf8(bytes).unwrap();
+                        match self.string_to_integer(str_rep.to_string()) {
+                            Ok(new_width) => {
+                                self.lock_viewport_width(new_width);
+                                self.raise_flag(Flag::SETUP_DISPLAYS);
+                                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+                            }
+                            Err(e) => {
+                                //TODO
+                            }
+                        }
+                    }
+                    None => {
+                        self.unlock_viewport_width();
+                        self.raise_flag(Flag::SETUP_DISPLAYS);
+                        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+                    }
+                }
             }
             _ => {
                 // Unknown
             }
         }
-
     }
 
     fn grab_register(&mut self, default_if_unset: isize) -> isize {
@@ -2363,6 +2739,44 @@ impl Commandable for SbyteEditor {
                 Ok(input_string.as_bytes().to_vec())
             }
         }
+    }
+
+    fn string_to_integer(&self, input_string: String) -> Result<usize, ConverterError> {
+        let mut use_converter: Option<Box<dyn Converter>> = None;
+
+        let mut input_bytes = input_string.as_bytes().to_vec();
+        if input_bytes.len() > 2 {
+            if input_bytes[0] == 92 {
+                match input_bytes[1] {
+                    98 => { // b
+                        use_converter = Some(Box::new(BinaryConverter {}));
+                    }
+                    120 => { // x
+                        use_converter = Some(Box::new(HexConverter {}));
+                    }
+                    _ => { }
+                }
+            }
+        }
+
+        match use_converter {
+            Some(converter) => {
+                converter.decode_integer(input_bytes.split_at(2).1.to_vec())
+            }
+            None => {
+                let mut output = 0;
+                let mut digit;
+                for (i, character) in input_string.chars().enumerate() {
+                    output *= 10;
+                    if character.is_digit(10) {
+                        digit = character.to_digit(10).unwrap() as usize;
+                        output += digit;
+                    }
+                }
+                Ok(output)
+            }
+        }
+
     }
 }
 

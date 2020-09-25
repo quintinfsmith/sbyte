@@ -5,7 +5,6 @@ pub mod sbyte_editor;
 use sbyte_editor::*;
 use sbyte_editor::editor::Editor;
 use sbyte_editor::commandable::Commandable;
-use sbyte_editor::commandable::inputter::function_ref::FunctionRef;
 
 
 fn main() {
@@ -14,6 +13,7 @@ fn main() {
     match args.get(1) {
         Some(path) => {
             editor.load_file(path.to_string());
+            editor.load_config("sbyterc".to_string());
         }
         None => {
         }

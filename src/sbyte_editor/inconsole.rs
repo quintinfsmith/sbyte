@@ -44,5 +44,8 @@ pub trait InConsole {
     fn raise_flag(&mut self, key: Flag);
     fn lower_flag(&mut self, key: Flag);
     fn raise_row_update_flag(&mut self, absolute_y: usize);
+
+    fn lock_viewport_width(&mut self, new_width: usize);
+    fn unlock_viewport_width(&mut self);
 }
 

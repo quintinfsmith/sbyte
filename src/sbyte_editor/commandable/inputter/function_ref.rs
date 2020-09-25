@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+use std::fmt;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum FunctionRef {
     NULL,
     CURSOR_UP,
@@ -55,3 +57,4 @@ pub enum FunctionRef {
     SAVE,
     SAVEKILL
 }
+
