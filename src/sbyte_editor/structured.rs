@@ -1,9 +1,12 @@
+use std::fmt::Display;
+
 pub enum ModificationType {
     INSERT,
     CHANGE,
     REMOVE
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StructureError {
     InvalidInput
 }

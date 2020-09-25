@@ -117,7 +117,7 @@ pub struct SbyteEditor {
 impl SbyteEditor {
     pub fn new() -> SbyteEditor {
         let mut rectmanager = RectManager::new();
-        let (width, height) = rectmanager.get_rect_size(0).ok().unwrap();
+        let (width, height) = rectmanager.get_rect_size(0).unwrap();
         let id_display_wrapper = rectmanager.new_rect(Some(0));
         let id_display_bits = rectmanager.new_rect(
             Some(id_display_wrapper)
@@ -1944,6 +1944,7 @@ impl InConsole for SbyteEditor {
             self.raise_row_update_flag(y);
         }
     }
+
     fn flag_row_update_by_offset(&mut self, offset: usize) {
         let viewport_width = self.viewport.get_width();
         let viewport_height = self.viewport.get_height();
@@ -1953,6 +1954,7 @@ impl InConsole for SbyteEditor {
             self.raise_row_update_flag(y);
         }
     }
+
     fn raise_row_update_flag(&mut self, absolute_y: usize) {
 
         self.raise_flag(Flag::UPDATE_ROW(absolute_y));
@@ -2369,9 +2371,10 @@ impl Commandable for SbyteEditor {
                             prefix_width + data_width,
                             Box::new(new_structure)
                         );
-                        self.flag_row_update_by_range(offset..offset);
+                        self.flag_row_update_by_range(offset..offset + prefix_width + data_width);
                     }
                     Err(e) => {
+                        self.user_error_msg = Some(format!("Couldn't build structure: {:?}",e));
                     }
                 }
             }
