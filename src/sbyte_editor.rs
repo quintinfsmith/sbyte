@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use signal_hook::{iterator::Signals, SIGINT};
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io;
 use std::io::{Write, Read};
+use std::error::Error;
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
 use wrecked::{RectManager, logg, RectColor};
@@ -21,6 +23,8 @@ pub mod command_line;
 //Structured data
 pub mod structured;
 
+pub mod command_interface;
+
 use editor::{Editor, EditorError};
 use editor::editor_cursor::Cursor;
 use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError};
@@ -32,12 +36,16 @@ use commandable::inputter::function_ref::FunctionRef;
 use command_line::CommandLine;
 use inconsole::*;
 use structured::*;
+use command_interface::CommandInterface;
+
 
 pub struct InputterEditorInterface {
     function_queue: Vec<(String, Vec<u8>)>,
 
     new_context: Option<String>,
-    new_input_sequences: Vec<(String, String, String)>
+    new_input_sequences: Vec<(String, String, String)>,
+
+    flag_kill: bool
 }
 
 impl InputterEditorInterface {
@@ -46,7 +54,9 @@ impl InputterEditorInterface {
             function_queue: Vec::new(),
 
             new_context: None,
-            new_input_sequences: Vec::new()
+            new_input_sequences: Vec::new(),
+
+            flag_kill: false
         }
     }
 }
@@ -70,14 +80,13 @@ pub struct SbyteEditor {
     active_converter: ConverterRef,
     undo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
+    has_unsaved_changes: bool,
 
 
     // Commandable
     commandline: CommandLine,
     line_commands: HashMap<String, String>,
-    register: usize,
-    register_isset: bool,
-    register_is_negative: bool,
+    register: Option<usize>,
     flag_input_context: Option<String>,
     new_input_sequences: Vec<(String, String, String)>,
 
@@ -154,9 +163,9 @@ impl SbyteEditor {
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            register: 0,
-            register_isset: false,
-            register_is_negative: false,
+            has_unsaved_changes: false
+,
+            register: None,
             flag_input_context: None,
             new_input_sequences: Vec::new(),
 
@@ -193,15 +202,15 @@ impl SbyteEditor {
             structure_validity: HashMap::new(),
             structure_map: HashMap::new()
         };
-
-        output.assign_line_command("q".to_string(), "KILL");
+        output.assign_line_command("q".to_string(), "QUIT");
         output.assign_line_command("w".to_string(), "SAVE");
-        output.assign_line_command("wq".to_string(), "SAVEKILL");
+        output.assign_line_command("wq".to_string(), "SAVEQUIT");
         output.assign_line_command("find".to_string(), "JUMP_TO_NEXT");
-        output.assign_line_command("insert".to_string(), "INSERT");
+        output.assign_line_command("insert".to_string(), "INSERT_STRING");
         output.assign_line_command("overwrite".to_string(), "OVERWRITE");
         output.assign_line_command("setcmd".to_string(), "ASSIGN_INPUT");
         output.assign_line_command("lw".to_string(), "SET_WIDTH");
+        output.assign_line_command("reg".to_string(), "SET_REGISTER");
 
         output.raise_flag(Flag::SETUP_DISPLAYS);
         output.raise_flag(Flag::REMAP_ACTIVE_ROWS);
@@ -233,10 +242,30 @@ impl SbyteEditor {
         }
     }
 
-    pub fn main(&mut self) {
-        let function_refs: Arc<Mutex<InputterEditorInterface>> = Arc::new(Mutex::new(InputterEditorInterface::new()));
+    pub fn main(&mut self) -> Result<(), Box<dyn Error>> {
+        let input_interface: Arc<Mutex<InputterEditorInterface>> = Arc::new(Mutex::new(InputterEditorInterface::new()));
 
-        let c = function_refs.clone();
+        let signals = Signals::new(&[SIGINT])?;
+
+
+
+        let signal_mutex = input_interface.clone();
+        let mut kill_daemon = thread::spawn(move || {
+            let mut ok = false;
+            for sig in signals.forever() {
+                while !ok {
+                    match signal_mutex.try_lock() {
+                        Ok(ref mut mutex) => {
+                            mutex.flag_kill = true;
+                            ok = true;
+                        }
+                        Err(e) => ()
+                    }
+                }
+            }
+        });
+
+        let c = input_interface.clone();
         let mut _input_daemon = thread::spawn(move || {
             let mut inputter = Inputter::new();
 
@@ -298,8 +327,8 @@ impl SbyteEditor {
             inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
 
             for i in 32 .. 127 {
-                inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT");
-                inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[i]).unwrap().to_string(), "OVERWRITE");
+                inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT_STRING");
+                inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[i]).unwrap().to_string(), "OVERWRITE_STRING");
                 inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT_TO_CMDLINE");
             }
 
@@ -372,6 +401,7 @@ impl SbyteEditor {
                         None => ()
                     }
                 }
+
             }
         });
 
@@ -382,8 +412,13 @@ impl SbyteEditor {
         self.raise_flag(Flag::SETUP_DISPLAYS);
 
         while ! self.flag_kill {
-            match function_refs.try_lock() {
+            match input_interface.try_lock() {
                 Ok(ref mut mutex) => {
+
+                    if mutex.flag_kill {
+                        break;
+                    }
+
                     if (mutex.function_queue).len() > 0 {
                         let (_current_func, _current_arg) = (mutex.function_queue).remove(0);
                         // Ignore input while waiting for the inputter to set new context.
@@ -416,6 +451,7 @@ impl SbyteEditor {
         }
 
         self.kill();
+        Ok(())
     }
 
     pub fn kill(&mut self) {
@@ -671,6 +707,7 @@ impl SbyteEditor {
         if output.is_ok() {
             self.shift_structure_handlers_after(offset, new_bytes.len() as isize);
         }
+
 
         output
     }
@@ -1009,20 +1046,26 @@ impl Editor for SbyteEditor {
         }
     }
 
-    fn save_file(&mut self) {
+    fn save(&mut self) {
         match &self.active_file_path {
             Some(path) => {
-                match File::create(path) {
-                    Ok(mut file) => {
-                        file.write_all(self.active_content.as_slice());
-                        // TODO: Handle potential file system problems
-                        //file.sync_all();
-                    }
-                    Err(e) => {
-                    }
-                }
+                self.save_as(&path.to_string());
             }
-            None =>  ()
+            None => {
+                //TODO arguments
+            }
+        };
+    }
+
+    fn save_as(&mut self, path: &str) {
+        match File::create(path) {
+            Ok(mut file) => {
+                file.write_all(self.active_content.as_slice());
+                // TODO: Handle potential file system problems
+                //file.sync_all();
+            }
+            Err(e) => {
+            }
         }
 
     }
@@ -1271,7 +1314,6 @@ impl VisualEditor for SbyteEditor {
 
         self.viewport.set_offset(adj_viewport_offset);
     }
-
 }
 
 impl InConsole for SbyteEditor {
@@ -1534,18 +1576,22 @@ impl InConsole for SbyteEditor {
         let (bits_id, human_id) = self.rects_display;
 
         let bits_display_width = self.viewport.get_width() * display_ratio as usize;
+        let human_display_width = self.viewport.get_width();
+        let remaining_space = full_width - bits_display_width - human_display_width;
+
+
+        let bits_display_x = remaining_space / 2;
 
         self.rectmanager.resize(bits_id, bits_display_width, display_height);
-        self.rectmanager.set_position(bits_id, 0, 0);
+        self.rectmanager.set_position(bits_id, bits_display_x as isize, 0);
 
         // TODO: Fill in a separator
 
-        let human_display_width = self.viewport.get_width();
         //let human_display_x = (full_width - human_display_width) as isize;
-        let human_display_x = bits_display_width as isize;
+        let human_display_x = (remaining_space / 2) + bits_display_width;
 
         self.rectmanager.resize(human_id, human_display_width, display_height);
-        self.rectmanager.set_position(human_id, human_display_x, 0);
+        self.rectmanager.set_position(human_id, human_display_x as isize, 0);
     }
 
     fn remap_active_rows(&mut self) {
@@ -1939,7 +1985,7 @@ impl InConsole for SbyteEditor {
         let first_active_row = range.start / viewport_width;
         let last_active_row = range.end / viewport_width;
 
-        for y in first_active_row .. max(last_active_row, first_active_row + 1) {
+        for y in first_active_row .. max(last_active_row + 1, first_active_row + 1) {
             self.raise_flag(Flag::UPDATE_ROW(y));
             self.raise_row_update_flag(y);
         }
@@ -2012,6 +2058,389 @@ impl InConsole for SbyteEditor {
     }
 }
 
+impl CommandInterface for SbyteEditor {
+    fn ci_cursor_up(&mut self, repeat: usize) {
+        let cursor_offset = self.cursor.get_offset();
+        self.cursor_set_offset(cursor_offset);
+        self.cursor_set_length(1);
+        for _ in 0 .. repeat {
+            self.cursor_prev_line();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::CURSOR_MOVED);
+    }
+
+    fn ci_cursor_down(&mut self, repeat: usize) {
+        let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
+        self.cursor_set_length(1);
+        self.cursor_set_offset(end_of_cursor - 1);
+        for _ in 0 .. repeat {
+            self.cursor_next_line();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::CURSOR_MOVED);
+    }
+
+    fn ci_cursor_left(&mut self, repeat: usize) {
+        let cursor_offset = self.cursor.get_offset();
+        self.cursor_set_offset(cursor_offset);
+        self.cursor_set_length(1);
+        for _ in 0 .. repeat {
+            self.cursor_prev_byte();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::CURSOR_MOVED);
+
+    }
+
+    fn ci_cursor_right(&mut self, repeat: usize) {
+        // Jump positon to the end of the cursor before moving it right
+        let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
+        self.cursor_set_offset(end_of_cursor - 1);
+        self.cursor_set_length(1);
+
+        for _ in 0 .. repeat {
+            self.cursor_next_byte();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_cursor_length_up(&mut self, repeat: usize) {
+        for _ in 0 .. repeat {
+            self.cursor_decrease_length_by_line();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+    fn ci_cursor_length_down(&mut self, repeat: usize) {
+        for _ in 0 .. repeat {
+            self.cursor_increase_length_by_line();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+    fn ci_cursor_length_left(&mut self, repeat: usize) {
+        for _ in 0 .. repeat {
+            self.cursor_decrease_length();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+    fn ci_cursor_length_right(&mut self, repeat: usize) {
+        for _ in 0 .. repeat {
+            self.cursor_increase_length();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_yank(&mut self) {
+        self.copy_selection();
+        self.cursor_set_length(1);
+        self.raise_flag(Flag::CURSOR_MOVED);
+    }
+
+    fn ci_jump_to_position(&mut self, new_offset: usize) {
+        self.cursor_set_length(1);
+        self.cursor_set_offset(new_offset);
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_jump_to_next(&mut self, argument: Option<Vec<u8>>, repeat: usize) {
+        let current_offset = self.cursor.get_offset();
+        let mut next_offset = current_offset;
+        let mut new_cursor_length = self.cursor.get_length();
+        let mut new_user_msg = None;
+        let mut new_user_error_msg = None;
+
+        let option_pattern: Option<Vec<u8>> = match argument {
+            Some(byte_pattern) => { // argument was given, use that
+                Some(byte_pattern.clone())
+            }
+            None => { // No argument was given, check history
+                match self.search_history.last() {
+                    Some(byte_pattern) => {
+                        Some(byte_pattern.clone())
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+        };
+
+        match option_pattern {
+            Some(raw_bytes) => {
+                // First, convert utf8 bytes to a string...
+                let string_rep = std::str::from_utf8(&raw_bytes).unwrap();
+                // Then, convert the special characters in that string (eg, \x41 -> A)
+                match self.string_to_bytes(string_rep.to_string()) {
+                    Ok(byte_pattern) => {
+                        self.search_history.push(raw_bytes.to_vec());
+                        match self.find_after(&byte_pattern, current_offset) {
+                            Some(new_offset) => {
+                                new_cursor_length = byte_pattern.len();
+                                next_offset = new_offset;
+                                new_user_msg = Some(format!("Found \"{}\" at byte {}", string_rep, next_offset));
+                            }
+                            None => {
+                                new_user_error_msg = Some(format!("Pattern \"{}\" not found", string_rep));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        new_user_error_msg = Some(format!("Invalid pattern: {}", string_rep));
+                    }
+                }
+            }
+            None => {
+                new_user_error_msg = Some("Need a pattern to search".to_string());
+            }
+        }
+
+        self.user_msg = new_user_msg;
+        self.user_error_msg = new_user_error_msg;
+
+        self.cursor_set_length(new_cursor_length as isize);
+        self.cursor_set_offset(next_offset);
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+    fn ci_delete(&mut self, repeat: usize) {
+        let offset = self.cursor.get_offset();
+
+        let repeat = self.grab_register(1);
+        let mut removed_bytes = Vec::new();
+        for _ in 0 .. repeat {
+            match self.remove_bytes_at_cursor() {
+                Ok(bytes) => {
+                    removed_bytes.extend(bytes.iter().copied());
+                }
+                Err(e) => { }
+            }
+        }
+        self.copy_to_clipboard(removed_bytes);
+
+        self.cursor_set_length(1);
+
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.flag_row_update_by_offset(offset);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_backspace(&mut self, repeat: usize) {
+        let offset = self.cursor.get_offset();
+        let adj_repeat = min(offset, repeat);
+
+        self.ci_cursor_left(adj_repeat);
+        // cast here is ok. repeat can't be < 0.
+        self.cursor_set_length(adj_repeat as isize);
+        self.ci_delete(1);
+    }
+
+    fn ci_undo(&mut self, repeat: usize) {
+        let adj_repeat = min(self.undo_stack.len(), repeat);
+        let current_viewport_offset = self.viewport.get_offset();
+
+        for _ in 0 .. adj_repeat {
+            self.undo();
+            self.run_structure_checks(self.cursor.get_offset());
+        }
+
+        if adj_repeat > 1 {
+            self.user_msg = Some(format!("Undone x{}", adj_repeat));
+        } else if repeat == 1 {
+            self.user_msg = Some("Undid last change".to_string());
+        } else {
+            self.user_msg = Some("Nothing to undo".to_string());
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        if self.viewport.get_offset() == current_viewport_offset {
+            let start = self.viewport.get_offset() / self.viewport.get_width();
+            let end = self.viewport.get_height() + start;
+            for y in start .. end {
+                self.raise_row_update_flag(y);
+            }
+        }
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_redo(&mut self, repeat: usize) {
+        let current_viewport_offset = self.viewport.get_offset();
+
+        for _ in 0 .. repeat {
+            self.redo();
+        }
+
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        if self.viewport.get_offset() == current_viewport_offset {
+            let start = self.viewport.get_offset() / self.viewport.get_width();
+            let end = self.viewport.get_height() + start;
+            for y in start .. end {
+                self.raise_row_update_flag(y);
+            }
+        }
+        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_insert_string(&mut self, argument: &str, repeat: usize) {
+        match self.string_to_bytes(argument.to_string()) {
+            Ok(converted_bytes) => {
+                self.ci_insert_bytes(converted_bytes.clone(), repeat);
+            }
+            Err(e) => {
+                self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
+            }
+        }
+    }
+
+    fn ci_insert_bytes(&mut self, bytes: Vec<u8>, repeat: usize) {
+        let offset = self.cursor.get_offset();
+        for _ in 0 .. repeat {
+            self.insert_bytes_at_cursor(bytes.clone());
+        }
+        self.ci_cursor_right(bytes.len() * repeat);
+
+        self.run_structure_checks(offset);
+        self.flag_row_update_by_offset(offset);
+        self.raise_flag(Flag::UPDATE_OFFSET);
+    }
+
+    fn ci_overwrite_string(&mut self, argument: &str, repeat: usize) {
+        match self.string_to_bytes(argument.to_string()) {
+            Ok(converted_bytes) => {
+                self.ci_overwrite_bytes(converted_bytes.clone(), repeat);
+            }
+            Err(e) => {
+                self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
+            }
+        }
+
+    }
+    fn ci_overwrite_bytes(&mut self, bytes: Vec<u8>, repeat: usize) {
+        let offset = self.cursor.get_offset();
+        for _ in 0 .. repeat {
+            self.overwrite_bytes_at_cursor(bytes.clone());
+            self.ci_cursor_right(bytes.len());
+        }
+        // TODO: This is almost certainly buggy
+        // Manage structured data
+        self.run_structure_checks(offset);
+
+        self.cursor_set_length(1);
+        self.raise_flag(Flag::CURSOR_MOVED);
+
+        self.flag_row_update_by_range(offset..offset);
+    }
+
+    fn ci_increment(&mut self, repeat: usize) {
+        let offset = self.cursor.get_offset();
+        for _ in 0 .. repeat {
+            self.increment_byte(offset);
+        }
+        self.run_structure_checks(offset);
+
+        self.cursor_set_length(1);
+
+        let mut suboffset: usize = 0;
+        let mut chunk;
+        while offset > suboffset {
+            chunk = self.get_chunk(offset - suboffset, 1);
+            if chunk.len() > 0 && (chunk[0] as u32) < (repeat >> (8 * suboffset)) as u32 {
+                suboffset += 1;
+            } else {
+                break;
+            }
+        }
+
+        self.flag_row_update_by_range(offset - suboffset .. offset);
+        self.raise_flag(Flag::CURSOR_MOVED);
+    }
+    fn ci_decrement(&mut self, repeat: usize) {
+        let offset = self.cursor.get_offset();
+        for _ in 0 .. repeat {
+            self.decrement_byte(offset);
+        }
+        self.run_structure_checks(offset);
+
+        self.cursor_set_length(1);
+        self.raise_flag(Flag::CURSOR_MOVED);
+
+        let mut chunk;
+        let mut suboffset: usize = 0;
+        while offset > suboffset {
+            chunk = self.get_chunk(offset - suboffset, 1);
+            if chunk.len() > 0 && (chunk[0] as u32) > (repeat >> (8 * suboffset)) as u32 {
+                suboffset += 1;
+            } else {
+                break;
+            }
+        }
+
+        self.flag_row_update_by_range(offset - suboffset .. offset);
+        self.raise_flag(Flag::CURSOR_MOVED);
+    }
+    fn ci_kill(&mut self) {
+        self.flag_kill = true;
+    }
+
+    fn ci_save(&mut self, path: Option<&str>) {
+        match path {
+            Some(string_path) => {
+                self.save_as(&string_path);
+                self.user_msg = Some(format!("Saved to file: {}", string_path));
+            }
+            None => {
+                if self.active_file_path.is_some() {
+                    self.save();
+                    let file_path = self.active_file_path.as_ref().unwrap();
+                    self.user_msg = Some(format!("Saved to file: {}", file_path));
+                } else {
+                    self.user_error_msg = Some("No path specified".to_string());
+                }
+            }
+        }
+    }
+
+    fn ci_lock_viewport_width(&mut self, new_width: usize) {
+        self.lock_viewport_width(new_width);
+        self.raise_flag(Flag::SETUP_DISPLAYS);
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+    }
+
+    fn ci_unlock_viewport_width(&mut self) {
+        self.unlock_viewport_width();
+        self.raise_flag(Flag::SETUP_DISPLAYS);
+        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+    }
+
+}
+
 impl Commandable for SbyteEditor {
     fn set_input_context(&mut self, context: &str) {
         self.flag_input_context = Some(context.to_string());
@@ -2031,7 +2460,6 @@ impl Commandable for SbyteEditor {
             for word in words.iter() {
                 arguments.push(word.as_bytes().to_vec());
             }
-
 
             let funcref = match self.line_commands.get(&cmd) {
                 Some(_funcref) => {
@@ -2088,216 +2516,63 @@ impl Commandable for SbyteEditor {
                 }
             }
 
-           // "SET_CONTEXT" => {
-           //     let mut is_ok = true;
-           //     let context = match arguments.get(0) {
-           //         Some(byte_rep) => {
-           //             std::str::from_utf8(byte_rep).unwrap()
-           //         }
-           //         None => {
-           //             is_ok = false;
-           //             ""
-           //         }
-           //     };
-
-           //     if is_ok {
-           //         self.set_context(context);
-           //     }
-           // }
-
             "CURSOR_UP" => {
-                let cursor_offset = self.cursor.get_offset();
-                self.cursor_set_offset(cursor_offset);
-                self.cursor_set_length(1);
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_prev_line();
-                }
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::UPDATE_OFFSET);
-                self.raise_flag(Flag::CURSOR_MOVED);
+                self.ci_cursor_up(repeat);
             }
 
             "CURSOR_DOWN" => {
                 let repeat = self.grab_register(1);
-                let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
-                self.cursor_set_length(1);
-                self.cursor_set_offset(end_of_cursor - 1);
-                for _ in 0 .. repeat {
-                    self.cursor_next_line();
-                }
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::UPDATE_OFFSET);
-                self.raise_flag(Flag::CURSOR_MOVED);
+                self.ci_cursor_down(repeat);
             }
 
             "CURSOR_LEFT" => {
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_prev_byte();
-                }
-                self.cursor_set_length(1);
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                self.ci_cursor_left(repeat);
             }
 
             "CURSOR_RIGHT" => {
-                // Jump positon to the end of the cursor before moving it right
-                let end_of_cursor = self.cursor.get_offset() + self.cursor.get_length();
-                self.cursor_set_offset(end_of_cursor - 1);
-                self.cursor_set_length(1);
-
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_next_byte();
-                }
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                self.ci_cursor_right(repeat);
             }
 
             "CURSOR_LENGTH_UP" => {
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_decrease_length_by_line();
-                }
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                self.ci_cursor_length_up(repeat)
             }
 
             "CURSOR_LENGTH_DOWN" => {
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_increase_length_by_line();
-                }
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                self.ci_cursor_length_down(repeat);
             }
 
             "CURSOR_LENGTH_LEFT" => {
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_decrease_length();
-                }
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                self.ci_cursor_length_left(repeat);
             }
 
             "CURSOR_LENGTH_RIGHT" => {
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.cursor_increase_length();
-                }
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
-            }
-
-            "APPEND_TO_REGISTER" => {
-                match arguments.get(0) {
-                    Some(argument) => {
-                        // TODO: This is ridiculous. maybe make a nice wrapper for String (len 1) -> u8?
-                        let string = std::str::from_utf8(&argument).unwrap();
-
-                        let mut digit;
-                        for (i, character) in string.chars().enumerate() {
-                            if character.is_digit(10) {
-                                digit = character.to_digit(10).unwrap() as usize;
-                                self.append_to_register(digit);
-                            } else if i == 0 && !self.register_isset && character == '-' {
-                                self.register_is_negative = true;
-                            }
-                        }
-                    }
-                    None => ()
-                }
-            }
-
-            "CLEAR_REGISTER" => {
-                self.clear_register()
+                self.ci_cursor_length_right(repeat);
             }
 
             "JUMP_TO_REGISTER" => {
-                self.cursor_set_length(1);
-                let new_offset = max(0, self.grab_register(std::isize::MAX)) as usize;
-                self.cursor_set_offset(new_offset);
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                let new_offset = max(0, self.grab_register(std::usize::MAX)) as usize;
+                self.ci_jump_to_position(new_offset);
             }
 
+            // TODO: look this logic over
             "JUMP_TO_NEXT" => {
-                let current_offset = self.cursor.get_offset();
-                let mut next_offset = current_offset;
-                let mut new_cursor_length = self.cursor.get_length();
-                let mut new_user_msg = None;
-                let mut new_user_error_msg = None;
-
-                let option_pattern = match arguments.get(0) {
-                    Some(byte_pattern) => { // argument was given, use that
-                        Some(byte_pattern.clone())
-                    }
-                    None => { // No argument was given, check history
-                        match self.search_history.last() {
-                            Some(byte_pattern) => {
-                                Some(byte_pattern.clone())
-                            }
-                            None => {
-                                None
-                            }
-                        }
-                    }
-                };
-
-                match option_pattern {
-                    Some(raw_bytes) => {
-                        // First, convert utf8 bytes to a string...
-                        let string_rep = std::str::from_utf8(&raw_bytes).unwrap();
-                        // Then, convert the special characters in that string (eg, \x41 -> A)
-                        match self.string_to_bytes(string_rep.to_string()) {
-                            Ok(byte_pattern) => {
-                                self.search_history.push(raw_bytes.clone());
-                                match self.find_after(&byte_pattern, current_offset) {
-                                    Some(new_offset) => {
-                                        new_cursor_length = byte_pattern.len();
-                                        next_offset = new_offset;
-                                        new_user_msg = Some(format!("Found \"{}\" at byte {}", string_rep, next_offset));
-                                    }
-                                    None => {
-                                        new_user_error_msg = Some(format!("Pattern \"{}\" not found", string_rep));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                new_user_error_msg = Some(format!("Invalid pattern: {}", string_rep));
-                            }
-                        }
+                let repeat = self.grab_register(1);
+                let pattern = match arguments.get(0) {
+                    Some(bytes) => {
+                       Some(bytes.clone())
                     }
                     None => {
-                        new_user_error_msg = Some("Need a pattern to search".to_string());
+                        None
                     }
-                }
-
-                self.user_msg = new_user_msg;
-                self.user_error_msg = new_user_error_msg;
-
-                self.cursor_set_length(new_cursor_length as isize);
-                self.cursor_set_offset(next_offset);
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
+                };
+                self.ci_jump_to_next(pattern, repeat);
             }
 
             "CMDLINE_BACKSPACE" => {
@@ -2311,37 +2586,19 @@ impl Commandable for SbyteEditor {
             }
 
             "YANK" => {
-                self.copy_selection();
-                self.cursor_set_length(1);
-
-                self.raise_flag(Flag::CURSOR_MOVED);
+                self.ci_yank();
             }
 
             "PASTE" => {
-                let to_insert = vec![self.get_clipboard()];
-                self.run_cmd_from_functionref("INSERT", to_insert);
+                let repeat = self.grab_register(1);
+                let to_paste = self.get_clipboard();
+                self.ci_insert_bytes(to_paste, repeat);
             }
 
             "DELETE" => {
-                let offset = self.cursor.get_offset();
-
                 let repeat = self.grab_register(1);
-                let mut removed_bytes = Vec::new();
-                for _ in 0 .. repeat {
-                    match self.remove_bytes_at_cursor() {
-                        Ok(bytes) => {
-                            removed_bytes.extend(bytes.iter().copied());
-                        }
-                        Err(e) => { }
-                    }
-                }
-                self.copy_to_clipboard(removed_bytes);
+                self.ci_delete(repeat);
 
-                self.cursor_set_length(1);
-
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.flag_row_update_by_offset(offset);
-                self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
             "REMOVE_STRUCTURE" => {
@@ -2380,59 +2637,21 @@ impl Commandable for SbyteEditor {
             }
 
             "BACKSPACE" => {
-                let remove_count = min(self.cursor.get_offset(), max(1, self.grab_register(1)) as usize);
-                for i in 0 .. remove_count {
-                    self.run_cmd_from_functionref("CURSOR_LEFT", arguments.clone());
-                    self.run_cmd_from_functionref("DELETE", arguments.clone());
-                }
+                let repeat = min(self.cursor.get_offset(), max(1, self.grab_register(1)) as usize);
+
+                self.ci_backspace(repeat);
             }
 
             "UNDO" => {
-                let current_viewport_offset = self.viewport.get_offset();
+                let repeat = self.grab_register(1);
+                self.ci_undo(repeat);
 
-                let repeat = min(self.undo_stack.len(), self.grab_register(1) as usize);
-                for _ in 0 .. repeat {
-                    self.undo();
-                    self.run_structure_checks(self.cursor.get_offset());
-                }
-                if repeat > 1 {
-                    self.user_msg = Some(format!("Undone x{}", repeat));
-                } else if repeat == 1 {
-                    self.user_msg = Some("Undid last change".to_string());
-                } else {
-                    self.user_msg = Some("Nothing to undo".to_string());
-                }
-
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                if self.viewport.get_offset() == current_viewport_offset {
-                    let start = self.viewport.get_offset() / self.viewport.get_width();
-                    let end = self.viewport.get_height() + start;
-                    for y in start .. end {
-                        self.raise_row_update_flag(y);
-                    }
-                }
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
             "REDO" => {
-                let current_viewport_offset = self.viewport.get_offset();
-
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.redo();
-                }
+                self.ci_redo(repeat);
 
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-                if self.viewport.get_offset() == current_viewport_offset {
-                    let start = self.viewport.get_offset() / self.viewport.get_width();
-                    let end = self.viewport.get_height() + start;
-                    for y in start .. end {
-                        self.raise_row_update_flag(y);
-                    }
-                }
-                self.raise_flag(Flag::CURSOR_MOVED);
-                self.raise_flag(Flag::UPDATE_OFFSET);
             }
 
             "MODE_SET_INSERT" => {
@@ -2447,7 +2666,7 @@ impl Commandable for SbyteEditor {
 
             "MODE_SET_APPEND" => {
                 self.clear_register();
-                self.run_cmd_from_functionref("CURSOR_RIGHT", arguments);
+                self.ci_cursor_right(1);
                 self.user_msg = Some("--INSERT--".to_string());
             }
 
@@ -2502,32 +2721,31 @@ impl Commandable for SbyteEditor {
                 self.display_command_line();
             }
 
-            "INSERT" => {
-                let offset = self.cursor.get_offset();
-                match arguments.get(0) {
+            "INSERT_STRING" => {
+                let pattern = match arguments.get(0) {
                     Some(argument_bytes) => {
-                        let argument = std::str::from_utf8(argument_bytes).unwrap();
-                        match self.string_to_bytes(argument.to_string()) {
-                            Ok(converted_bytes) => {
-                                let repeat = self.grab_register(1);
-                                if repeat > 0 {
-                                    for _ in 0 .. repeat {
-                                        self.insert_bytes_at_cursor(converted_bytes.clone());
-                                        self.run_cmd_from_functionref("CURSOR_RIGHT", arguments.clone());
-                                    }
-
-                                    self.run_structure_checks(offset);
-                                    self.flag_row_update_by_offset(offset);
-                                    self.raise_flag(Flag::UPDATE_OFFSET);
-                                }
-                            }
-                            Err(e) => {
-                                self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
-                            }
-                        }
+                        std::str::from_utf8(argument_bytes).unwrap()
                     }
-                    None => ()
-                }
+                    None => {
+                        ""
+                    }
+                };
+                let repeat = self.grab_register(1);
+                self.ci_insert_string(pattern, repeat);
+
+            }
+
+            "INSERT_RAW" => {
+                let repeat = self.grab_register(1);
+                let pattern = match arguments.get(0) {
+                    Some(arg) => {
+                        arg.clone()
+                    }
+                    None => {
+                        vec![]
+                    }
+                };
+                self.ci_insert_bytes(pattern, repeat);
             }
 
             "INSERT_TO_CMDLINE" => {
@@ -2542,88 +2760,41 @@ impl Commandable for SbyteEditor {
                 }
             }
 
-            "OVERWRITE" => {
-                let offset = self.cursor.get_offset();
-                let repeat = self.grab_register(1);
-
-                match arguments.get(0) {
+            "OVERWRITE_STRING" => {
+                let pattern = match arguments.get(0) {
                     Some(argument_bytes) => {
-                        let argument = std::str::from_utf8(argument_bytes).unwrap();
-                        match self.string_to_bytes(argument.to_string()) {
-                            Ok(converted_bytes) => {
-                                let mut overwritten_bytes: Vec<u8> = Vec::new();
-
-                                for _ in 0 .. repeat {
-                                    self.overwrite_bytes_at_cursor(converted_bytes.clone());
-                                    self.run_cmd_from_functionref("CURSOR_RIGHT", arguments.clone());
-                                }
-
-                                // Manage structured data
-                                self.run_structure_checks(offset);
-
-                                self.cursor_set_length(1);
-                                self.raise_flag(Flag::CURSOR_MOVED);
-
-                                self.flag_row_update_by_range(offset..offset);
-                            }
-                            Err(e) => {
-                                self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
-                            }
-                        }
+                        std::str::from_utf8(argument_bytes).unwrap()
                     }
-                    None => ()
-                }
+                    None => {
+                        ""
+                    }
+                };
+                let repeat = self.grab_register(1);
+                self.ci_overwrite_string(pattern, repeat);
+
+            }
+
+            "OVERWRITE_RAW" => {
+                let repeat = self.grab_register(1);
+                let pattern = match arguments.get(0) {
+                    Some(arg) => {
+                        arg.clone()
+                    }
+                    None => {
+                        vec![]
+                    }
+                };
+                self.ci_overwrite_bytes(pattern, repeat);
             }
 
             "DECREMENT" => {
-                let offset = self.cursor.get_offset();
                 let repeat = max(1, self.grab_register(1));
-                for _ in 0 .. repeat {
-                    self.decrement_byte(offset);
-                }
-                self.run_structure_checks(offset);
-
-                self.cursor_set_length(1);
-                self.raise_flag(Flag::CURSOR_MOVED);
-
-                let mut chunk;
-                let mut suboffset: usize = 0;
-                while offset > suboffset {
-                    chunk = self.get_chunk(offset - suboffset, 1);
-                    if chunk.len() > 0 && (chunk[0] as u32) > (repeat >> (8 * suboffset)) as u32 {
-                        suboffset += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                self.flag_row_update_by_range(offset - suboffset .. offset);
-                self.raise_flag(Flag::CURSOR_MOVED);
+                self.ci_decrement(repeat);
             }
 
             "INCREMENT" => {
-                let offset = self.cursor.get_offset();
                 let repeat = self.grab_register(1);
-                for _ in 0 .. repeat {
-                    self.increment_byte(offset);
-                }
-                self.run_structure_checks(offset);
-
-                self.cursor_set_length(1);
-
-                let mut suboffset: usize = 0;
-                let mut chunk;
-                while offset > suboffset {
-                    chunk = self.get_chunk(offset - suboffset, 1);
-                    if chunk.len() > 0 && (chunk[0] as u32) < (repeat >> (8 * suboffset)) as u32 {
-                        suboffset += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                self.flag_row_update_by_range(offset - suboffset .. offset);
-                self.raise_flag(Flag::CURSOR_MOVED);
+                self.ci_increment(repeat);
             }
 
             "RUN_CUSTOM_COMMAND" => {
@@ -2638,15 +2809,32 @@ impl Commandable for SbyteEditor {
             }
 
             "KILL" => {
-                self.flag_kill = true;
+                self.ci_kill()
             }
+
+            "QUIT" => {
+                //TODO in later version: Prevent quitting when there are unsaved changes
+                self.ci_kill();
+            }
+
             "SAVE" => {
-                //TODO
+                let path = match arguments.get(0) {
+                    Some(byte_path) => {
+                        Some(std::str::from_utf8(byte_path).unwrap())
+                    }
+                    None => {
+                        None
+                    }
+                };
+
+                self.ci_save(path);
             }
-            "SAVEKILL" => {
-                self.run_cmd_from_functionref("SAVE", arguments.clone());
-                self.run_cmd_from_functionref("KILL", arguments.clone());
+
+            "SAVEQUIT" => {
+                self.ci_save(None);
+                self.ci_kill();
             }
+
             "TOGGLE_CONVERTER" => {
                 if self.active_converter == ConverterRef::BIN {
                     self.active_converter = ConverterRef::HEX;
@@ -2656,15 +2844,14 @@ impl Commandable for SbyteEditor {
                 self.raise_flag(Flag::SETUP_DISPLAYS);
                 self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
             }
+
             "SET_WIDTH" => {
                 match arguments.get(0) {
                     Some(bytes) => {
                         let str_rep = std::str::from_utf8(bytes).unwrap();
-                        match self.string_to_integer(str_rep.to_string()) {
+                        match self.string_to_integer(str_rep) {
                             Ok(new_width) => {
-                                self.lock_viewport_width(new_width);
-                                self.raise_flag(Flag::SETUP_DISPLAYS);
-                                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+                                self.ci_lock_viewport_width(new_width);
                             }
                             Err(e) => {
                                 //TODO
@@ -2672,47 +2859,85 @@ impl Commandable for SbyteEditor {
                         }
                     }
                     None => {
-                        self.unlock_viewport_width();
-                        self.raise_flag(Flag::SETUP_DISPLAYS);
-                        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+                        self.ci_unlock_viewport_width();
                     }
                 }
             }
+
+            "SET_REGISTER" => {
+                self.clear_register();
+                match arguments.get(0) {
+                    Some(byterep) => {
+                        let stringrep = std::str::from_utf8(&byterep).unwrap();
+                        match self.string_to_integer(stringrep) {
+                            Ok(n) => {
+                                self.register = Some(n);
+                            }
+                            Err(e) => ()
+
+                        }
+                    }
+                    None =>()
+                }
+            }
+
+            "APPEND_TO_REGISTER" => {
+                match arguments.get(0) {
+                    Some(argument) => {
+                        // TODO: This is ridiculous. maybe make a nice wrapper for String (len 1) -> u8?
+                        let string = std::str::from_utf8(&argument).unwrap();
+
+                        let mut digit;
+                        for (i, character) in string.chars().enumerate() {
+                            if character.is_digit(10) {
+                                digit = character.to_digit(10).unwrap() as usize;
+                                self.append_to_register(digit);
+                            }
+                        }
+                    }
+                    None => ()
+                }
+            }
+
+            "CLEAR_REGISTER" => {
+                self.clear_register()
+            }
+
             _ => {
                 // Unknown
             }
         }
     }
 
-    fn grab_register(&mut self, default_if_unset: isize) -> isize {
-        let output;
-        if self.register_isset {
-            if self.register_is_negative {
-                output = 0 - (self.register as isize);
-            } else {
-                output = self.register as isize;
+    fn grab_register(&mut self, default_if_unset: usize) -> usize {
+        let output = match self.register {
+            Some(n) => {
+                n
             }
-            self.clear_register();
-        } else {
-            output = default_if_unset;
-        }
+            None => {
+                default_if_unset
+            }
+        };
+        self.clear_register();
+
         output
     }
 
-    fn set_register_negative(&mut self) {
-        self.register_is_negative = true;
-    }
-
     fn clear_register(&mut self) {
-        self.register = 0;
-        self.register_isset = false;
-        self.register_is_negative = false;
+        self.register = None;
     }
 
     fn append_to_register(&mut self, new_digit: usize) {
-        self.register *= 10;
-        self.register += new_digit;
-        self.register_isset = true;
+        self.register = match self.register {
+            Some(mut n) => {
+                n *= 10;
+                n += new_digit;
+                Some(n)
+            }
+            None => {
+                Some(new_digit)
+            }
+        };
     }
 
     // Convert argument string to bytes.
@@ -2744,10 +2969,10 @@ impl Commandable for SbyteEditor {
         }
     }
 
-    fn string_to_integer(&self, input_string: String) -> Result<usize, ConverterError> {
+    fn string_to_integer(&self, input_string: &str) -> Result<usize, ConverterError> {
         let mut use_converter: Option<Box<dyn Converter>> = None;
 
-        let mut input_bytes = input_string.as_bytes().to_vec();
+        let mut input_bytes = input_string.to_string().as_bytes().to_vec();
         if input_bytes.len() > 2 {
             if input_bytes[0] == 92 {
                 match input_bytes[1] {
@@ -2761,7 +2986,6 @@ impl Commandable for SbyteEditor {
                 }
             }
         }
-
         match use_converter {
             Some(converter) => {
                 converter.decode_integer(input_bytes.split_at(2).1.to_vec())
@@ -2779,9 +3003,9 @@ impl Commandable for SbyteEditor {
                 Ok(output)
             }
         }
-
     }
 }
+
 
 // TODO: Consider quotes, apostrophes  and escapes
 fn parse_words(input_string: String) -> Vec<String> {

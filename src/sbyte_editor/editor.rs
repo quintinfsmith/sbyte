@@ -19,7 +19,8 @@ pub trait Editor {
     fn copy_selection(&mut self);
     fn get_clipboard(&mut self) -> Vec<u8>;
     fn load_file(&mut self, file_path: String);
-    fn save_file(&mut self);
+    fn save_as(&mut self, path: &str);
+    fn save(&mut self);
     fn set_file_path(&mut self, new_file_path: String);
     fn find_all(&self, pattern: &Vec<u8>) -> Vec<usize>;
     fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize>;

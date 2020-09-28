@@ -10,3 +10,4 @@ description = "Console-based byte editor"
 [dependencies]
 wrecked = { path = "/home/pent/Projects/wrecked" }
 termios = "0.3"
+signal-hook = "0.1.16"
