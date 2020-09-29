@@ -3011,8 +3011,59 @@ impl Commandable for SbyteEditor {
 fn parse_words(input_string: String) -> Vec<String> {
     let mut output = Vec::new();
 
-    for word in input_string.split_whitespace() {
-        output.push(word.to_string());
+    let mut delimiters = HashMap::new();
+    delimiters.insert(' ', ' ');
+    delimiters.insert('"', '"');
+    delimiters.insert('\'', '\'');
+
+    let mut working_word: String = "".to_string();
+    let mut opener: Option<char> = None;
+    let mut is_escaped = false;
+    for (i, c) in input_string.chars().enumerate() {
+        match opener {
+            Some(o_c) => {
+                if ! is_escaped {
+                    if c == '\\' {
+                        is_escaped = true;
+                    }
+                    match delimiters.get(&c) {
+                        Some(test_opener) => {
+                            if *test_opener == o_c {
+                                opener = None;
+                                if working_word.len() > 0 {
+                                    output.push(working_word.clone());
+                                }
+                                working_word = "".to_string();
+                            }
+                        }
+                        None => {
+                            working_word.push(c);
+                        }
+                    }
+                } else {
+                    working_word.push(c);
+                    is_escaped = false;
+                }
+            }
+            None => {
+                if c == '\\' {
+                    is_escaped = true;
+                }
+
+                if c != ' ' {
+
+                    if c != '"' && c != '\'' {
+                        opener = Some(' ');
+                        working_word.push(c);
+                    } else {
+                        opener = Some(c);
+                    }
+                }
+            }
+        }
+    }
+    if working_word.len() > 0 {
+        output.push(working_word.clone());
     }
 
     output
