@@ -10,7 +10,6 @@ pub trait Commandable {
     fn clear_register(&mut self);
     fn append_to_register(&mut self, new_digit: usize);
     fn grab_register(&mut self, default_if_unset: usize) -> usize;
-    fn set_register_negative(&mut self);
 
     fn run_cmd_from_functionref(&mut self, funcref: &str, arguments: Vec<Vec<u8>>);
     fn string_to_bytes(&self, input_string: String) -> Result<Vec<u8>, ConverterError>;
