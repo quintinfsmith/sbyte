@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use signal_hook::{iterator::Signals, SIGINT};
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io;
@@ -245,25 +244,19 @@ impl SbyteEditor {
     pub fn main(&mut self) -> Result<(), Box<dyn Error>> {
         let input_interface: Arc<Mutex<InputterEditorInterface>> = Arc::new(Mutex::new(InputterEditorInterface::new()));
 
-        let signals = Signals::new(&[SIGINT])?;
-
-
-
         let signal_mutex = input_interface.clone();
-        let mut kill_daemon = thread::spawn(move || {
+        let mut kill_daemon = ctrlc::set_handler(move || {
             let mut ok = false;
-            for sig in signals.forever() {
-                while !ok {
-                    match signal_mutex.try_lock() {
-                        Ok(ref mut mutex) => {
-                            mutex.flag_kill = true;
-                            ok = true;
-                        }
-                        Err(e) => ()
+            while !ok {
+                match signal_mutex.try_lock() {
+                    Ok(ref mut mutex) => {
+                        mutex.flag_kill = true;
+                        ok = true;
                     }
+                    Err(e) => ()
                 }
             }
-        });
+        }).expect("Error setting Ctrl-C handler");
 
         let c = input_interface.clone();
         let mut _input_daemon = thread::spawn(move || {

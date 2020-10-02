@@ -14,7 +14,7 @@ fn main() {
     match args.get(1) {
         Some(path) => {
             editor.load_file(path.to_string());
-            editor.load_config("sbyterc".to_string());
+            editor.load_config("/etc/sbyte/sbyterc".to_string());
         }
         None => {
         }

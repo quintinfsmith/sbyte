@@ -1,6 +1,6 @@
 [package]
 name = "sbyte"
-version = "0.2.0"
+version = "0.9.0"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"
@@ -10,4 +10,4 @@ description = "Console-based byte editor"
 [dependencies]
 wrecked = { path = "/home/pent/Projects/wrecked" }
 termios = "0.3"
-signal-hook = "0.1.16"
+ctrlc = "3.1.6"
