@@ -6,6 +6,7 @@ use std::io::{Write, Read};
 use std::error::Error;
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
+
 use wrecked::{RectManager, logg, RectColor};
 
 // Editor trait

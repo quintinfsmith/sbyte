@@ -13,7 +13,7 @@ arch=('x86_64')
 url=""
 license=('GPL')
 groups=()
-depends=('wrecked>=0.1.0')
+depends=()
 makedepends=()
 checkdepends=()
 optdepends=()
@@ -29,19 +29,19 @@ noextract=()
 validpgpkeys=()
 
 prepare() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
 }
 
 build() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
 }
 
 check() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
     chmod +x ./usr/bin/%s
     mv ./usr/ "$pkgdir/"
     mv ./etc/ "$pkgdir/"
@@ -57,6 +57,27 @@ package() {
 
     return output
 
+def build_control(manifest):
+
+    output = """
+Package: %s
+Version: %s
+Section: custom
+Priority: optional
+Architecture: all
+Essential: no
+Installed-Size: 1024
+Maintainer: %s
+Description: %s
+
+""" % (
+        manifest['package']['name'],
+        manifest['package']['version'],
+        ",".join(manifest['package']['authors']),
+        manifest['package']['description']
+    )
+    return output
+
 
 manifest = toml.load("Cargo.toml")
 name = manifest['package']['name']
@@ -65,34 +86,39 @@ description = manifest['package']['description']
 os.mkdir(name)
 os.chdir(name);
 
-folder = "%s-%s" % (name, version)
-os.system('cargo build --release')
-os.system('rm target/release/build -rf')
-os.system("mkdir %s/etc/%s/ -p" % (folder, name))
+folder = name
+os.system('cargo build --release --target x86_64-unknown-linux-musl')
 
+os.system("mkdir %s/etc/%s/ -p" % (folder, name))
+os.system("mkdir %s/usr/bin/ -p" % (folder))
 # SPECIFIC TO SBYTE
 os.system("cp ../sbyterc %s/etc/%s/" % (folder, name))
 
 
-os.system("mkdir %s/usr/lib/%s -p" % (folder, name))
-os.system("cp ../target/release/* %s/usr/lib/%s/ -r" % (folder, name))
 
-os.system("mkdir %s/usr/bin/ -p" % folder)
-with open("%s/usr/bin/%s" % (folder, name), "w") as fp:
-    fp.write("""
-        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/%s
-        /usr/lib/%s/%s "$@"
-    """ % (name, name, name))
+os.system("cp ../target/x86_64-unknown-linux-musl/release/%s %s/usr/bin/" % (name, folder))
 
-os.system("tar --create --file \"%s.tar.gz\" %s" % (folder, folder))
+#dpkg
+os.mkdir("%s/DEBIAN" % folder)
+with open("%s/DEBIAN/control" % folder, "w") as fp:
+    fp.write(build_control(manifest))
+
+os.system("chmod -R 755 ./*")
+os.system("dpkg-deb --build %s" % name)
+os.system("rm %s/DEBIAN -rf")
+os.system("mv %s.deb ../" % name)
+
+# pacman (Needs to be run 2nd)
+os.system("tar --create --file \"%s-%s.tar.gz\" %s" % (name, version, name))
 os.system("rm \"%s\" -rf" % folder)
 
 with open("PKGBUILD", "w") as fp:
     fp.write(build_pkgbuild(manifest))
 os.system("makepkg -g -f -p PKGBUILD >> PKGBUILD")
 
+
 os.system("rm src -rf")
 
 os.chdir("../")
-os.system("tar --create --file \"%s-dist.tar.gz\" %s/*" % (folder, name))
+os.system("tar --create --file \"%s.tar.gz\" %s/*" % (folder, name))
 os.system("rm %s -rf" % name)
