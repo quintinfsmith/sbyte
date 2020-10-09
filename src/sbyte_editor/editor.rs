@@ -18,7 +18,7 @@ pub trait Editor {
     fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);
     fn copy_selection(&mut self);
     fn get_clipboard(&mut self) -> Vec<u8>;
-    fn load_file(&mut self, file_path: String);
+    fn load_file(&mut self, file_path: &str);
     fn save_as(&mut self, path: &str);
     fn save(&mut self);
     fn set_file_path(&mut self, new_file_path: String);

@@ -7,7 +7,7 @@ use std::error::Error;
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
 
-use wrecked::{RectManager, logg, RectColor};
+use wrecked::{RectManager, RectColor};
 
 // Editor trait
 pub mod editor;
@@ -32,7 +32,6 @@ use visual_editor::*;
 use visual_editor::viewport::ViewPort;
 use commandable::Commandable;
 use commandable::inputter::Inputter;
-use commandable::inputter::function_ref::FunctionRef;
 use command_line::CommandLine;
 use inconsole::*;
 use structured::*;
@@ -173,7 +172,7 @@ impl SbyteEditor {
 
             line_commands: HashMap::new(),
             commandline: CommandLine::new(),
-            rectmanager: rectmanager,
+            rectmanager,
 
             active_row_map: HashMap::new(),
             flag_kill: false,
@@ -217,7 +216,7 @@ impl SbyteEditor {
         output
     }
 
-    pub fn load_config(&mut self, file_path: String) {
+    pub fn load_config(&mut self, file_path: &str) {
         match File::open(file_path) {
             Ok(mut file) => {
                 let file_length = match file.metadata() {
@@ -367,7 +366,6 @@ impl SbyteEditor {
                         Err(e) => ()
                     }
 
-                    //logg(format!("{}", *character));
                     match inputter.read_input(*character) {
                         Some((funcref, input_sequence)) => {
                             match c.try_lock() {
@@ -383,12 +381,10 @@ impl SbyteEditor {
 
                                     if do_push {
                                         (mutex.function_queue).push((funcref, input_sequence));
-                     //                   logg("____".to_string());
                                     }
 
                                 }
                                 Err(e) => {
-                                    //logg(e.to_string());
                                 }
                             }
                         }
@@ -938,18 +934,18 @@ impl Editor for SbyteEditor {
                 let will_overwrite = !will_insert && !will_remove;
 
                 if is_insert && will_insert {
-                    if (*next_offset == offset + bytes_to_insert.len()) {
+                    if *next_offset == offset + bytes_to_insert.len() {
                         let mut new_bytes = bytes_to_insert.clone();
                         new_bytes.extend(next_bytes_to_insert.iter().copied());
                         *next_bytes_to_insert = new_bytes;
                         *next_offset = offset;
                         was_merged = true;
-                    } else if (*next_offset == offset) {
+                    } else if *next_offset == offset {
                         next_bytes_to_insert.extend(bytes_to_insert.iter().copied());
                         was_merged = true;
                     }
                 } else if is_remove && will_remove {
-                    if (*next_offset + *next_bytes_to_remove == offset) {
+                    if *next_offset + *next_bytes_to_remove == offset {
                         *next_bytes_to_remove += bytes_to_remove;
                         was_merged = true;
                     }
@@ -1014,10 +1010,10 @@ impl Editor for SbyteEditor {
         self.copy_to_clipboard(selected_bytes);
     }
 
-    fn load_file(&mut self, file_path: String) {
+    fn load_file(&mut self, file_path: &str) {
         self.active_content = Vec::new();
 
-        self.set_file_path(file_path.clone());
+        self.set_file_path(file_path.to_string());
         match File::open(file_path) {
             Ok(mut file) => {
                 let file_length = match file.metadata() {
