@@ -125,16 +125,12 @@ pub struct SbyteEditor {
 impl SbyteEditor {
     pub fn new() -> SbyteEditor {
         let mut rectmanager = RectManager::new();
-        let (width, height) = rectmanager.get_rect_size(0).unwrap();
-        let id_display_wrapper = rectmanager.new_rect(Some(0));
-        let id_display_bits = rectmanager.new_rect(
-            Some(id_display_wrapper)
-        );
-        let id_display_human = rectmanager.new_rect(
-            Some(id_display_wrapper)
-        );
+        let (width, height) = rectmanager.get_rect_size(wrecked::TOP).unwrap();
+        let id_display_wrapper = rectmanager.new_rect(wrecked::TOP);
+        let id_display_bits = rectmanager.new_rect(id_display_wrapper);
+        let id_display_human = rectmanager.new_rect(id_display_wrapper);
 
-        let id_rect_meta = rectmanager.new_rect(Some(0));
+        let id_rect_meta = rectmanager.new_rect(wrecked::TOP);
 
         let mut flag_timeouts = HashMap::new();
         flag_timeouts.insert(Flag::CURSOR_MOVED, 1);
@@ -162,8 +158,7 @@ impl SbyteEditor {
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            has_unsaved_changes: false
-,
+            has_unsaved_changes: false,
             register: None,
             flag_input_context: None,
             new_input_sequences: Vec::new(),
@@ -277,44 +272,9 @@ impl SbyteEditor {
             inputter.assign_context_switch("MODE_SET_OVERWRITE_SPECIAL", mode_cmd);
             inputter.assign_context_switch("RUN_CUSTOM_COMMAND", mode_default);
 
-            //inputter.assign_mode_command(mode_default, "=".to_string(), "TOGGLE_CONVERTER");
-            //inputter.assign_mode_command(mode_default, "j".to_string(), "CURSOR_DOWN");
-            //inputter.assign_mode_command(mode_default, "k".to_string(), "CURSOR_UP");
-            //inputter.assign_mode_command(mode_default, "h".to_string(), "CURSOR_LEFT");
-            //inputter.assign_mode_command(mode_default, "l".to_string(), "CURSOR_RIGHT");
-
-            //inputter.assign_mode_command(mode_default, "J".to_string(), "CURSOR_LENGTH_DOWN");
-            //inputter.assign_mode_command(mode_default, "K".to_string(), "CURSOR_LENGTH_UP");
-            //inputter.assign_mode_command(mode_default, "H".to_string(), "CURSOR_LENGTH_LEFT");
-            //inputter.assign_mode_command(mode_default, "L".to_string(), "CURSOR_LENGTH_RIGHT");
-            //inputter.assign_mode_command(mode_default, "G".to_string(), "JUMP_TO_REGISTER");
-
             for i in 0 .. 10 {
                 inputter.assign_mode_command(mode_default, std::str::from_utf8(&[i + 48]).unwrap().to_string(), "APPEND_TO_REGISTER");
             }
-
-
-            inputter.assign_mode_command(mode_default, "!".to_string(), "CREATE_BIG_ENDIAN_STRUCTURE");
-            inputter.assign_mode_command(mode_default, "@".to_string(), "REMOVE_STRUCTURE");
-            inputter.assign_mode_command(mode_default, "/".to_string(), "MODE_SET_SEARCH");
-            //inputter.assign_mode_command(mode_default, std::str::from_utf8(&[27]).unwrap().to_string(), "CLEAR_REGISTER");
-
-            //inputter.assign_mode_command(mode_default, "x".to_string(), "DELETE");
-            //inputter.assign_mode_command(mode_default, "y".to_string(), "YANK");
-            //inputter.assign_mode_command(mode_default, "p".to_string(), "PASTE");
-            //inputter.assign_mode_command(mode_default, "u".to_string(), "UNDO");
-            //inputter.assign_mode_command(mode_default, std::str::from_utf8(&[18]).unwrap().to_string(), "REDO");
-
-            inputter.assign_mode_command(mode_default, "i".to_string(), "MODE_SET_INSERT");
-            inputter.assign_mode_command(mode_default, "I".to_string(), "MODE_SET_INSERT_SPECIAL");
-            inputter.assign_mode_command(mode_default, "O".to_string(), "MODE_SET_OVERWRITE_SPECIAL");
-            inputter.assign_mode_command(mode_default, "a".to_string(), "MODE_SET_APPEND");
-            inputter.assign_mode_command(mode_default, "o".to_string(), "MODE_SET_OVERWRITE");
-            inputter.assign_mode_command(mode_default, ":".to_string(), "MODE_SET_CMD");
-
-            //inputter.assign_mode_command(mode_default, "+".to_string(), "INCREMENT");
-            //inputter.assign_mode_command(mode_default, "-".to_string(), "DECREMENT");
-            //inputter.assign_mode_command(mode_default, std::str::from_utf8(&[127]).unwrap().to_string(), "BACKSPACE");
 
             inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
             inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
@@ -1370,7 +1330,7 @@ impl InConsole for SbyteEditor {
                 }
             }
 
-            self.rectmanager.draw(0);
+            self.rectmanager.draw(wrecked::TOP);
         }
     }
 
@@ -1449,9 +1409,7 @@ impl InConsole for SbyteEditor {
                 .and_modify(|e| *e = false)
                 .or_insert(false);
 
-            _bits_row_id = self.rectmanager.new_rect(
-                Some(bits_display)
-            );
+            _bits_row_id = self.rectmanager.new_rect(bits_display);
 
             self.rectmanager.resize(
                 _bits_row_id,
@@ -1461,9 +1419,7 @@ impl InConsole for SbyteEditor {
 
             self.rectmanager.set_position(_bits_row_id, 0, y as isize);
 
-            _human_row_id = self.rectmanager.new_rect(
-                Some(human_display)
-            );
+            _human_row_id = self.rectmanager.new_rect(human_display);
             self.rectmanager.resize(
                 _human_row_id,
                 viewport_width,
@@ -1482,9 +1438,7 @@ impl InConsole for SbyteEditor {
             _cells_hashmap = self.cell_dict.entry(y).or_insert(HashMap::new());
 
             for x in 0 .. viewport_width {
-                _bits_cell_id = self.rectmanager.new_rect(
-                    Some(_bits_row_id)
-                );
+                _bits_cell_id = self.rectmanager.new_rect(_bits_row_id);
                 self.rectmanager.resize(
                     _bits_cell_id,
                     width_bits,
@@ -1497,10 +1451,7 @@ impl InConsole for SbyteEditor {
                     0
                 );
 
-                _human_cell_id = self.rectmanager.new_rect(
-                    Some(_human_row_id)
-                );
-
+                _human_cell_id = self.rectmanager.new_rect(_human_row_id);
 
                 self.rectmanager.set_position(
                     _human_cell_id,
@@ -1956,7 +1907,7 @@ impl InConsole for SbyteEditor {
         let cmd = &self.commandline.get_register();
         // +1, because of the ":" at the start
         let cursor_x = self.commandline.get_cursor_offset() + 1;
-        let cursor_id = self.rectmanager.new_rect(Some(self.rect_meta));
+        let cursor_id = self.rectmanager.new_rect(self.rect_meta);
         self.rectmanager.resize(cursor_id, 1, 1);
         self.rectmanager.set_position(cursor_id, cursor_x as isize, 0);
         self.rectmanager.set_invert_flag(cursor_id);
