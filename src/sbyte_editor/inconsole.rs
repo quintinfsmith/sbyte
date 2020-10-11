@@ -1,5 +1,3 @@
-use wrecked::{RectManager, logg};
-
 #[derive(Hash, PartialEq, Eq)]
 pub enum Flag {
     CURSOR_MOVED,
