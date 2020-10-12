@@ -10,8 +10,8 @@ pkgrel=1
 epoch=
 pkgdesc="%s"
 arch=('x86_64')
-url=""
-license=('GPL')
+url="%s"
+license=('GPL3')
 groups=()
 depends=()
 makedepends=()
@@ -51,6 +51,7 @@ package() {
     manifest['package']['name'],
     manifest['package']['version'],
     manifest['package']['description'],
+    manifest['package']['repository'],
 
     manifest['package']['name']
 )
@@ -64,7 +65,7 @@ Package: %s
 Version: %s
 Section: custom
 Priority: optional
-Architecture: all
+Architecture: x86-64
 Essential: no
 Installed-Size: 1024
 Maintainer: %s
@@ -83,8 +84,11 @@ manifest = toml.load("Cargo.toml")
 name = manifest['package']['name']
 version = manifest['package']['version']
 description = manifest['package']['description']
+
+if os.path.isdir(name):
+    os.rmdir(name)
 os.mkdir(name)
-os.chdir(name);
+os.chdir(name)
 
 folder = name
 os.system('cargo build --release --target x86_64-unknown-linux-musl')
@@ -94,14 +98,28 @@ os.system("mkdir %s/usr/bin/ -p" % (folder))
 # SPECIFIC TO SBYTE
 os.system("cp ../sbyterc %s/etc/%s/" % (folder, name))
 
-
-
 os.system("cp ../target/x86_64-unknown-linux-musl/release/%s %s/usr/bin/" % (name, folder))
 
 #dpkg
 os.mkdir("%s/DEBIAN" % folder)
 with open("%s/DEBIAN/control" % folder, "w") as fp:
     fp.write(build_control(manifest))
+
+copyright = """Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: %s
+Upstream-Contact: %s
+Source: %s
+
+Files: *
+Copyright:
+License: GPL-3
+""" % (
+    name,
+    manifest['package']['authors'][0],
+    manifest['package']['repository']
+)
+with open("%s/DEBIAN/copyright" % folder, "w") as fp:
+    fp.write(copyright)
 
 os.system("chmod -R 755 ./*")
 os.system("dpkg-deb --build %s" % name)
