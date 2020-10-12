@@ -4,13 +4,11 @@ version = "0.1.0"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"
-license = "GPL-3.0"
 repository = "https://github.com/quintinfsmith/sbyte.git"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "GPL-3.0"
 
 [dependencies]
-wrecked = { git = "https://github.com/quintinfsmith/wrecked" }
+wrecked = { git = "https://github.com/quintinfsmith/wrecked", version ="^0.1.0" }
 ctrlc = "3.1.6"
 
 
