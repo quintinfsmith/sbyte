@@ -110,14 +110,13 @@ Upstream-Name: %s
 Upstream-Contact: %s
 Source: %s
 
-Files: *
-Copyright:
 License: GPL-3
 """ % (
     name,
     manifest['package']['authors'][0],
     manifest['package']['repository']
 )
+
 with open("%s/DEBIAN/copyright" % folder, "w") as fp:
     fp.write(copyright)
 
@@ -133,7 +132,6 @@ os.system("rm \"%s\" -rf" % folder)
 with open("PKGBUILD", "w") as fp:
     fp.write(build_pkgbuild(manifest))
 os.system("makepkg -g -f -p PKGBUILD >> PKGBUILD")
-
 
 os.system("rm src -rf")
 
