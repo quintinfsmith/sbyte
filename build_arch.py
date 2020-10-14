@@ -95,6 +95,13 @@ os.system('cargo build --release --target x86_64-unknown-linux-musl')
 
 os.system("mkdir %s/etc/%s/ -p" % (folder, name))
 os.system("mkdir %s/usr/bin/ -p" % (folder))
+
+# copy manpage
+os.system("mkdir %s/usr/share/man/man1/ -p" % folder)
+os.system("cp ../manpage %s/usr/share/man/man1/%s.1" % (folder, name))
+os.system("chmod 644 %s/usr/share/man/man1/%s.1" % (folder, name))
+os.system("gzip %s/usr/share/man/man1/%s.1" % (folder, name))
+
 # SPECIFIC TO SBYTE
 os.system("cp ../sbyterc %s/etc/%s/" % (folder, name))
 
@@ -123,7 +130,7 @@ with open("%s/DEBIAN/copyright" % folder, "w") as fp:
 os.system("chmod -R 755 ./*")
 os.system("dpkg-deb --build %s" % name)
 os.system("rm %s/DEBIAN -rf")
-os.system("mv %s.deb ../" % name)
+os.system("mv %s.deb ../%s-%s.deb" % (name, name, version))
 
 # pacman (Needs to be run 2nd)
 os.system("tar --create --file \"%s-%s.tar.gz\" %s" % (name, version, name))
@@ -136,5 +143,5 @@ os.system("makepkg -g -f -p PKGBUILD >> PKGBUILD")
 os.system("rm src -rf")
 
 os.chdir("../")
-os.system("tar --create --file \"%s.tar.gz\" %s/*" % (folder, name))
+os.system("tar --create --file \"%s-%s.tar.gz\" %s/*" % (name, version, name))
 os.system("rm %s -rf" % name)

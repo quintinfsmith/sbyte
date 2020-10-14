@@ -1,0 +1,24 @@
+.\" Manpage for sbyte editor
+.TH man 1 "14 Oct 2020" "0.1.0" "sbyte man page"
+.SH NAME
+sbyte - Edit a file's bytes
+
+.SH SYNPOSIS
+.B sbyte
+[file]
+
+.SH DESCRIPTION
+.B sbyte
+is an editor that can be used to review and edit any file in both binary and hexidecimal formats. It was designed with reverse engineering in mind and experience with the vim editor
+
+.SH OPTIONS
+.B sbyte
+does not take options at the moment.
+
+.SH BUGS
+Sbyte is currently in development. There will be bugs.
+
+.SH AUTHOR
+Quintin Smith <smith.quintin@protonmail.com>
+
+
