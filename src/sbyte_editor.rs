@@ -196,15 +196,16 @@ impl SbyteEditor {
             structure_validity: HashMap::new(),
             structure_map: HashMap::new()
         };
-        output.assign_line_command("q".to_string(), "QUIT");
-        output.assign_line_command("w".to_string(), "SAVE");
-        output.assign_line_command("wq".to_string(), "SAVEQUIT");
-        output.assign_line_command("find".to_string(), "JUMP_TO_NEXT");
-        output.assign_line_command("insert".to_string(), "INSERT_STRING");
-        output.assign_line_command("overwrite".to_string(), "OVERWRITE");
-        output.assign_line_command("setcmd".to_string(), "ASSIGN_INPUT");
-        output.assign_line_command("lw".to_string(), "SET_WIDTH");
-        output.assign_line_command("reg".to_string(), "SET_REGISTER");
+
+        output.assign_line_command("q", "QUIT");
+        output.assign_line_command("w", "SAVE");
+        output.assign_line_command("wq", "SAVEQUIT");
+        output.assign_line_command("find", "JUMP_TO_NEXT");
+        output.assign_line_command("insert", "INSERT_STRING");
+        output.assign_line_command("overwrite", "OVERWRITE");
+        output.assign_line_command("setcmd", "ASSIGN_INPUT");
+        output.assign_line_command("lw", "SET_WIDTH");
+        output.assign_line_command("reg", "SET_REGISTER");
 
         output.raise_flag(Flag::SETUP_DISPLAYS);
         output.raise_flag(Flag::REMAP_ACTIVE_ROWS);
@@ -302,7 +303,7 @@ impl SbyteEditor {
 
 
             let mut do_push: bool;
-            while true {
+            loop {
                 buffer = [0;1];
                 reader.read_exact(&mut buffer).unwrap();
                 for character in buffer.iter() {
@@ -361,7 +362,7 @@ impl SbyteEditor {
         let delay = time::Duration::from_nanos(nano_seconds);
         self.raise_flag(Flag::SETUP_DISPLAYS);
 
-        while ! self.flag_kill {
+        while !self.flag_kill {
             match input_interface.try_lock() {
                 Ok(ref mut mutex) => {
 
@@ -427,6 +428,7 @@ impl SbyteEditor {
 
     fn set_structure_span(&mut self, structure_id: u64, new_span: (usize, usize)) {
         self.unmap_structure(structure_id);
+
         // update the span
         self.structure_spans.entry(structure_id)
             .and_modify(|span| *span = new_span)
@@ -582,7 +584,7 @@ impl SbyteEditor {
             let mut current_byte_value = self.active_content[current_byte_offset];
             let mut undo_bytes = vec![];
 
-            while true {
+            loop {
                 undo_bytes.insert(0, current_byte_value);
                 if current_byte_value < 255 {
 
@@ -602,7 +604,7 @@ impl SbyteEditor {
             self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
             Ok(())
         } else {
-            Err(EditorError::OutOfRange)
+            Err(EditorError::OutOfRange(offset, self.active_content.len()))
         }
     }
 
@@ -614,7 +616,7 @@ impl SbyteEditor {
 
             let mut undo_bytes = vec![];
 
-            while true {
+            loop {
                 undo_bytes.insert(0, current_byte_value);
                 if current_byte_value > 0 {
                     self.active_content[current_byte_offset] = current_byte_value - 1;
@@ -633,52 +635,56 @@ impl SbyteEditor {
             self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
             Ok(())
         } else {
-            Err(EditorError::OutOfRange)
+            Err(EditorError::OutOfRange(offset, self.active_content.len()))
         }
     }
 
     // ONLY to be used in insert_bytes and overwrite_bytes. nowhere else.
-    fn _insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
-        let output;
+    fn _insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
+        let mut is_ok = true;
         if offset < self.active_content.len() {
             for (i, new_byte) in new_bytes.iter().enumerate() {
                 self.active_content.insert(offset + i, *new_byte);
             }
-            output = Ok(());
         } else if offset == self.active_content.len() {
             for new_byte in new_bytes.iter() {
                 self.active_content.push(*new_byte);
             }
-            output = Ok(());
         } else {
-            output = Err(EditorError::OutOfRange);
+            is_ok = false;
+            #[cfg(debug_assertions)]
+            {
+                //TODO Debug error log
+                //logg(Err(EditorError::OutOfRange(offset, self.active_content.len())));
+            }
         }
 
-        if output.is_ok() {
+        if is_ok {
             self.shift_structure_handlers_after(offset, new_bytes.len() as isize);
         }
-
-
-        output
     }
 
     // ONLY to be  used by remove_bytes and overwrite_bytes functions, nowhere else.
-    fn _remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
+    fn _remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
         let mut output;
-        if (offset < self.active_content.len()) {
+        if offset < self.active_content.len() {
             let mut removed_bytes = Vec::new();
             let adj_length = min(self.active_content.len() - offset, length);
             for i in 0..adj_length {
                 removed_bytes.push(self.active_content.remove(offset));
             }
-            output = Ok(removed_bytes);
+            output = removed_bytes;
         } else {
-            output = Err(EditorError::OutOfRange);
+            output = vec![];
+
+            #[cfg(debug_assertions)]
+            {
+                //TODO Debug error log
+                //logg(Err(EditorError::OutOfRange(offset, self.active_content.len())));
+            }
         }
 
-        if output.is_ok() {
-            self.shift_structure_handlers_after(offset, 0 - (length as isize));
-        }
+        self.shift_structure_handlers_after(offset, 0 - (output.len() as isize));
 
         output
     }
@@ -860,13 +866,9 @@ impl Editor for SbyteEditor {
         let mut opposite_bytes_to_insert = vec![];
         let mut insert_length: usize = 0;
         if bytes_to_remove > 0 {
-            match self._remove_bytes(offset, bytes_to_remove) {
-                Ok(some_bytes) => {
-                    insert_length += some_bytes.len();
-                    opposite_bytes_to_insert = some_bytes;
-                }
-                Err(e) => ()
-            }
+            let removed_bytes = self._remove_bytes(offset, bytes_to_remove);
+            insert_length += removed_bytes.len();
+            opposite_bytes_to_insert = removed_bytes;
         }
 
         let mut opposite_bytes_to_remove = 0;
@@ -1071,57 +1073,41 @@ impl Editor for SbyteEditor {
     }
 
 
-    fn remove_bytes(&mut self, offset: usize, length: usize) -> Result<Vec<u8>, EditorError> {
-        let output = self._remove_bytes(offset, length);
+    fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
+        let removed_bytes = self._remove_bytes(offset, length);
+        self.push_to_undo_stack(offset, 0, removed_bytes.clone());
 
-        match output {
-            Ok(old_bytes) => {
-                self.push_to_undo_stack(offset, 0, old_bytes.clone());
-                Ok(old_bytes)
-            }
-            Err(e) => {
-                Err(e)
-            }
-        }
+        removed_bytes
     }
 
 
-    fn remove_bytes_at_cursor(&mut self) -> Result<Vec<u8>, EditorError> {
+    fn remove_bytes_at_cursor(&mut self) -> Vec<u8> {
         let offset = self.cursor.get_offset();
         let length = self.cursor.get_length();
         self.remove_bytes(offset, length)
     }
 
 
-    fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), EditorError> {
+    fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
         let mut adj_byte_width = new_bytes.len();
-        let output = self._insert_bytes(offset, new_bytes);
+        self._insert_bytes(offset, new_bytes);
 
         self.push_to_undo_stack(offset, adj_byte_width, vec![]);
-
-        output
     }
 
-    fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError> {
+    fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Vec<u8> {
         let position = self.cursor.get_offset();
         self.overwrite_bytes(position, new_bytes)
     }
 
-    fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, EditorError> {
+    fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Vec<u8> {
         let length = new_bytes.len();
-        let mut output = self._remove_bytes(position, length);
-        match output {
-            Ok(old_bytes) => {
-                self._insert_bytes(position, new_bytes);
-                self.push_to_undo_stack(position, length, old_bytes.clone());
+        let mut removed_bytes = self._remove_bytes(position, length);
 
+        self._insert_bytes(position, new_bytes);
+        self.push_to_undo_stack(position, length, removed_bytes.clone());
 
-                Ok(old_bytes)
-            }
-            Err(e) => {
-                Err(e)
-            }
-        }
+        removed_bytes
     }
 
     fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
@@ -1255,7 +1241,7 @@ impl VisualEditor for SbyteEditor {
         }
 
         while adj_viewport_offset > adj_cursor_offset {
-            if (width > adj_viewport_offset) {
+            if width > adj_viewport_offset {
                 adj_viewport_offset = 0;
             } else {
                 adj_viewport_offset -= width;
@@ -1268,7 +1254,7 @@ impl VisualEditor for SbyteEditor {
 
 impl InConsole for SbyteEditor {
     fn tick(&mut self) {
-        if (! self.surpress_tick) {
+        if !self.surpress_tick {
 
             self.check_resize();
 
@@ -1314,7 +1300,8 @@ impl InConsole for SbyteEditor {
                     if self.check_flag(Flag::DISPLAY_CMDLINE) {
                         self.display_command_line();
                     } else {
-                        match &self.user_msg {
+                        let tmp_usr_msg = self.user_msg.clone();
+                        match tmp_usr_msg {
                             Some(msg) => {
                                 self.display_user_message(msg.clone());
                                 self.user_msg = None;
@@ -1551,7 +1538,7 @@ impl InConsole for SbyteEditor {
         }
 
         if diff > 0 || self.flag_force_rerow {
-            if diff < height && ! self.flag_force_rerow {
+            if diff < height && !self.flag_force_rerow {
                 // Don't rerender rendered rows. just shuffle them around
                 {
                     let (bits, human) = self.rects_display;
@@ -1685,7 +1672,7 @@ impl InConsole for SbyteEditor {
 
             let active_rows = self.active_row_map.clone();
             for (y, is_rendered) in active_rows.iter() {
-                if ! is_rendered {
+                if !is_rendered {
                     self.raise_row_update_flag(*y + (new_y as usize));
                 }
             }
@@ -1712,7 +1699,6 @@ impl InConsole for SbyteEditor {
             for i in span.0 .. span.1 {
                 x = i % width;
                 y = i / width;
-
                 structured_cells_map.entry((x, y)).or_insert(self.structure_validity[sid]);
             }
         }
@@ -1722,6 +1708,7 @@ impl InConsole for SbyteEditor {
 
         match self.cell_dict.get_mut(&relative_y) {
             Some(cellhash) => {
+
                 for (_x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
                     self.rectmanager.clear_characters(*rect_id_human);
                     self.rectmanager.clear_characters(*rect_id_bits);
@@ -1769,6 +1756,7 @@ impl InConsole for SbyteEditor {
                             };
                             self.rectmanager.set_string(*human, 0, 0, tmp_human_str);
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
+
                             if in_structure {
                                 self.rectmanager.set_underline_flag(*human);
                                 self.rectmanager.set_underline_flag(*bits);
@@ -1908,16 +1896,17 @@ impl InConsole for SbyteEditor {
         // +1, because of the ":" at the start
         let cursor_x = self.commandline.get_cursor_offset() + 1;
         let cursor_id = self.rectmanager.new_rect(self.rect_meta);
+
         self.rectmanager.resize(cursor_id, 1, 1);
         self.rectmanager.set_position(cursor_id, cursor_x as isize, 0);
         self.rectmanager.set_invert_flag(cursor_id);
+
         if cursor_x < cmd.len() {
             let chr: String = cmd.chars().skip(cursor_x).take(1).collect();
             self.rectmanager.set_string(cursor_id, 0, 0, &chr);
         }
 
-        self.rectmanager.set_string(self.rect_meta, 0, 0, ":");
-        self.rectmanager.set_string(self.rect_meta, 1, 0, cmd);
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &vec![":", cmd].join(""));
     }
 
     fn flag_row_update_by_range(&mut self, range: std::ops::Range<usize>) {
@@ -2175,12 +2164,7 @@ impl CommandInterface for SbyteEditor {
         let repeat = self.grab_register(1);
         let mut removed_bytes = Vec::new();
         for _ in 0 .. repeat {
-            match self.remove_bytes_at_cursor() {
-                Ok(bytes) => {
-                    removed_bytes.extend(bytes.iter().copied());
-                }
-                Err(e) => { }
-            }
+            removed_bytes.extend(self.remove_bytes_at_cursor().iter().copied());
         }
         self.copy_to_clipboard(removed_bytes);
 
@@ -2302,7 +2286,13 @@ impl CommandInterface for SbyteEditor {
     fn ci_increment(&mut self, repeat: usize) {
         let offset = self.cursor.get_offset();
         for _ in 0 .. repeat {
-            self.increment_byte(offset);
+            match self.increment_byte(offset) {
+                Err(EditorError::OutOfRange(n, l)) => {
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => {} // TODO
+            }
         }
         self.run_structure_checks(offset);
 
@@ -2322,10 +2312,17 @@ impl CommandInterface for SbyteEditor {
         self.flag_row_update_by_range(offset - suboffset .. offset);
         self.raise_flag(Flag::CURSOR_MOVED);
     }
+
     fn ci_decrement(&mut self, repeat: usize) {
         let offset = self.cursor.get_offset();
         for _ in 0 .. repeat {
-            self.decrement_byte(offset);
+            match self.decrement_byte(offset) {
+                Err(EditorError::OutOfRange(n, l)) => {
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => {} // TODO
+            }
         }
         self.run_structure_checks(offset);
 
@@ -2387,8 +2384,8 @@ impl Commandable for SbyteEditor {
         self.flag_input_context = Some(context.to_string());
     }
 
-    fn assign_line_command(&mut self, command_string: String, function: &str) {
-        self.line_commands.insert(command_string, function.to_string());
+    fn assign_line_command(&mut self, command_string: &str, function: &str) {
+        self.line_commands.insert(command_string.to_string(), function.to_string());
     }
 
     fn try_command(&mut self, query: &str) {
@@ -2452,7 +2449,7 @@ impl Commandable for SbyteEditor {
                     }
                 };
 
-                if (is_ok) {
+                if is_ok {
                     self.new_input_sequences.push(("DEFAULT".to_string(), new_input_string, new_funcref));
                 }
             }
@@ -2579,20 +2576,17 @@ impl Commandable for SbyteEditor {
 
             "BACKSPACE" => {
                 let repeat = min(self.cursor.get_offset(), max(1, self.grab_register(1)) as usize);
-
                 self.ci_backspace(repeat);
             }
 
             "UNDO" => {
                 let repeat = self.grab_register(1);
                 self.ci_undo(repeat);
-
             }
 
             "REDO" => {
                 let repeat = self.grab_register(1);
                 self.ci_redo(repeat);
-
             }
 
             "MODE_SET_INSERT" => {
@@ -2624,7 +2618,7 @@ impl Commandable for SbyteEditor {
             }
 
             "MODE_SET_SEARCH" => {
-                self.commandline.set_register("find ".to_string());
+                self.commandline.set_register("find ");
                 self.display_command_line();
             }
 
@@ -2632,13 +2626,13 @@ impl Commandable for SbyteEditor {
                 let cmdstring;
                 match self.active_converter {
                     ConverterRef::BIN => {
-                        cmdstring = "insert \\b".to_string();
+                        cmdstring = "insert \\b";
                     }
                     ConverterRef::HEX => {
-                        cmdstring = "insert \\x".to_string();
+                        cmdstring = "insert \\x";
                     }
                     _ => {
-                        cmdstring = "insert ".to_string();
+                        cmdstring = "insert ";
                     }
                 }
                 self.commandline.set_register(cmdstring);
@@ -2649,13 +2643,13 @@ impl Commandable for SbyteEditor {
                 let cmdstring;
                 match self.active_converter {
                     ConverterRef::BIN => {
-                        cmdstring = "overwrite \\b".to_string();
+                        cmdstring = "overwrite \\b";
                     }
                     ConverterRef::HEX => {
-                        cmdstring = "overwrite \\x".to_string();
+                        cmdstring = "overwrite \\x";
                     }
                     _ => {
-                        cmdstring = "overwrite ".to_string();
+                        cmdstring = "overwrite ";
                     }
                 }
                 self.commandline.set_register(cmdstring);
@@ -2693,7 +2687,7 @@ impl Commandable for SbyteEditor {
                 match arguments.get(0) {
                     Some(argument_bytes) => {
                         let argument = std::str::from_utf8(argument_bytes).unwrap();
-                        self.commandline.insert_to_register(argument.to_string());
+                        self.commandline.insert_to_register(argument);
                         self.commandline.move_cursor_right();
                         self.display_command_line();
                     }
@@ -2963,7 +2957,7 @@ fn parse_words(input_string: String) -> Vec<String> {
     for (i, c) in input_string.chars().enumerate() {
         match opener {
             Some(o_c) => {
-                if ! is_escaped {
+                if !is_escaped {
                     if c == '\\' {
                         is_escaped = true;
                     }
@@ -3030,9 +3024,12 @@ mod tests {
         // visuals at the moment
         editor.kill();
 
-        assert!(editor.insert_bytes(0, vec![65]).is_ok());
+        editor.insert_bytes(0, vec![65]);
         assert_eq!(editor.active_content.as_slice(), [65]);
-        assert!(editor.insert_bytes(10, vec![65]).is_err());
+
+        // inserting out of range should ignore insertion
+        editor.insert_bytes(10, vec![65]);
+        assert_eq!(editor.active_content.as_slice(), [65]);
     }
 
     #[test]
@@ -3044,9 +3041,9 @@ mod tests {
         editor.insert_bytes(0, vec![65]);
 
 
-        assert!(editor.remove_bytes(0, 1).is_ok());
+        assert_eq!(editor.remove_bytes(0, 1), vec![65]);
         assert_eq!(editor.active_content.as_slice(), []);
-        assert!(editor.remove_bytes(1000, 300).is_err());
+        assert_eq!(editor.remove_bytes(1000, 300), vec![]);
     }
 
     #[test]

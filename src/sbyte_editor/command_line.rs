@@ -24,12 +24,14 @@ impl CommandLine {
             self.cursor_offset -= 1;
         }
     }
+
     pub fn move_cursor_right(&mut self) {
         self.cursor_offset = min(self.register.len(), self.cursor_offset + 1);
     }
-    pub fn insert_to_register(&mut self, character: String) {
+
+    pub fn insert_to_register(&mut self, chunk: &str) {
         let mut pair = self.register.split_at(self.cursor_offset);
-        self.register = format!("{}{}{}", pair.0, character.as_str(), pair.1).to_string();
+        self.register = format!("{}{}{}", pair.0, chunk, pair.1).to_string();
     }
 
     pub fn remove_from_register(&mut self) {
@@ -78,11 +80,11 @@ impl CommandLine {
     }
 
     pub fn clear_register(&mut self) {
-        self.set_register("".to_string());
+        self.set_register("");
     }
 
-    pub fn set_register(&mut self, new_register: String) {
-        self.register = new_register.clone();
+    pub fn set_register(&mut self, new_register: &str) {
+        self.register = new_register.to_string();
         self.cursor_offset = new_register.len();
     }
 

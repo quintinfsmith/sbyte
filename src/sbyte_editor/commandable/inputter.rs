@@ -47,7 +47,7 @@ impl Inputter {
             None => ()
         }
 
-        if (clear_buffer) {
+        if clear_buffer {
             self.input_buffer.drain(..);
         }
 
@@ -104,7 +104,7 @@ impl InputNode {
     fn fetch_command(&mut self, input_pattern: Vec<u8>) -> (Option<String>, bool) {
         let mut output = (None, false);
 
-        match (&self.hook) {
+        match &self.hook {
             Some(hook) => {
                 // Found, Clear buffer
                 output = (Some(hook.to_string()), true);

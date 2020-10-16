@@ -17,7 +17,7 @@ pub trait Converter {
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
     fn encode_integer(&self, integer: usize) -> Vec<u8>;
 }
-impl Converter {
+impl dyn Converter {
     fn decode_string(&self, string: String) -> Result<Vec<u8>, ConverterError> {
         let mut bytes = string.as_bytes().to_vec();
         self.decode(bytes)

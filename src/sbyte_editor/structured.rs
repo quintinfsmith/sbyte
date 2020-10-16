@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 pub enum ModificationType {
     INSERT,
     CHANGE,
@@ -16,7 +14,6 @@ pub trait StructuredDataHandler {
     fn read_in(in_data: Vec<u8>) -> Result<Self, StructureError> where Self: Sized;
     fn as_bytes(&self) -> Vec<u8>;
     fn update(&mut self, new_bytes: Vec<u8>) -> Result<(), StructureError>;
-
 }
 
 pub struct BigEndianPrefixed {
@@ -143,7 +140,7 @@ impl StructuredDataHandler for LittleEndianPrefixed {
     //    let expected_data_width = BigEndianPrefixed::decode_prefix(tmp_prefix);
     //    let real_data_width = (in_data.len() - self.prefix_width) as usize;
 
-    //    if (expected_data_width == real_data_width) {
+    //    if expected_data_width == real_data_width {
     //        output = None;
     //    } else {
     //        let mut new_vec = vec![];
@@ -248,7 +245,7 @@ impl StructuredDataHandler for VariableLengthPrefixed {
         let real_data_width = inbytes.len() - prefix_width;
         let data = inbytes[prefix_width..].to_vec();
 
-        if (real_data_width == data.len()) {
+        if real_data_width == data.len() {
             Ok(VariableLengthPrefixed::new(data))
         } else {
             Err(StructureError::InvalidInput)

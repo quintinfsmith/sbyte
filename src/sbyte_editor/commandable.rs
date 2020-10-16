@@ -1,10 +1,9 @@
 pub mod inputter;
 use super::editor::converter::ConverterError;
 use inputter::*;
-use inputter::function_ref::*;
 
 pub trait Commandable {
-    fn assign_line_command(&mut self, command_string: String, function: &str);
+    fn assign_line_command(&mut self, command_string: &str, function: &str);
     fn try_command(&mut self, query: &str);
 
     fn clear_register(&mut self);
