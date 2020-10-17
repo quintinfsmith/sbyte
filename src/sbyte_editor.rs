@@ -7,7 +7,7 @@ use std::error::Error;
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
 
-use wrecked::{RectManager, RectColor};
+use wrecked::{RectManager, RectColor, RectError};
 
 // Editor trait
 pub mod editor;
@@ -97,7 +97,6 @@ pub struct SbyteEditor {
     active_row_map: HashMap<usize, bool>,
     flag_kill: bool,
     flag_force_rerow: bool,
-    ready: bool,
     locked_viewport_width: Option<usize>,
 
     cells_to_refresh: HashSet<(usize, usize)>, // rect ids, rather than coords
@@ -126,11 +125,11 @@ impl SbyteEditor {
     pub fn new() -> SbyteEditor {
         let mut rectmanager = RectManager::new();
         let (width, height) = rectmanager.get_rect_size(wrecked::TOP).unwrap();
-        let id_display_wrapper = rectmanager.new_rect(wrecked::TOP);
-        let id_display_bits = rectmanager.new_rect(id_display_wrapper);
-        let id_display_human = rectmanager.new_rect(id_display_wrapper);
+        let id_display_wrapper = rectmanager.new_rect(wrecked::TOP).ok().unwrap();
+        let id_display_bits = rectmanager.new_rect(id_display_wrapper).ok().unwrap();
+        let id_display_human = rectmanager.new_rect(id_display_wrapper).ok().unwrap();
 
-        let id_rect_meta = rectmanager.new_rect(wrecked::TOP);
+        let id_rect_meta = rectmanager.new_rect(wrecked::TOP).ok().unwrap();
 
         let mut flag_timeouts = HashMap::new();
         flag_timeouts.insert(Flag::CURSOR_MOVED, 1);
@@ -172,7 +171,6 @@ impl SbyteEditor {
             active_row_map: HashMap::new(),
             flag_kill: false,
             flag_force_rerow: false,
-            ready: false,
             locked_viewport_width: None,
 
             cells_to_refresh: HashSet::new(),
@@ -219,7 +217,7 @@ impl SbyteEditor {
                     Ok(metadata) => {
                         metadata.len()
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         0
                     }
                 };
@@ -233,7 +231,7 @@ impl SbyteEditor {
                 }
                 self.surpress_tick = false;
             }
-            Err(e) => { }
+            Err(_e) => { }
         }
     }
 
@@ -249,7 +247,7 @@ impl SbyteEditor {
                         mutex.flag_kill = true;
                         ok = true;
                     }
-                    Err(e) => ()
+                    Err(_e) => ()
                 }
             }
         }).expect("Error setting Ctrl-C handler");
@@ -324,7 +322,7 @@ impl SbyteEditor {
                                 inputter.assign_mode_command(&context, sequence, &funcref);
                             }
                         }
-                        Err(e) => ()
+                        Err(_e) => ()
                     }
 
                     match inputter.read_input(*character) {
@@ -345,7 +343,7 @@ impl SbyteEditor {
                                     }
 
                                 }
-                                Err(e) => {
+                                Err(_e) => {
                                 }
                             }
                         }
@@ -362,6 +360,7 @@ impl SbyteEditor {
         let delay = time::Duration::from_nanos(nano_seconds);
         self.raise_flag(Flag::SETUP_DISPLAYS);
 
+        let mut output: Result<(), Box<dyn Error>> = Ok(());
         while !self.flag_kill {
             match input_interface.try_lock() {
                 Ok(ref mut mutex) => {
@@ -394,15 +393,23 @@ impl SbyteEditor {
                         (mutex.new_input_sequences).push((context, sequence, funcref));
                     }
                 }
-                Err(e) => ()
+                Err(_e) => ()
             }
 
-            self.tick();
-            thread::sleep(delay);
+            match self.tick() {
+                Ok(_) => {
+                    thread::sleep(delay);
+                }
+                Err(error) => {
+                    self.flag_kill = true;
+                    output = Err(Box::new(error));
+                }
+            }
+
         }
 
         self.kill();
-        Ok(())
+        output
     }
 
     pub fn kill(&mut self) {
@@ -689,145 +696,146 @@ impl SbyteEditor {
         output
     }
 
-    fn build_key_map() -> HashMap<String, String> {
+    fn build_key_map() -> HashMap<&'static str, &'static str> {
         let mut key_map = HashMap::new();
         // Common control characters
-        key_map.insert("BACKSPACE".to_string(), "\x7F".to_string());
-        key_map.insert("TAB".to_string(), "\x09".to_string());
-        key_map.insert("LINE_FEED".to_string(), "\x0A".to_string());
-        key_map.insert("RETURN".to_string(), "\x0D".to_string());
-        key_map.insert("ESCAPE".to_string(), "\x1B".to_string());
-        key_map.insert("ARROW_UP".to_string(), "\x1B[A".to_string());
-        key_map.insert("ARROW_LEFT".to_string(), "\x1B[D".to_string());
-        key_map.insert("ARROW_DOWN".to_string(), "\x1B[B".to_string());
-        key_map.insert("ARROW_RIGHT".to_string(), "\x1B[C".to_string());
-        key_map.insert("DELETE".to_string(), "\x1B[3\x7e".to_string());
+        key_map.insert("BACKSPACE", "\x7F");
+        key_map.insert("TAB", "\x09");
+        key_map.insert("LINE_FEED", "\x0A");
+        key_map.insert("RETURN", "\x0D");
+        key_map.insert("ESCAPE", "\x1B");
+        key_map.insert("ARROW_UP", "\x1B[A");
+        key_map.insert("ARROW_LEFT", "\x1B[D");
+        key_map.insert("ARROW_DOWN", "\x1B[B");
+        key_map.insert("ARROW_RIGHT", "\x1B[C");
+        key_map.insert("DELETE", "\x1B[3\x7e");
 
         // lesser control characters
-        key_map.insert("NULL".to_string(), "\x00".to_string());
-        key_map.insert("STX".to_string(), "\x01".to_string());
-        key_map.insert("SOT".to_string(), "\x02".to_string());
-        key_map.insert("ETX".to_string(), "\x03".to_string());
-        key_map.insert("EOT".to_string(), "\x04".to_string());
-        key_map.insert("ENQ".to_string(), "\x05".to_string());
-        key_map.insert("ACK".to_string(), "\x06".to_string());
-        key_map.insert("BELL".to_string(), "\x07".to_string());
-        key_map.insert("VTAB".to_string(), "\x0B".to_string());
-        key_map.insert("FORM_FEED".to_string(), "\x0C".to_string());
-        key_map.insert("SHIFT_OUT".to_string(), "\x0E".to_string());
-        key_map.insert("SHIFT_IN".to_string(), "\x0F".to_string());
-        key_map.insert("DATA_LINK_ESCAPE".to_string(), "\x10".to_string());
-        key_map.insert("XON".to_string(), "\x11".to_string());
-        key_map.insert("CTRL+R".to_string(), "\x12".to_string());
-        key_map.insert("XOFF".to_string(), "\x13".to_string());
-        key_map.insert("DC4".to_string(), "\x14".to_string());
-        key_map.insert("NAK".to_string(), "\x15".to_string());
-        key_map.insert("SYN".to_string(), "\x16".to_string());
-        key_map.insert("ETB".to_string(), "\x17".to_string());
-        key_map.insert("CANCEL".to_string(), "\x18".to_string());
-        key_map.insert("EM".to_string(), "\x19".to_string());
-        key_map.insert("SUB".to_string(), "\x1A".to_string());
-        key_map.insert("FILE_SEPARATOR".to_string(), "\x1C".to_string());
-        key_map.insert("GROUP_SEPARATOR".to_string(), "\x1D".to_string());
-        key_map.insert("RECORD_SEPARATOR".to_string(), "\x1E".to_string());
-        key_map.insert("UNITS_EPARATOR".to_string(), "\x1F".to_string());
+        key_map.insert("NULL", "\x00");
+        key_map.insert("STX", "\x01");
+        key_map.insert("SOT", "\x02");
+        key_map.insert("ETX", "\x03");
+        key_map.insert("EOT", "\x04");
+        key_map.insert("ENQ", "\x05");
+        key_map.insert("ACK", "\x06");
+        key_map.insert("BELL", "\x07");
+        key_map.insert("VTAB", "\x0B");
+        key_map.insert("FORM_FEED", "\x0C");
+        key_map.insert("SHIFT_OUT", "\x0E");
+        key_map.insert("SHIFT_IN", "\x0F");
+        key_map.insert("DATA_LINK_ESCAPE", "\x10");
+        key_map.insert("XON", "\x11");
+        key_map.insert("CTRL+R", "\x12");
+        key_map.insert("XOFF", "\x13");
+        key_map.insert("DC4", "\x14");
+        key_map.insert("NAK", "\x15");
+        key_map.insert("SYN", "\x16");
+        key_map.insert("ETB", "\x17");
+        key_map.insert("CANCEL", "\x18");
+        key_map.insert("EM", "\x19");
+        key_map.insert("SUB", "\x1A");
+        key_map.insert("FILE_SEPARATOR", "\x1C");
+        key_map.insert("GROUP_SEPARATOR", "\x1D");
+        key_map.insert("RECORD_SEPARATOR", "\x1E");
+        key_map.insert("UNITS_EPARATOR", "\x1F");
 
         // Regular character Keys
-        key_map.insert("ONE".to_string(), "1".to_string());
-        key_map.insert("TWO".to_string(), "2".to_string());
-        key_map.insert("THREE".to_string(), "3".to_string());
-        key_map.insert("FOUR".to_string(), "4".to_string());
-        key_map.insert("FIVE".to_string(), "5".to_string());
-        key_map.insert("SIX".to_string(), "6".to_string());
-        key_map.insert("SEVEN".to_string(), "7".to_string());
-        key_map.insert("EIGHT".to_string(), "8".to_string());
-        key_map.insert("NINE".to_string(), "9".to_string());
-        key_map.insert("ZERO".to_string(), "0".to_string());
-        key_map.insert("BANG".to_string(), "!".to_string());
-        key_map.insert("AT".to_string(), "@".to_string());
-        key_map.insert("OCTOTHORPE".to_string(), "#".to_string());
-        key_map.insert("DOLLAR".to_string(), "$".to_string());
-        key_map.insert("PERCENT".to_string(), "%".to_string());
-        key_map.insert("CARET".to_string(), "^".to_string());
-        key_map.insert("AMPERSAND".to_string(), "&".to_string());
-        key_map.insert("ASTERISK".to_string(), "*".to_string());
-        key_map.insert("PARENTHESIS_OPEN".to_string(), "(".to_string());
-        key_map.insert("PARENTHESIS_CLOSE".to_string(), ")".to_string());
-        key_map.insert("BRACKET_OPEN".to_string(), "[".to_string());
-        key_map.insert("BRACKET_CLOSE".to_string(), "]".to_string());
-        key_map.insert("BRACE_OPEN".to_string(), "{".to_string());
-        key_map.insert("BRACE_CLOSE".to_string(), "}".to_string());
-        key_map.insert("BAR".to_string(), "|".to_string());
-        key_map.insert("BACKSLASH".to_string(), "\\".to_string());
-        key_map.insert("COLON".to_string(), ":".to_string());
-        key_map.insert("SEMICOLON".to_string(), ";".to_string());
-        key_map.insert("QUOTE".to_string(), "\"".to_string());
-        key_map.insert("APOSTROPHE".to_string(), "'".to_string());
-        key_map.insert("LESSTHAN".to_string(), "<".to_string());
-        key_map.insert("GREATERTHAN".to_string(), ">".to_string());
-        key_map.insert("COMMA".to_string(), ",".to_string());
-        key_map.insert("PERIOD".to_string(), ".".to_string());
-        key_map.insert("SLASH".to_string(), "/".to_string());
-        key_map.insert("QUESTIONMARK".to_string(), "?".to_string());
-        key_map.insert("DASH".to_string(), "-".to_string());
-        key_map.insert("UNDERSCORE".to_string(), "_".to_string());
-        key_map.insert("SPACE".to_string(), " ".to_string());
-        key_map.insert("PLUS".to_string(), "+".to_string());
-        key_map.insert("EQUALS".to_string(), "=".to_string());
-        key_map.insert("TILDE".to_string(), "~".to_string());
-        key_map.insert("BACKTICK".to_string(), "`".to_string());
-        key_map.insert("A_UPPER".to_string(), "A".to_string());
-        key_map.insert("B_UPPER".to_string(), "B".to_string());
-        key_map.insert("C_UPPER".to_string(), "C".to_string());
-        key_map.insert("D_UPPER".to_string(), "D".to_string());
-        key_map.insert("E_UPPER".to_string(), "E".to_string());
-        key_map.insert("F_UPPER".to_string(), "F".to_string());
-        key_map.insert("G_UPPER".to_string(), "G".to_string());
-        key_map.insert("H_UPPER".to_string(), "H".to_string());
-        key_map.insert("I_UPPER".to_string(), "I".to_string());
-        key_map.insert("J_UPPER".to_string(), "J".to_string());
-        key_map.insert("K_UPPER".to_string(), "K".to_string());
-        key_map.insert("L_UPPER".to_string(), "L".to_string());
-        key_map.insert("M_UPPER".to_string(), "M".to_string());
-        key_map.insert("N_UPPER".to_string(), "N".to_string());
-        key_map.insert("O_UPPER".to_string(), "O".to_string());
-        key_map.insert("P_UPPER".to_string(), "P".to_string());
-        key_map.insert("Q_UPPER".to_string(), "Q".to_string());
-        key_map.insert("R_UPPER".to_string(), "R".to_string());
-        key_map.insert("S_UPPER".to_string(), "S".to_string());
-        key_map.insert("T_UPPER".to_string(), "T".to_string());
-        key_map.insert("U_UPPER".to_string(), "U".to_string());
-        key_map.insert("V_UPPER".to_string(), "V".to_string());
-        key_map.insert("W_UPPER".to_string(), "W".to_string());
-        key_map.insert("X_UPPER".to_string(), "X".to_string());
-        key_map.insert("Y_UPPER".to_string(), "Y".to_string());
-        key_map.insert("Z_UPPER".to_string(), "Z".to_string());
-        key_map.insert("A_LOWER".to_string(), "a".to_string());
-        key_map.insert("B_LOWER".to_string(), "b".to_string());
-        key_map.insert("C_LOWER".to_string(), "c".to_string());
-        key_map.insert("D_LOWER".to_string(), "d".to_string());
-        key_map.insert("E_LOWER".to_string(), "e".to_string());
-        key_map.insert("F_LOWER".to_string(), "f".to_string());
-        key_map.insert("G_LOWER".to_string(), "g".to_string());
-        key_map.insert("H_LOWER".to_string(), "h".to_string());
-        key_map.insert("I_LOWER".to_string(), "i".to_string());
-        key_map.insert("J_LOWER".to_string(), "j".to_string());
-        key_map.insert("K_LOWER".to_string(), "k".to_string());
-        key_map.insert("L_LOWER".to_string(), "l".to_string());
-        key_map.insert("M_LOWER".to_string(), "m".to_string());
-        key_map.insert("N_LOWER".to_string(), "n".to_string());
-        key_map.insert("O_LOWER".to_string(), "o".to_string());
-        key_map.insert("P_LOWER".to_string(), "p".to_string());
-        key_map.insert("Q_LOWER".to_string(), "q".to_string());
-        key_map.insert("R_LOWER".to_string(), "r".to_string());
-        key_map.insert("S_LOWER".to_string(), "s".to_string());
-        key_map.insert("T_LOWER".to_string(), "t".to_string());
-        key_map.insert("U_LOWER".to_string(), "u".to_string());
-        key_map.insert("V_LOWER".to_string(), "v".to_string());
-        key_map.insert("W_LOWER".to_string(), "w".to_string());
-        key_map.insert("X_LOWER".to_string(), "x".to_string());
-        key_map.insert("Y_LOWER".to_string(), "y".to_string());
-        key_map.insert("Z_LOWER".to_string(), "z".to_string());
+        key_map.insert("ONE", "1");
+        key_map.insert("TWO", "2");
+        key_map.insert("THREE", "3");
+        key_map.insert("FOUR", "4");
+        key_map.insert("FIVE", "5");
+        key_map.insert("SIX", "6");
+        key_map.insert("SEVEN", "7");
+        key_map.insert("EIGHT", "8");
+        key_map.insert("NINE", "9");
+        key_map.insert("ZERO", "0");
+        key_map.insert("BANG", "!");
+        key_map.insert("AT", "@");
+        key_map.insert("OCTOTHORPE", "#");
+        key_map.insert("DOLLAR", "$");
+        key_map.insert("PERCENT", "%");
+        key_map.insert("CARET", "^");
+        key_map.insert("AMPERSAND", "&");
+        key_map.insert("ASTERISK", "*");
+        key_map.insert("PARENTHESIS_OPEN", "(");
+        key_map.insert("PARENTHESIS_CLOSE", ")");
+        key_map.insert("BRACKET_OPEN", "[");
+        key_map.insert("BRACKET_CLOSE", "]");
+        key_map.insert("BRACE_OPEN", "{");
+        key_map.insert("BRACE_CLOSE", "}");
+        key_map.insert("BAR", "|");
+        key_map.insert("BACKSLASH", "\\");
+        key_map.insert("COLON", ":");
+        key_map.insert("SEMICOLON", ";");
+        key_map.insert("QUOTE", "\"");
+        key_map.insert("APOSTROPHE", "'");
+        key_map.insert("LESSTHAN", "<");
+        key_map.insert("GREATERTHAN", ">");
+        key_map.insert("COMMA", ",");
+        key_map.insert("PERIOD", ".");
+        key_map.insert("SLASH", "/");
+        key_map.insert("QUESTIONMARK", "?");
+        key_map.insert("DASH", "-");
+        key_map.insert("UNDERSCORE", "_");
+        key_map.insert("SPACE", " ");
+        key_map.insert("PLUS", "+");
+        key_map.insert("EQUALS", "=");
+        key_map.insert("TILDE", "~");
+        key_map.insert("BACKTICK", "`");
+        key_map.insert("A_UPPER", "A");
+        key_map.insert("B_UPPER", "B");
+        key_map.insert("C_UPPER", "C");
+        key_map.insert("D_UPPER", "D");
+        key_map.insert("E_UPPER", "E");
+        key_map.insert("F_UPPER", "F");
+        key_map.insert("G_UPPER", "G");
+        key_map.insert("H_UPPER", "H");
+        key_map.insert("I_UPPER", "I");
+        key_map.insert("J_UPPER", "J");
+        key_map.insert("K_UPPER", "K");
+        key_map.insert("L_UPPER", "L");
+        key_map.insert("M_UPPER", "M");
+        key_map.insert("N_UPPER", "N");
+        key_map.insert("O_UPPER", "O");
+        key_map.insert("P_UPPER", "P");
+        key_map.insert("Q_UPPER", "Q");
+        key_map.insert("R_UPPER", "R");
+        key_map.insert("S_UPPER", "S");
+        key_map.insert("T_UPPER", "T");
+        key_map.insert("U_UPPER", "U");
+        key_map.insert("V_UPPER", "V");
+        key_map.insert("W_UPPER", "W");
+        key_map.insert("X_UPPER", "X");
+        key_map.insert("Y_UPPER", "Y");
+        key_map.insert("Z_UPPER", "Z");
+        key_map.insert("A_LOWER", "a");
+        key_map.insert("B_LOWER", "b");
+        key_map.insert("C_LOWER", "c");
+        key_map.insert("D_LOWER", "d");
+        key_map.insert("E_LOWER", "e");
+        key_map.insert("F_LOWER", "f");
+        key_map.insert("G_LOWER", "g");
+        key_map.insert("H_LOWER", "h");
+        key_map.insert("I_LOWER", "i");
+        key_map.insert("J_LOWER", "j");
+        key_map.insert("K_LOWER", "k");
+        key_map.insert("L_LOWER", "l");
+        key_map.insert("M_LOWER", "m");
+        key_map.insert("N_LOWER", "n");
+        key_map.insert("O_LOWER", "o");
+        key_map.insert("P_LOWER", "p");
+        key_map.insert("Q_LOWER", "q");
+        key_map.insert("R_LOWER", "r");
+        key_map.insert("S_LOWER", "s");
+        key_map.insert("T_LOWER", "t");
+        key_map.insert("U_LOWER", "u");
+        key_map.insert("V_LOWER", "v");
+        key_map.insert("W_LOWER", "w");
+        key_map.insert("X_LOWER", "x");
+        key_map.insert("Y_LOWER", "y");
+        key_map.insert("Z_LOWER", "z");
+
 
         key_map
     }
@@ -1253,17 +1261,17 @@ impl VisualEditor for SbyteEditor {
 }
 
 impl InConsole for SbyteEditor {
-    fn tick(&mut self) {
+    fn tick(&mut self) -> Result<(), RectError> {
         if !self.surpress_tick {
 
             self.check_resize();
 
             if self.check_flag(Flag::SETUP_DISPLAYS) {
-                self.setup_displays();
+                self.setup_displays()?;
             }
 
             if self.check_flag(Flag::REMAP_ACTIVE_ROWS) {
-                self.remap_active_rows();
+                self.remap_active_rows()?;
             }
 
             let len = self.rows_to_refresh.len();
@@ -1273,7 +1281,7 @@ impl InConsole for SbyteEditor {
                 while self.rows_to_refresh.len() > 0 {
                     y = self.rows_to_refresh.pop().unwrap();
                     if self.check_flag(Flag::UPDATE_ROW(y)) {
-                        self.set_row_characters(y);
+                        self.set_row_characters(y)?;
                     } else {
                         in_timeout.push(y);
                     }
@@ -1289,7 +1297,7 @@ impl InConsole for SbyteEditor {
 
             match &self.user_error_msg {
                 Some(msg) => {
-                    self.display_user_error(msg.clone());
+                    self.display_user_error(msg.clone())?;
                     self.user_error_msg = None;
 
                     // Prevent any user msg from clobbering this msg
@@ -1298,18 +1306,18 @@ impl InConsole for SbyteEditor {
                 }
                 None => {
                     if self.check_flag(Flag::DISPLAY_CMDLINE) {
-                        self.display_command_line();
+                        self.display_command_line()?;
                     } else {
                         let tmp_usr_msg = self.user_msg.clone();
                         match tmp_usr_msg {
                             Some(msg) => {
-                                self.display_user_message(msg.clone());
+                                self.display_user_message(msg.clone())?;
                                 self.user_msg = None;
                                 self.lower_flag(Flag::UPDATE_OFFSET);
                             }
                             None => {
                                 if self.check_flag(Flag::UPDATE_OFFSET) {
-                                    self.display_user_offset();
+                                    self.display_user_offset()?;
                                 }
                             }
                         }
@@ -1317,8 +1325,10 @@ impl InConsole for SbyteEditor {
                 }
             }
 
-            self.rectmanager.draw();
+            self.rectmanager.draw()?;
         }
+
+        Ok(())
     }
 
     fn autoset_viewport_size(&mut self) {
@@ -1354,7 +1364,7 @@ impl InConsole for SbyteEditor {
         }
     }
 
-    fn setup_displays(&mut self) {
+    fn setup_displays(&mut self) -> Result<(), RectError> {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
 
@@ -1362,18 +1372,18 @@ impl InConsole for SbyteEditor {
         let viewport_width = self.viewport.get_width();
         let viewport_height = self.viewport.get_height();
 
-        self.rectmanager.resize(self.rect_meta, full_width, 1);
+        self.rectmanager.resize(self.rect_meta, full_width, 1)?;
         self.rectmanager.resize(
             self.rect_display_wrapper,
             full_width,
             full_height - 1
-        );
+        )?;
 
         let (bits_display, human_display) = self.rects_display;
-        self.rectmanager.clear_children(bits_display);
-        self.rectmanager.clear_children(human_display);
+        self.rectmanager.clear_children(bits_display)?;
+        self.rectmanager.clear_children(human_display)?;
 
-        self.arrange_displays();
+        self.arrange_displays()?;
 
         self.cell_dict.drain();
         self.row_dict.drain();
@@ -1396,27 +1406,27 @@ impl InConsole for SbyteEditor {
                 .and_modify(|e| *e = false)
                 .or_insert(false);
 
-            _bits_row_id = self.rectmanager.new_rect(bits_display);
+            _bits_row_id = self.rectmanager.new_rect(bits_display).ok().unwrap();
 
             self.rectmanager.resize(
                 _bits_row_id,
                 (viewport_width * display_ratio) - 1,
                 1
-            );
+            )?;
 
-            self.rectmanager.set_position(_bits_row_id, 0, y as isize);
+            self.rectmanager.set_position(_bits_row_id, 0, y as isize)?;
 
-            _human_row_id = self.rectmanager.new_rect(human_display);
+            _human_row_id = self.rectmanager.new_rect(human_display).ok().unwrap();
             self.rectmanager.resize(
                 _human_row_id,
                 viewport_width,
                 1
-            );
+            )?;
             self.rectmanager.set_position(
                 _human_row_id,
                 0,
                 y as isize
-            );
+            )?;
 
             self.row_dict.entry(y)
                 .and_modify(|e| *e = (_bits_row_id, _human_row_id))
@@ -1425,27 +1435,27 @@ impl InConsole for SbyteEditor {
             _cells_hashmap = self.cell_dict.entry(y).or_insert(HashMap::new());
 
             for x in 0 .. viewport_width {
-                _bits_cell_id = self.rectmanager.new_rect(_bits_row_id);
+                _bits_cell_id = self.rectmanager.new_rect(_bits_row_id).ok().unwrap();
                 self.rectmanager.resize(
                     _bits_cell_id,
                     width_bits,
                     1
-                );
+                )?;
 
                 self.rectmanager.set_position(
                     _bits_cell_id,
                     (x * display_ratio) as isize,
                     0
-                );
+                )?;
 
-                _human_cell_id = self.rectmanager.new_rect(_human_row_id);
+                _human_cell_id = self.rectmanager.new_rect(_human_row_id).ok().unwrap();
 
                 self.rectmanager.set_position(
                     _human_cell_id,
                     x as isize,
                     0
-                );
-                self.rectmanager.resize(_human_cell_id, 1, 1);
+                )?;
+                self.rectmanager.resize(_human_cell_id, 1, 1)?;
 
                 _cells_hashmap.entry(x as usize)
                     .and_modify(|e| *e = (_bits_cell_id, _human_cell_id))
@@ -1456,6 +1466,8 @@ impl InConsole for SbyteEditor {
         self.flag_force_rerow = true;
 
         self.raise_flag(Flag::CURSOR_MOVED);
+
+        Ok(())
     }
 
     fn check_resize(&mut self) {
@@ -1473,7 +1485,7 @@ impl InConsole for SbyteEditor {
         }
     }
 
-    fn arrange_displays(&mut self) {
+    fn arrange_displays(&mut self) -> Result<(), RectError> {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
         let meta_height = 1;
@@ -1482,23 +1494,23 @@ impl InConsole for SbyteEditor {
             self.rect_meta,
             0,
             (full_height - meta_height) as isize
-        );
+        )?;
 
 
         let display_height = full_height - meta_height;
-        self.rectmanager.clear_characters(self.rect_display_wrapper);
+        self.rectmanager.clear_characters(self.rect_display_wrapper)?;
 
         self.rectmanager.resize(
             self.rect_display_wrapper,
             full_width,
             display_height
-        );
+        )?;
 
         self.rectmanager.set_position(
             self.rect_display_wrapper,
             0,
             0
-        );
+        )?;
 
         let display_ratio = self.get_display_ratio();
         let (bits_id, human_id) = self.rects_display;
@@ -1510,19 +1522,21 @@ impl InConsole for SbyteEditor {
 
         let bits_display_x = remaining_space / 2;
 
-        self.rectmanager.resize(bits_id, bits_display_width, display_height);
-        self.rectmanager.set_position(bits_id, bits_display_x as isize, 0);
+        self.rectmanager.resize(bits_id, bits_display_width, display_height)?;
+        self.rectmanager.set_position(bits_id, bits_display_x as isize, 0)?;
 
         // TODO: Fill in a separator
 
         //let human_display_x = (full_width - human_display_width) as isize;
         let human_display_x = (remaining_space / 2) + bits_display_width;
 
-        self.rectmanager.resize(human_id, human_display_width, display_height);
-        self.rectmanager.set_position(human_id, human_display_x as isize, 0);
+        self.rectmanager.resize(human_id, human_display_width, display_height)?;
+        self.rectmanager.set_position(human_id, human_display_x as isize, 0)?;
+
+        Ok(())
     }
 
-    fn remap_active_rows(&mut self) {
+    fn remap_active_rows(&mut self) -> Result<(), RectError> {
         let width = self.viewport.get_width();
         let height = self.viewport.get_height();
         let initial_y = (self.viewport.get_offset() / width) as isize;
@@ -1546,12 +1560,12 @@ impl InConsole for SbyteEditor {
                         human,
                         0,
                         initial_y - new_y
-                    );
+                    )?;
                     self.rectmanager.shift_contents(
                         bits,
                         0,
                         initial_y - new_y
-                    );
+                    )?;
                 }
 
                 let mut new_rows_map = HashMap::new();
@@ -1590,8 +1604,8 @@ impl InConsole for SbyteEditor {
                             // Moving row at bottom to top
                             match new_rows_map.get(&y) {
                                 Some((bits, human)) => {
-                                    self.rectmanager.set_position(*bits, 0, y as isize);
-                                    self.rectmanager.set_position(*human, 0, y as isize);
+                                    self.rectmanager.set_position(*bits, 0, y as isize)?;
+                                    self.rectmanager.set_position(*human, 0, y as isize)?;
                                 }
                                 None => ()
                             }
@@ -1631,8 +1645,8 @@ impl InConsole for SbyteEditor {
                             //Moving row at top to the bottom
                             match new_rows_map.get(&y) {
                                 Some((bits, human)) => {
-                                    self.rectmanager.set_position(*human, 0, y as isize);
-                                    self.rectmanager.set_position(*bits, 0, y as isize);
+                                    self.rectmanager.set_position(*human, 0, y as isize)?;
+                                    self.rectmanager.set_position(*bits, 0, y as isize)?;
                                 }
                                 None => ()
                             }
@@ -1682,9 +1696,11 @@ impl InConsole for SbyteEditor {
 
         self.flag_force_rerow = false;
         self.raise_flag(Flag::CURSOR_MOVED);
+
+        Ok(())
     }
 
-    fn set_row_characters(&mut self, absolute_y: usize) {
+    fn set_row_characters(&mut self, absolute_y: usize) -> Result<(), RectError> {
         let viewport = &self.viewport;
         let active_converter = self.get_active_converter();
         let human_converter = HumanConverter {};
@@ -1710,8 +1726,8 @@ impl InConsole for SbyteEditor {
             Some(cellhash) => {
 
                 for (_x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
-                    self.rectmanager.clear_characters(*rect_id_human);
-                    self.rectmanager.clear_characters(*rect_id_bits);
+                    self.rectmanager.clear_characters(*rect_id_human)?;
+                    self.rectmanager.clear_characters(*rect_id_bits)?;
                 }
 
                 let mut tmp_bits;
@@ -1754,8 +1770,8 @@ impl InConsole for SbyteEditor {
                                     "."
                                 }
                             };
-                            self.rectmanager.set_string(*human, 0, 0, tmp_human_str);
-                            self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str);
+                            self.rectmanager.set_string(*human, 0, 0, tmp_human_str)?;
+                            self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str)?;
 
                             if in_structure {
                                 self.rectmanager.set_underline_flag(*human);
@@ -1766,11 +1782,11 @@ impl InConsole for SbyteEditor {
                             }
 
                             if in_structure && !structure_valid {
-                                self.rectmanager.set_fg_color(*human, RectColor::RED);
-                                self.rectmanager.set_fg_color(*bits, RectColor::RED);
+                                self.rectmanager.set_fg_color(*human, RectColor::RED)?;
+                                self.rectmanager.set_fg_color(*bits, RectColor::RED)?;
                             } else {
-                                self.rectmanager.unset_color(*human);
-                                self.rectmanager.unset_color(*bits);
+                                self.rectmanager.unset_color(*human)?;
+                                self.rectmanager.unset_color(*bits)?;
                             }
 
                         }
@@ -1785,9 +1801,11 @@ impl InConsole for SbyteEditor {
         self.active_row_map.entry(relative_y)
             .and_modify(|e| {*e = true})
             .or_insert(true);
+
+        Ok(())
     }
 
-    fn display_user_offset(&mut self) {
+    fn display_user_offset(&mut self) -> Result<(), RectError> {
         let mut cursor_string = format!("{}", self.cursor.get_offset());
 
         if self.active_content.len() > 0 {
@@ -1821,26 +1839,34 @@ impl InConsole for SbyteEditor {
 
         self.clear_meta_rect();
 
-        self.rectmanager.set_string(self.rect_meta, x as isize, 0, &offset_display);
+        self.rectmanager.set_string(self.rect_meta, x as isize, 0, &offset_display)?;
+
+        Ok(())
     }
 
-    fn clear_meta_rect(&mut self) {
-        self.rectmanager.clear_characters(self.rect_meta);
-        self.rectmanager.clear_children(self.rect_meta);
-        self.rectmanager.clear_effects(self.rect_meta);
+    fn clear_meta_rect(&mut self) -> Result<(), RectError> {
+        self.rectmanager.clear_characters(self.rect_meta)?;
+        self.rectmanager.clear_children(self.rect_meta)?;
+        self.rectmanager.clear_effects(self.rect_meta)?;
+
+        Ok(())
     }
 
-    fn display_user_message(&mut self, msg: String) {
+    fn display_user_message(&mut self, msg: String) -> Result<(), RectError> {
         self.clear_meta_rect();
-        self.rectmanager.set_string(self.rect_meta, 0, 0, &msg);
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &msg)?;
         self.rectmanager.set_bold_flag(self.rect_meta);
-        self.rectmanager.set_fg_color(self.rect_meta, RectColor::BRIGHTCYAN);
+        self.rectmanager.set_fg_color(self.rect_meta, RectColor::BRIGHTCYAN)?;
+
+        Ok(())
     }
 
-    fn display_user_error(&mut self, msg: String) {
+    fn display_user_error(&mut self, msg: String) -> Result<(), RectError> {
         self.clear_meta_rect();
-        self.rectmanager.set_string(self.rect_meta, 0, 0, &msg);
-        self.rectmanager.set_fg_color(self.rect_meta, RectColor::RED);
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &msg)?;
+        self.rectmanager.set_fg_color(self.rect_meta, RectColor::RED)?;
+
+        Ok(())
     }
 
     fn apply_cursor(&mut self) {
@@ -1890,23 +1916,25 @@ impl InConsole for SbyteEditor {
         }
     }
 
-    fn display_command_line(&mut self) {
+    fn display_command_line(&mut self) -> Result<(), RectError> {
         self.clear_meta_rect();
         let cmd = &self.commandline.get_register();
         // +1, because of the ":" at the start
         let cursor_x = self.commandline.get_cursor_offset() + 1;
-        let cursor_id = self.rectmanager.new_rect(self.rect_meta);
+        let cursor_id = self.rectmanager.new_rect(self.rect_meta).ok().unwrap();
 
-        self.rectmanager.resize(cursor_id, 1, 1);
-        self.rectmanager.set_position(cursor_id, cursor_x as isize, 0);
+        self.rectmanager.resize(cursor_id, 1, 1)?;
+        self.rectmanager.set_position(cursor_id, cursor_x as isize, 0)?;
         self.rectmanager.set_invert_flag(cursor_id);
 
         if cursor_x < cmd.len() {
             let chr: String = cmd.chars().skip(cursor_x).take(1).collect();
-            self.rectmanager.set_string(cursor_id, 0, 0, &chr);
+            self.rectmanager.set_string(cursor_id, 0, 0, &chr)?;
         }
 
-        self.rectmanager.set_string(self.rect_meta, 0, 0, &vec![":", cmd].join(""));
+        self.rectmanager.set_string(self.rect_meta, 0, 0, &vec![":", cmd].join(""))?;
+
+        Ok(())
     }
 
     fn flag_row_update_by_range(&mut self, range: std::ops::Range<usize>) {
@@ -2788,7 +2816,7 @@ impl Commandable for SbyteEditor {
                             Ok(new_width) => {
                                 self.ci_lock_viewport_width(new_width);
                             }
-                            Err(e) => {
+                            Err(_e) => {
                                 //TODO
                             }
                         }
@@ -2808,7 +2836,7 @@ impl Commandable for SbyteEditor {
                             Ok(n) => {
                                 self.register = Some(n);
                             }
-                            Err(e) => ()
+                            Err(_e) => ()
 
                         }
                     }
