@@ -2,6 +2,7 @@ pub mod converter;
 pub mod editor_cursor;
 use converter::*;
 use editor_cursor::*;
+use std::error::Error;
 
 
 pub enum EditorError {
@@ -18,10 +19,10 @@ pub trait Editor {
     fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);
     fn copy_selection(&mut self);
     fn get_clipboard(&mut self) -> Vec<u8>;
-    fn load_file(&mut self, file_path: &str);
-    fn save_as(&mut self, path: &str);
-    fn save(&mut self);
-    fn set_file_path(&mut self, new_file_path: String);
+    fn load_file(&mut self, file_path: &str) -> std::io::Result<()>;
+    fn save_as(&mut self, path: &str) -> std::io::Result<()>;
+    fn save(&mut self) -> Result<(), Box<dyn Error>>;
+    fn set_file_path(&mut self, new_file_path: &str);
     fn find_all(&self, pattern: &Vec<u8>) -> Vec<usize>;
     fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize>;
     fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8>;

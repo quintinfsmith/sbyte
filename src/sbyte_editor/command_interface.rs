@@ -1,3 +1,4 @@
+use std::error::Error;
 pub trait CommandInterface {
     //fn ci_assign_input(&mut self, funcref: &str, sequence: &str);
     fn ci_cursor_up(&mut self, repeat: usize);
@@ -24,17 +25,15 @@ pub trait CommandInterface {
     fn ci_decrement(&mut self, repeat: usize);
     fn ci_increment(&mut self, repeat: usize);
 
-
-
     fn ci_jump_to_position(&mut self, new_position: usize);
 
     fn ci_yank(&mut self);
 
-    fn ci_kill(&mut self);
     fn ci_save(&mut self, path: Option<&str>);
 
     fn ci_lock_viewport_width(&mut self, new_width: usize);
     fn ci_unlock_viewport_width(&mut self);
+
     //fn ci_remove_structure(&mut self);
     //fn ci_create_big_endian_structure(&mut self);
     //fn ci_set_register(&mut self, new_value: usize);

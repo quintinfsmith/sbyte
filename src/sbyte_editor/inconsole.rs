@@ -21,7 +21,7 @@ pub trait InConsole {
 
     fn check_resize(&mut self);
     fn setup_displays(&mut self) -> Result<(), RectError>;
-    fn apply_cursor(&mut self);
+    fn apply_cursor(&mut self) -> Result<(), RectError>;
 
     fn remap_active_rows(&mut self) -> Result<(), RectError>;
 

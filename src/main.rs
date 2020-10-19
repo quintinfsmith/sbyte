@@ -15,8 +15,6 @@ fn main() {
     match args.get(1) {
         Some(path) => {
             editor.load_file(path);
-
-
         }
         None => {
         }

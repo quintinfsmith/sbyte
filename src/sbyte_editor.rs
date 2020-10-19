@@ -6,6 +6,7 @@ use std::io::{Write, Read};
 use std::error::Error;
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
+use std::fmt;
 
 use wrecked::{RectManager, RectColor, RectError};
 
@@ -59,6 +60,18 @@ impl InputterEditorInterface {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum SbyteError {
+    PathNotSet
+}
+impl fmt::Display for SbyteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+impl Error for SbyteError {}
+
 
 pub struct SbyteEditor {
     surpress_tick: bool, // Used to prevent visual feedback
@@ -210,7 +223,7 @@ impl SbyteEditor {
         output
     }
 
-    pub fn load_config(&mut self, file_path: &str) {
+    pub fn load_config(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
         match File::open(file_path) {
             Ok(mut file) => {
                 let file_length = match file.metadata() {
@@ -223,16 +236,19 @@ impl SbyteEditor {
                 };
 
                 let mut buffer: Vec<u8> = vec![0; file_length as usize];
-                file.read(&mut buffer);
+                file.read(&mut buffer)?;
+
                 let working_cmds: Vec<&str> = std::str::from_utf8(buffer.as_slice()).unwrap().split("\n").collect();
                 self.surpress_tick = true;
                 for cmd in working_cmds.iter() {
-                    self.try_command(cmd);
+                    self.try_command(cmd)?;
                 }
                 self.surpress_tick = false;
             }
             Err(_e) => { }
         }
+
+        Ok(())
     }
 
     pub fn main(&mut self) -> Result<(), Box<dyn Error>> {
@@ -375,7 +391,7 @@ impl SbyteEditor {
                         match mutex.new_context {
                             Some(_) => { }
                             None => {
-                                self.run_cmd_from_functionref(&_current_func, vec![_current_arg]);
+                                self.run_cmd_from_functionref(&_current_func, vec![_current_arg])?;
                             }
                         }
                     }
@@ -402,18 +418,19 @@ impl SbyteEditor {
                 }
                 Err(error) => {
                     self.flag_kill = true;
-                    output = Err(Box::new(error));
+                    Err(Box::new(error))?;
                 }
             }
 
         }
 
         self.kill();
-        output
+
+        Ok(())
     }
 
-    pub fn kill(&mut self) {
-        self.rectmanager.kill();
+    pub fn kill(&mut self) -> Result<(), RectError> {
+        self.rectmanager.kill()
     }
 
     fn unmap_structure(&mut self, structure_id: u64) {
@@ -983,10 +1000,10 @@ impl Editor for SbyteEditor {
         self.copy_to_clipboard(selected_bytes);
     }
 
-    fn load_file(&mut self, file_path: &str) {
+    fn load_file(&mut self, file_path: &str) -> std::io::Result<()> {
         self.active_content = Vec::new();
 
-        self.set_file_path(file_path.to_string());
+        self.set_file_path(file_path);
         match File::open(file_path) {
             Ok(mut file) => {
                 let file_length = match file.metadata() {
@@ -999,42 +1016,49 @@ impl Editor for SbyteEditor {
                 };
 
                 let mut buffer: Vec<u8> = vec![0; file_length as usize];
-                file.read(&mut buffer);
+                file.read(&mut buffer)?;
 
                 for byte in buffer.iter() {
                     self.active_content.push(*byte);
                 }
             }
-            Err(e) => {}
+            Err(e) => {
+                Err(e)?
+            }
         }
+        Ok(())
     }
 
-    fn save(&mut self) {
+    fn save(&mut self) -> Result<(), Box<dyn Error>> {
         match &self.active_file_path {
             Some(path) => {
-                self.save_as(&path.to_string());
+                self.save_as(&path.to_string())?;
             }
             None => {
-                //TODO arguments
+                Err(SbyteError::PathNotSet)?;
             }
         };
+
+        Ok(())
     }
 
-    fn save_as(&mut self, path: &str) {
+    fn save_as(&mut self, path: &str) -> std::io::Result<()> {
         match File::create(path) {
             Ok(mut file) => {
-                file.write_all(self.active_content.as_slice());
+                file.write_all(self.active_content.as_slice())?;
                 // TODO: Handle potential file system problems
                 //file.sync_all();
             }
             Err(e) => {
+                Err(e)?;
             }
         }
 
+        Ok(())
     }
 
-    fn set_file_path(&mut self, new_file_path: String) {
-        self.active_file_path = Some(new_file_path);
+    fn set_file_path(&mut self, new_file_path: &str) {
+        self.active_file_path = Some(new_file_path.to_string());
     }
 
     fn find_all(&self, search_for: &Vec<u8>) -> Vec<usize> {
@@ -1294,7 +1318,7 @@ impl InConsole for SbyteEditor {
 
 
             if self.check_flag(Flag::CURSOR_MOVED) {
-                self.apply_cursor();
+                self.apply_cursor()?;
             }
 
 
@@ -1777,11 +1801,11 @@ impl InConsole for SbyteEditor {
                             self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str)?;
 
                             if in_structure {
-                                self.rectmanager.set_underline_flag(*human);
-                                self.rectmanager.set_underline_flag(*bits);
+                                self.rectmanager.set_underline_flag(*human)?;
+                                self.rectmanager.set_underline_flag(*bits)?;
                             } else {
-                                self.rectmanager.unset_underline_flag(*human);
-                                self.rectmanager.unset_underline_flag(*bits);
+                                self.rectmanager.unset_underline_flag(*human)?;
+                                self.rectmanager.unset_underline_flag(*bits)?;
                             }
 
                             if in_structure && !structure_valid {
@@ -1840,7 +1864,7 @@ impl InConsole for SbyteEditor {
 
         let x = meta_width - offset_display.len();
 
-        self.clear_meta_rect();
+        self.clear_meta_rect()?;
 
         self.rectmanager.set_string(self.rect_meta, x as isize, 0, &offset_display)?;
 
@@ -1856,23 +1880,23 @@ impl InConsole for SbyteEditor {
     }
 
     fn display_user_message(&mut self, msg: String) -> Result<(), RectError> {
-        self.clear_meta_rect();
+        self.clear_meta_rect()?;
         self.rectmanager.set_string(self.rect_meta, 0, 0, &msg)?;
-        self.rectmanager.set_bold_flag(self.rect_meta);
+        self.rectmanager.set_bold_flag(self.rect_meta)?;
         self.rectmanager.set_fg_color(self.rect_meta, RectColor::BRIGHTCYAN)?;
 
         Ok(())
     }
 
     fn display_user_error(&mut self, msg: String) -> Result<(), RectError> {
-        self.clear_meta_rect();
+        self.clear_meta_rect()?;
         self.rectmanager.set_string(self.rect_meta, 0, 0, &msg)?;
         self.rectmanager.set_fg_color(self.rect_meta, RectColor::RED)?;
 
         Ok(())
     }
 
-    fn apply_cursor(&mut self) {
+    fn apply_cursor(&mut self) -> Result<(), RectError> {
         let viewport_width = self.viewport.get_width();
         let viewport_height = self.viewport.get_height();
         let viewport_offset = self.viewport.get_offset();
@@ -1881,8 +1905,8 @@ impl InConsole for SbyteEditor {
 
         // First clear previously applied
         for (bits, human) in self.active_cursor_cells.drain() {
-            self.rectmanager.unset_invert_flag(bits);
-            self.rectmanager.unset_invert_flag(human);
+            self.rectmanager.unset_invert_flag(bits)?;
+            self.rectmanager.unset_invert_flag(human)?;
         }
 
         let start = if cursor_offset < viewport_offset {
@@ -1906,8 +1930,8 @@ impl InConsole for SbyteEditor {
                     x = (i - viewport_offset) % viewport_width;
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
-                            self.rectmanager.set_invert_flag(*bits);
-                            self.rectmanager.set_invert_flag(*human);
+                            self.rectmanager.set_invert_flag(*bits)?;
+                            self.rectmanager.set_invert_flag(*human)?;
                             self.cells_to_refresh.insert((*bits, *human));
                             self.active_cursor_cells.insert((*bits, *human));
                         }
@@ -1917,10 +1941,12 @@ impl InConsole for SbyteEditor {
                 None => ()
             }
         }
+
+        Ok(())
     }
 
     fn display_command_line(&mut self) -> Result<(), RectError> {
-        self.clear_meta_rect();
+        self.clear_meta_rect()?;
         let cmd = &self.commandline.get_register();
         // +1, because of the ":" at the start
         let cursor_x = self.commandline.get_cursor_offset() + 1;
@@ -1928,7 +1954,7 @@ impl InConsole for SbyteEditor {
 
         self.rectmanager.resize(cursor_id, 1, 1)?;
         self.rectmanager.set_position(cursor_id, cursor_x as isize, 0)?;
-        self.rectmanager.set_invert_flag(cursor_id);
+        self.rectmanager.set_invert_flag(cursor_id)?;
 
         if cursor_x < cmd.len() {
             let chr: String = cmd.chars().skip(cursor_x).take(1).collect();
@@ -2084,6 +2110,7 @@ impl CommandInterface for SbyteEditor {
         self.raise_flag(Flag::CURSOR_MOVED);
         self.raise_flag(Flag::UPDATE_OFFSET);
     }
+
     fn ci_cursor_length_down(&mut self, repeat: usize) {
         for _ in 0 .. repeat {
             self.cursor_increase_length_by_line();
@@ -2093,6 +2120,7 @@ impl CommandInterface for SbyteEditor {
         self.raise_flag(Flag::CURSOR_MOVED);
         self.raise_flag(Flag::UPDATE_OFFSET);
     }
+
     fn ci_cursor_length_left(&mut self, repeat: usize) {
         for _ in 0 .. repeat {
             self.cursor_decrease_length();
@@ -2102,6 +2130,7 @@ impl CommandInterface for SbyteEditor {
         self.raise_flag(Flag::CURSOR_MOVED);
         self.raise_flag(Flag::UPDATE_OFFSET);
     }
+
     fn ci_cursor_length_right(&mut self, repeat: usize) {
         for _ in 0 .. repeat {
             self.cursor_increase_length();
@@ -2189,6 +2218,7 @@ impl CommandInterface for SbyteEditor {
         self.raise_flag(Flag::CURSOR_MOVED);
         self.raise_flag(Flag::UPDATE_OFFSET);
     }
+
     fn ci_delete(&mut self, repeat: usize) {
         let offset = self.cursor.get_offset();
 
@@ -2374,23 +2404,28 @@ impl CommandInterface for SbyteEditor {
         self.flag_row_update_by_range(offset - suboffset .. offset);
         self.raise_flag(Flag::CURSOR_MOVED);
     }
-    fn ci_kill(&mut self) {
-        self.flag_kill = true;
-    }
-
     fn ci_save(&mut self, path: Option<&str>) {
         match path {
             Some(string_path) => {
-                self.save_as(&string_path);
-                self.user_msg = Some(format!("Saved to file: {}", string_path));
+                match self.save_as(&string_path) {
+                    Ok(_) => {
+                        self.user_msg = Some(format!("Saved to file: {}", string_path))
+                    }
+                    Err(e) => {
+                        self.user_error_msg = Some(format!("{:?}", e));
+                    }
+                }
             }
             None => {
-                if self.active_file_path.is_some() {
-                    self.save();
-                    let file_path = self.active_file_path.as_ref().unwrap();
-                    self.user_msg = Some(format!("Saved to file: {}", file_path));
-                } else {
-                    self.user_error_msg = Some("No path specified".to_string());
+                match self.save() {
+                    Ok(_) => {
+                        let file_path = self.active_file_path.as_ref().unwrap();
+                        self.user_msg = Some(format!("Saved to file: {}", file_path));
+                    }
+                    Err(e) => {
+                        self.user_error_msg = Some("No path specified".to_string());
+
+                    }
                 }
             }
         }
@@ -2407,7 +2442,6 @@ impl CommandInterface for SbyteEditor {
         self.raise_flag(Flag::SETUP_DISPLAYS);
         self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
     }
-
 }
 
 impl Commandable for SbyteEditor {
@@ -2419,7 +2453,7 @@ impl Commandable for SbyteEditor {
         self.line_commands.insert(command_string.to_string(), function.to_string());
     }
 
-    fn try_command(&mut self, query: &str) {
+    fn try_command(&mut self, query: &str) -> Result<(), Box<dyn Error>> {
         // TODO: split words.
         let mut words = parse_words(query.to_string());
         if words.len() > 0 {
@@ -2440,11 +2474,13 @@ impl Commandable for SbyteEditor {
                 }
             };
 
-            self.run_cmd_from_functionref(&funcref, arguments);
+            self.run_cmd_from_functionref(&funcref, arguments)?;
         }
+
+        Ok(())
     }
 
-    fn run_cmd_from_functionref(&mut self, funcref: &str, arguments: Vec<Vec<u8>>) {
+    fn run_cmd_from_functionref(&mut self, funcref: &str, arguments: Vec<Vec<u8>>) -> Result<(), Box<dyn Error>> {
         match funcref {
             "ASSIGN_INPUT" => {
                 let mut is_ok = true;
@@ -2638,7 +2674,7 @@ impl Commandable for SbyteEditor {
 
             "MODE_SET_DEFAULT" => {
                 self.clear_register();
-                self.clear_meta_rect();
+                self.clear_meta_rect()?;
                 self.raise_flag(Flag::UPDATE_OFFSET);
                 self.raise_flag(Flag::CURSOR_MOVED);
             }
@@ -2650,7 +2686,7 @@ impl Commandable for SbyteEditor {
 
             "MODE_SET_SEARCH" => {
                 self.commandline.set_register("find ");
-                self.display_command_line();
+                self.display_command_line()?;
             }
 
             "MODE_SET_INSERT_SPECIAL" => {
@@ -2667,7 +2703,7 @@ impl Commandable for SbyteEditor {
                     }
                 }
                 self.commandline.set_register(cmdstring);
-                self.display_command_line();
+                self.display_command_line()?;
             }
 
             "MODE_SET_OVERWRITE_SPECIAL" => {
@@ -2684,7 +2720,7 @@ impl Commandable for SbyteEditor {
                     }
                 }
                 self.commandline.set_register(cmdstring);
-                self.display_command_line();
+                self.display_command_line()?;
             }
 
             "INSERT_STRING" => {
@@ -2720,7 +2756,7 @@ impl Commandable for SbyteEditor {
                         let argument = std::str::from_utf8(argument_bytes).unwrap();
                         self.commandline.insert_to_register(argument);
                         self.commandline.move_cursor_right();
-                        self.display_command_line();
+                        self.display_command_line()?;
                     }
                     None => ()
                 }
@@ -2766,8 +2802,8 @@ impl Commandable for SbyteEditor {
             "RUN_CUSTOM_COMMAND" => {
                 match self.commandline.apply_register() {
                     Some(new_command) => {
-                        self.clear_meta_rect();
-                        self.try_command(&new_command);
+                        self.clear_meta_rect()?;
+                        self.try_command(&new_command)?;
                     }
                     None => {
                     }
@@ -2775,12 +2811,12 @@ impl Commandable for SbyteEditor {
             }
 
             "KILL" => {
-                self.ci_kill()
+                self.flag_kill = true;
             }
 
             "QUIT" => {
                 //TODO in later version: Prevent quitting when there are unsaved changes
-                self.ci_kill();
+                self.flag_kill = true;
             }
 
             "SAVE" => {
@@ -2798,7 +2834,7 @@ impl Commandable for SbyteEditor {
 
             "SAVEQUIT" => {
                 self.ci_save(None);
-                self.ci_kill();
+                self.flag_kill = true;
             }
 
             "TOGGLE_CONVERTER" => {
@@ -2875,6 +2911,8 @@ impl Commandable for SbyteEditor {
                 // Unknown
             }
         }
+
+        Ok(())
     }
 
     fn grab_register(&mut self, default_if_unset: usize) -> usize {
