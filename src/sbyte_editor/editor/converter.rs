@@ -6,7 +6,8 @@ pub enum ConverterError {
 pub enum ConverterRef {
     HEX,
     BIN,
-    OCT
+    OCT,
+    DEC
 }
 
 pub trait Converter {
@@ -27,6 +28,7 @@ impl dyn Converter {
 pub struct HexConverter { }
 pub struct HumanConverter { }
 pub struct BinaryConverter { }
+pub struct DecConverter { }
 
 impl HexConverter {
     fn hex_char_to_dec_int(&self, hex_char: u8) -> Result<u8, ConverterError> {
@@ -322,5 +324,105 @@ impl Converter for HumanConverter {
         }
 
         output
+    }
+}
+
+impl DecConverter {
+    fn dec_char_to_dec_int(&self, hex_char: u8) -> Result<u8, ConverterError> {
+        // TODO: Make constant
+        let dec_digits: Vec<u8> = vec![48,49,50,51,52,53,54,55,56,57];
+
+        match dec_digits.binary_search(&hex_char) {
+            Ok(index) => {
+                Ok(index as u8)
+            }
+            Err(e) => {
+                Err(ConverterError::InvalidDigit)
+            }
+        }
+    }
+}
+
+impl Converter for DecConverter {
+    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
+        let mut output_bytes: Vec<u8> = Vec::new();
+
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
+                output_bytes.push(*subbyte);
+            }
+        }
+
+        output_bytes
+    }
+
+    fn encode_byte(&self, byte: u8) -> Vec<u8> {
+        let dec_digits = vec![48,49,50,51,52,53,54,55,56,57];
+        let mut output = Vec::new();
+
+        output.push(dec_digits[((byte / 100) % 10) as usize]);
+        output.push(dec_digits[((byte / 10) % 10) as usize]);
+        output.push(dec_digits[(byte % 10) as usize]);
+
+        output
+    }
+
+    fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
+        let dec_digits = vec![48,49,50,51,52,53,54,55,56,57];
+        let mut output = Vec::new();
+        let mut tmp_dec_digit;
+        let passes = (integer as f64).log(10.0).ceil() as usize;
+        for _ in 0 .. passes {
+            tmp_dec_digit = integer % 10;
+            output.insert(0, dec_digits[tmp_dec_digit]);
+            integer /= 10;
+        }
+
+        output
+    }
+
+    // convert vector of ascii decimal digits (eg "123456" -> vec![1, 226, 64])
+    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+        let mut tmpint: usize = 0;
+        for byte in bytes.iter() {
+            match self.dec_char_to_dec_int(*byte) {
+                Ok(decimal) => {
+                    tmpint *= 10;
+                    tmpint += decimal as usize;
+                }
+                Err(e) => {
+                    Err(e)?;
+                }
+            }
+        }
+
+        let mut output_bytes: Vec<u8> = Vec::new();
+        let mut first_pass = true;
+        while first_pass || tmpint > 0 {
+            output_bytes.push((tmpint % 256) as u8);
+            tmpint /= 256;
+            first_pass = false;
+        }
+
+        output_bytes.reverse();
+
+        Ok(output_bytes)
+    }
+
+    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
+        let mut some_number = 0;
+        for byte in byte_string.iter() {
+            match self.dec_char_to_dec_int(*byte) {
+                Ok(decimal_int) => {
+                    some_number *= 10;
+                    some_number += decimal_int as usize;
+                }
+                Err(e) => {
+                    Err(e)?;
+                }
+            }
+        }
+
+        Ok(some_number)
     }
 }

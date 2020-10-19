@@ -27,7 +27,7 @@ pub mod command_interface;
 
 use editor::{Editor, EditorError};
 use editor::editor_cursor::Cursor;
-use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError};
+use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError, DecConverter};
 use visual_editor::*;
 use visual_editor::viewport::ViewPort;
 use commandable::Commandable;
@@ -937,6 +937,9 @@ impl Editor for SbyteEditor {
             }
             ConverterRef::BIN => {
                 Box::new(BinaryConverter {})
+            }
+            ConverterRef::DEC => {
+                Box::new(DecConverter {})
             }
             _ => {
                 Box::new(HexConverter {})
@@ -2802,6 +2805,8 @@ impl Commandable for SbyteEditor {
                 if self.active_converter == ConverterRef::BIN {
                     self.active_converter = ConverterRef::HEX;
                 } else if self.active_converter == ConverterRef::HEX {
+                    self.active_converter = ConverterRef::DEC;
+                } else if self.active_converter == ConverterRef::DEC {
                     self.active_converter = ConverterRef::BIN;
                 }
                 self.raise_flag(Flag::SETUP_DISPLAYS);
@@ -2914,6 +2919,9 @@ impl Commandable for SbyteEditor {
                     98 => { // b
                         use_converter = Some(Box::new(BinaryConverter {}));
                     }
+                    100 => { // d
+                        use_converter = Some(Box::new(DecConverter {}));
+                    }
                     120 => { // x
                         use_converter = Some(Box::new(HexConverter {}));
                     }
@@ -2941,6 +2949,9 @@ impl Commandable for SbyteEditor {
                 match input_bytes[1] {
                     98 => { // b
                         use_converter = Some(Box::new(BinaryConverter {}));
+                    }
+                    100 => { // d
+                        use_converter = Some(Box::new(DecConverter {}));
                     }
                     120 => { // x
                         use_converter = Some(Box::new(HexConverter {}));
