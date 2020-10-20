@@ -63,7 +63,12 @@ impl InputterEditorInterface {
 
 #[derive(Debug)]
 pub enum SbyteError {
-    PathNotSet
+    PathNotSet,
+    SetupFailed(RectError),
+    RemapFailed(RectError),
+    RowSetFailed(RectError),
+    ApplyCursorFailed(RectError),
+    DrawFailed(RectError)
 }
 impl fmt::Display for SbyteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -416,12 +421,13 @@ impl SbyteEditor {
                 Ok(_) => {
                     thread::sleep(delay);
                 }
-                Err(error) => {
-                    self.flag_kill = true;
-                    Err(Box::new(error))?;
+                Err(boxed_error) => {
+                    // To help debug ...
+                    self.user_error_msg = Some(format!("{:?}", boxed_error));
+                    //self.flag_kill = true;
+                    //Err(Box::new(error))?;
                 }
             }
-
         }
 
         self.kill();
@@ -1288,17 +1294,27 @@ impl VisualEditor for SbyteEditor {
 }
 
 impl InConsole for SbyteEditor {
-    fn tick(&mut self) -> Result<(), RectError> {
+    fn tick(&mut self) -> Result<(), Box::<dyn Error>> {
         if !self.surpress_tick {
 
             self.check_resize();
 
             if self.check_flag(Flag::SETUP_DISPLAYS) {
-                self.setup_displays()?;
+                match self.setup_displays() {
+                    Ok(_) => {}
+                    Err(error) => {
+                        Err(SbyteError::SetupFailed(error))?
+                    }
+                }
             }
 
             if self.check_flag(Flag::REMAP_ACTIVE_ROWS) {
-                self.remap_active_rows()?;
+                match self.remap_active_rows() {
+                    Ok(_) => {}
+                    Err(error) => {
+                        Err(SbyteError::RemapFailed(error))?
+                    }
+                }
             }
 
             let len = self.rows_to_refresh.len();
@@ -1308,7 +1324,12 @@ impl InConsole for SbyteEditor {
                 while self.rows_to_refresh.len() > 0 {
                     y = self.rows_to_refresh.pop().unwrap();
                     if self.check_flag(Flag::UPDATE_ROW(y)) {
-                        self.set_row_characters(y)?;
+                        match self.set_row_characters(y) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                Err(SbyteError::RowSetFailed(error))?
+                            }
+                        }
                     } else {
                         in_timeout.push(y);
                     }
@@ -1318,7 +1339,12 @@ impl InConsole for SbyteEditor {
 
 
             if self.check_flag(Flag::CURSOR_MOVED) {
-                self.apply_cursor()?;
+                match self.apply_cursor() {
+                    Ok(_) => {}
+                    Err(error) => {
+                        Err(SbyteError::ApplyCursorFailed(error))?
+                    }
+                }
             }
 
 
@@ -1352,7 +1378,12 @@ impl InConsole for SbyteEditor {
                 }
             }
 
-            self.rectmanager.draw()?;
+            match self.rectmanager.draw() {
+                Ok(_) => {}
+                Err(error) => {
+                    Err(SbyteError::DrawFailed(error))?;
+                }
+            }
         }
 
         Ok(())
@@ -1776,7 +1807,7 @@ impl InConsole for SbyteEditor {
                             structure_valid = false;
                             in_structure = false;
                         }
-                    };
+                    }
 
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
@@ -1797,8 +1828,13 @@ impl InConsole for SbyteEditor {
                                     "."
                                 }
                             };
-                            self.rectmanager.set_string(*human, 0, 0, tmp_human_str)?;
-                            self.rectmanager.set_string(*bits, 0, 0, tmp_bits_str)?;
+
+                            for (i, c) in tmp_human_str.chars().enumerate() {
+                                self.rectmanager.set_character(*human, i as isize, 0, c);
+                            }
+                            for (i, c) in tmp_bits_str.chars().enumerate() {
+                                self.rectmanager.set_character(*bits, i as isize, 0, c);
+                            }
 
                             if in_structure {
                                 self.rectmanager.set_underline_flag(*human)?;
@@ -1817,8 +1853,7 @@ impl InConsole for SbyteEditor {
                             }
 
                         }
-                        None => {
-                        }
+                        None => { }
                     }
                 }
             }
@@ -1904,9 +1939,10 @@ impl InConsole for SbyteEditor {
         let cursor_length = self.cursor.get_length();
 
         // First clear previously applied
+        // (They may no longer exist, but that's ok)
         for (bits, human) in self.active_cursor_cells.drain() {
-            self.rectmanager.unset_invert_flag(bits)?;
-            self.rectmanager.unset_invert_flag(human)?;
+            self.rectmanager.unset_invert_flag(bits);
+            self.rectmanager.unset_invert_flag(human);
         }
 
         let start = if cursor_offset < viewport_offset {

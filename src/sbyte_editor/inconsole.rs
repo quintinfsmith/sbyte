@@ -1,4 +1,5 @@
 use wrecked::RectError;
+use std::error::Error;
 
 #[derive(Hash, PartialEq, Eq)]
 pub enum Flag {
@@ -17,7 +18,7 @@ pub enum FlagError {
 }
 
 pub trait InConsole {
-    fn tick(&mut self) -> Result<(), RectError>;
+    fn tick(&mut self) -> Result<(), Box<dyn Error>>;
 
     fn check_resize(&mut self);
     fn setup_displays(&mut self) -> Result<(), RectError>;
