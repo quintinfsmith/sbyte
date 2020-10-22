@@ -260,7 +260,9 @@ impl SbyteEditor {
         let input_interface: Arc<Mutex<InputterEditorInterface>> = Arc::new(Mutex::new(InputterEditorInterface::new()));
 
         let signal_mutex = input_interface.clone();
-        let mut kill_daemon = ctrlc::set_handler(move || {
+
+        // Catch the Ctrl+C Signal
+        ctrlc::set_handler(move || {
             let mut ok = false;
             while !ok {
                 match signal_mutex.try_lock() {
@@ -328,8 +330,6 @@ impl SbyteEditor {
                 for character in buffer.iter() {
                     match c.try_lock() {
                         Ok(ref mut mutex) => {
-                            do_push = true;
-
                             match &mutex.new_context {
                                 Some(context) => {
                                     inputter.set_context(&context);
@@ -381,7 +381,6 @@ impl SbyteEditor {
         let delay = time::Duration::from_nanos(nano_seconds);
         self.raise_flag(Flag::SETUP_DISPLAYS);
 
-        let mut output: Result<(), Box<dyn Error>> = Ok(());
         while !self.flag_kill {
             match input_interface.try_lock() {
                 Ok(ref mut mutex) => {
@@ -578,14 +577,10 @@ impl SbyteEditor {
         let mut working_bytes;
         let mut working_bytes_len;
 
-        let mut difference: isize = 0;
-
         let mut was_valid: bool;
-        let mut new_structure: Option<Box<dyn StructuredDataHandler>>;
         for (span, handler_id) in self.get_structured_data_handlers(offset).iter() {
             working_bytes_len = span.1 - span.0;
             working_bytes = self.get_chunk(span.0, working_bytes_len);
-            new_structure = None;
             was_valid = self.structure_validity[handler_id];
             match self.structures.get_mut(handler_id) {
                 Some(handler) => {
@@ -593,7 +588,7 @@ impl SbyteEditor {
                         Ok(_) => {
                             self.structure_validity.entry(*handler_id).and_modify(|e| *e = true);
                         }
-                        Err(e) => {
+                        Err(_error) => {
                             self.structure_validity.entry(*handler_id).and_modify(|e| *e = false);
                         }
                     }
@@ -696,11 +691,11 @@ impl SbyteEditor {
 
     // ONLY to be  used by remove_bytes and overwrite_bytes functions, nowhere else.
     fn _remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
-        let mut output;
+        let output;
         if offset < self.active_content.len() {
             let mut removed_bytes = Vec::new();
             let adj_length = min(self.active_content.len() - offset, length);
-            for i in 0..adj_length {
+            for _ in 0..adj_length {
                 removed_bytes.push(self.active_content.remove(offset));
             }
             output = removed_bytes;
@@ -895,10 +890,8 @@ impl Editor for SbyteEditor {
         self.cursor_set_offset(offset);
 
         let mut opposite_bytes_to_insert = vec![];
-        let mut insert_length: usize = 0;
         if bytes_to_remove > 0 {
             let removed_bytes = self._remove_bytes(offset, bytes_to_remove);
-            insert_length += removed_bytes.len();
             opposite_bytes_to_insert = removed_bytes;
         }
 
@@ -1016,7 +1009,7 @@ impl Editor for SbyteEditor {
                     Ok(metadata) => {
                         metadata.len()
                     }
-                    Err(e) => {
+                    Err(_) => { // TODO: Handle different error types
                         0
                     }
                 };
@@ -1036,7 +1029,7 @@ impl Editor for SbyteEditor {
     }
 
     fn save(&mut self) -> Result<(), Box<dyn Error>> {
-        match &self.active_file_path {
+        match self.active_file_path.clone() {
             Some(path) => {
                 self.save_as(&path.to_string())?;
             }
@@ -1090,27 +1083,28 @@ impl Editor for SbyteEditor {
 
         output
     }
-
-    fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize> {
+    fn find_nth_after(&self, pattern: &Vec<u8>, offset: usize, n: usize) -> Option<usize> {
         //TODO: This could definitely be sped up.
         let matches = self.find_all(pattern);
-        let mut output = None;
-        let mut found = false;
-
+        let mut match_index = 0;
         if matches.len() > 0 {
             for i in matches.iter() {
                 if *i > offset {
-                    output = Some(*i);
-                    found = true;
+                    match_index = *i;
                     break;
                 }
             }
-            if !found {
-                output = Some(matches[0]);
-            }
-        }
 
-        output
+            match_index = (match_index + n) % matches.len();
+
+            Some(matches[match_index])
+        } else {
+            None
+        }
+    }
+
+    fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize> {
+        self.find_nth_after(pattern, offset, 0)
     }
 
 
@@ -1130,7 +1124,7 @@ impl Editor for SbyteEditor {
 
 
     fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
-        let mut adj_byte_width = new_bytes.len();
+        let adj_byte_width = new_bytes.len();
         self._insert_bytes(offset, new_bytes);
 
         self.push_to_undo_stack(offset, adj_byte_width, vec![]);
@@ -1143,7 +1137,7 @@ impl Editor for SbyteEditor {
 
     fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Vec<u8> {
         let length = new_bytes.len();
-        let mut removed_bytes = self._remove_bytes(position, length);
+        let removed_bytes = self._remove_bytes(position, length);
 
         self._insert_bytes(position, new_bytes);
         self.push_to_undo_stack(position, length, removed_bytes.clone());
@@ -1348,7 +1342,7 @@ impl InConsole for SbyteEditor {
             }
 
 
-            match &self.user_error_msg {
+            match self.user_error_msg.clone() {
                 Some(msg) => {
                     self.display_user_error(msg.clone())?;
                     self.user_error_msg = None;
@@ -1395,8 +1389,8 @@ impl InConsole for SbyteEditor {
         let meta_height = 1;
 
         let display_ratio = self.get_display_ratio() as f64;
-        let r: f64 = (1f64 / display_ratio);
-        let a: f64 = (1f64 - ( 1f64 / (r + 1f64)));
+        let r: f64 = 1f64 / display_ratio;
+        let a: f64 = 1f64 - ( 1f64 / (r + 1f64));
         let mut base_width = ((full_width as f64) * a) as usize;
 
         match self.locked_viewport_width {
@@ -1815,7 +1809,7 @@ impl InConsole for SbyteEditor {
                                 Ok(valid) => {
                                     valid
                                 }
-                                Err(e) => {
+                                Err(_) => {
                                     // Shouldn't Happen
                                     "."
                                 }
@@ -1824,16 +1818,16 @@ impl InConsole for SbyteEditor {
                                 Ok(valid) => {
                                     valid
                                 }
-                                Err(e) => {
+                                Err(_) => {
                                     "."
                                 }
                             };
 
                             for (i, c) in tmp_human_str.chars().enumerate() {
-                                self.rectmanager.set_character(*human, i as isize, 0, c);
+                                self.rectmanager.set_character(*human, i as isize, 0, c)?;
                             }
                             for (i, c) in tmp_bits_str.chars().enumerate() {
-                                self.rectmanager.set_character(*bits, i as isize, 0, c);
+                                self.rectmanager.set_character(*bits, i as isize, 0, c)?;
                             }
 
                             if in_structure {
@@ -1941,8 +1935,8 @@ impl InConsole for SbyteEditor {
         // First clear previously applied
         // (They may no longer exist, but that's ok)
         for (bits, human) in self.active_cursor_cells.drain() {
-            self.rectmanager.unset_invert_flag(bits);
-            self.rectmanager.unset_invert_flag(human);
+            self.rectmanager.unset_invert_flag(bits)?;
+            self.rectmanager.unset_invert_flag(human)?;
         }
 
         let start = if cursor_offset < viewport_offset {
@@ -2004,7 +1998,6 @@ impl InConsole for SbyteEditor {
 
     fn flag_row_update_by_range(&mut self, range: std::ops::Range<usize>) {
         let viewport_width = self.viewport.get_width();
-        let viewport_height = self.viewport.get_height();
         let first_active_row = range.start / viewport_width;
         let last_active_row = range.end / viewport_width;
 
@@ -2223,7 +2216,7 @@ impl CommandInterface for SbyteEditor {
                 match self.string_to_bytes(string_rep.to_string()) {
                     Ok(byte_pattern) => {
                         self.search_history.push(raw_bytes.to_vec());
-                        match self.find_after(&byte_pattern, current_offset) {
+                        match self.find_nth_after(&byte_pattern, current_offset, repeat) {
                             Some(new_offset) => {
                                 new_cursor_length = byte_pattern.len();
                                 next_offset = new_offset;
@@ -2234,7 +2227,7 @@ impl CommandInterface for SbyteEditor {
                             }
                         }
                     }
-                    Err(e) => {
+                    Err(_) => {
                         new_user_error_msg = Some(format!("Invalid pattern: {}", string_rep));
                     }
                 }
@@ -2258,7 +2251,6 @@ impl CommandInterface for SbyteEditor {
     fn ci_delete(&mut self, repeat: usize) {
         let offset = self.cursor.get_offset();
 
-        let repeat = self.grab_register(1);
         let mut removed_bytes = Vec::new();
         for _ in 0 .. repeat {
             removed_bytes.extend(self.remove_bytes_at_cursor().iter().copied());
@@ -2335,7 +2327,7 @@ impl CommandInterface for SbyteEditor {
             Ok(converted_bytes) => {
                 self.ci_insert_bytes(converted_bytes.clone(), repeat);
             }
-            Err(e) => {
+            Err(_) => {
                 self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
             }
         }
@@ -2358,7 +2350,7 @@ impl CommandInterface for SbyteEditor {
             Ok(converted_bytes) => {
                 self.ci_overwrite_bytes(converted_bytes.clone(), repeat);
             }
-            Err(e) => {
+            Err(_) => {
                 self.user_error_msg = Some(format!("Invalid Pattern: {}", argument.clone()));
             }
         }
@@ -2384,7 +2376,7 @@ impl CommandInterface for SbyteEditor {
         let offset = self.cursor.get_offset();
         for _ in 0 .. repeat {
             match self.increment_byte(offset) {
-                Err(EditorError::OutOfRange(n, l)) => {
+                Err(EditorError::OutOfRange(_, _)) => {
                     break;
                 }
                 Ok(_) => {}
@@ -2414,10 +2406,10 @@ impl CommandInterface for SbyteEditor {
         let offset = self.cursor.get_offset();
         for _ in 0 .. repeat {
             match self.decrement_byte(offset) {
-                Err(EditorError::OutOfRange(n, l)) => {
+                Ok(_) => {}
+                Err(EditorError::OutOfRange(_, _)) => {
                     break;
                 }
-                Ok(_) => {}
                 Err(_) => {} // TODO
             }
         }
@@ -2458,7 +2450,7 @@ impl CommandInterface for SbyteEditor {
                         let file_path = self.active_file_path.as_ref().unwrap();
                         self.user_msg = Some(format!("Saved to file: {}", file_path));
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         self.user_error_msg = Some("No path specified".to_string());
 
                     }
@@ -2644,7 +2636,7 @@ impl Commandable for SbyteEditor {
 
             "REMOVE_STRUCTURE" => {
                 let offset = self.cursor.get_offset();
-                let mut structures = self.get_structured_data_handlers(offset);
+                let structures = self.get_structured_data_handlers(offset);
 
                 match structures.first() {
                     Some((span, sid)) => {
@@ -2928,7 +2920,7 @@ impl Commandable for SbyteEditor {
                         let string = std::str::from_utf8(&argument).unwrap();
 
                         let mut digit;
-                        for (i, character) in string.chars().enumerate() {
+                        for character in string.chars() {
                             if character.is_digit(10) {
                                 digit = character.to_digit(10).unwrap() as usize;
                                 self.append_to_register(digit);
@@ -2986,7 +2978,7 @@ impl Commandable for SbyteEditor {
     fn string_to_bytes(&self, input_string: String) -> Result<Vec<u8>, ConverterError> {
         let mut use_converter: Option<Box<dyn Converter>> = None;
 
-        let mut input_bytes = input_string.as_bytes().to_vec();
+        let input_bytes = input_string.as_bytes().to_vec();
         if input_bytes.len() > 2 {
             if input_bytes[0] == 92 {
                 match input_bytes[1] {
@@ -3017,7 +3009,7 @@ impl Commandable for SbyteEditor {
     fn string_to_integer(&self, input_string: &str) -> Result<usize, ConverterError> {
         let mut use_converter: Option<Box<dyn Converter>> = None;
 
-        let mut input_bytes = input_string.to_string().as_bytes().to_vec();
+        let input_bytes = input_string.to_string().as_bytes().to_vec();
         if input_bytes.len() > 2 {
             if input_bytes[0] == 92 {
                 match input_bytes[1] {
@@ -3041,7 +3033,7 @@ impl Commandable for SbyteEditor {
             None => {
                 let mut output = 0;
                 let mut digit;
-                for (i, character) in input_string.chars().enumerate() {
+                for character in input_string.chars() {
                     output *= 10;
                     if character.is_digit(10) {
                         digit = character.to_digit(10).unwrap() as usize;
@@ -3067,7 +3059,7 @@ fn parse_words(input_string: String) -> Vec<String> {
     let mut working_word: String = "".to_string();
     let mut opener: Option<char> = None;
     let mut is_escaped = false;
-    for (i, c) in input_string.chars().enumerate() {
+    for c in input_string.chars() {
         match opener {
             Some(o_c) => {
                 if !is_escaped {

@@ -25,6 +25,8 @@ pub trait Editor {
     fn set_file_path(&mut self, new_file_path: &str);
     fn find_all(&self, pattern: &Vec<u8>) -> Vec<usize>;
     fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize>;
+    fn find_nth_after(&self, pattern: &Vec<u8>, offset: usize, n: usize) -> Option<usize>;
+
     fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8>;
     fn remove_bytes_at_cursor(&mut self) -> Vec<u8>;
     fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>);

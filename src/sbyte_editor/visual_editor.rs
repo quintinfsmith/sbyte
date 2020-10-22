@@ -1,5 +1,4 @@
 pub mod viewport;
-use viewport::*;
 
 pub trait VisualEditor {
     fn cursor_next_line(&mut self);

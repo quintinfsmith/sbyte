@@ -1,6 +1,5 @@
 pub mod inputter;
 use super::editor::converter::ConverterError;
-use inputter::*;
 use std::error::Error;
 
 pub trait Commandable {

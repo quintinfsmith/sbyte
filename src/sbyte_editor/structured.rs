@@ -176,7 +176,7 @@ impl StructuredDataHandler for LittleEndianPrefixed {
 
     fn as_bytes(&self) -> Vec<u8> {
         let mut output = Vec::new();
-        let mut prefix = self.build_prefix();
+        let prefix = self.build_prefix();
         output.extend(prefix.iter().copied());
         output.extend(self.data.iter().copied());
         output
@@ -232,10 +232,7 @@ impl VariableLengthPrefixed {
 impl StructuredDataHandler for VariableLengthPrefixed {
     fn read_in(inbytes: Vec<u8>) -> Result<VariableLengthPrefixed, StructureError> {
         let mut prefix_width = 0;
-        let mut expected_data_width: usize = 0;
         for byte in inbytes.iter() {
-            expected_data_width <<= 7;
-            expected_data_width += (*byte & 0x7F) as usize;
             prefix_width += 1;
             if *byte & 0x80 == 0 {
                 break;
@@ -254,7 +251,7 @@ impl StructuredDataHandler for VariableLengthPrefixed {
 
     fn as_bytes(&self) -> Vec<u8> {
         let mut output = Vec::new();
-        let mut prefix = self.build_prefix();
+        let prefix = self.build_prefix();
         output.extend(prefix.iter().copied());
         output.extend(self.data.iter().copied());
         output

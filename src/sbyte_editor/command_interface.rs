@@ -1,4 +1,3 @@
-use std::error::Error;
 pub trait CommandInterface {
     //fn ci_assign_input(&mut self, funcref: &str, sequence: &str);
     fn ci_cursor_up(&mut self, repeat: usize);

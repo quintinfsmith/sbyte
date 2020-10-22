@@ -30,7 +30,7 @@ impl CommandLine {
     }
 
     pub fn insert_to_register(&mut self, chunk: &str) {
-        let mut pair = self.register.split_at(self.cursor_offset);
+        let pair = self.register.split_at(self.cursor_offset);
         self.register = format!("{}{}{}", pair.0, chunk, pair.1).to_string();
     }
 
@@ -59,7 +59,7 @@ impl CommandLine {
     }
 
     pub fn get_last_command(&mut self) -> Option<String> {
-        let mut index = self.history.len() - 1;
+        let index = self.history.len() - 1;
         self.get_command(index)
     }
 

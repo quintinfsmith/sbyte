@@ -20,7 +20,7 @@ pub trait Converter {
 }
 impl dyn Converter {
     fn decode_string(&self, string: String) -> Result<Vec<u8>, ConverterError> {
-        let mut bytes = string.as_bytes().to_vec();
+        let bytes = string.as_bytes().to_vec();
         self.decode(bytes)
     }
 }
@@ -39,7 +39,7 @@ impl HexConverter {
             Ok(index) => {
                 Ok(index as u8)
             }
-            Err(e) => {
+            Err(_) => {
                 Err(ConverterError::InvalidDigit)
             }
         }
@@ -244,7 +244,7 @@ impl HumanConverter {
             Ok(index) => {
                 Ok(index as u8)
             }
-            Err(e) => {
+            Err(_) => {
                 Err(ConverterError::InvalidDigit)
             }
         }
@@ -336,7 +336,7 @@ impl DecConverter {
             Ok(index) => {
                 Ok(index as u8)
             }
-            Err(e) => {
+            Err(_) => {
                 Err(ConverterError::InvalidDigit)
             }
         }
