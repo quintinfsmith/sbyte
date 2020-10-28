@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"
+categories = ["command-line-utilities", "development-tools"]
 repository = "https://github.com/quintinfsmith/sbyte.git"
 license = "GPL-3.0"
 
