@@ -1,9 +1,11 @@
 [package]
 name = "sbyte"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["hex", "byte", "editor"]
 repository = "https://github.com/quintinfsmith/sbyte.git"
 license = "GPL-3.0"
 
