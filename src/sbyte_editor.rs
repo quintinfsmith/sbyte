@@ -97,7 +97,6 @@ pub struct SbyteEditor {
     active_converter: ConverterRef,
     undo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
-    has_unsaved_changes: bool,
 
 
     // Commandable
@@ -150,13 +149,13 @@ impl SbyteEditor {
         let id_rect_meta = rectmanager.new_rect(wrecked::TOP).ok().unwrap();
 
         let mut flag_timeouts = HashMap::new();
-        flag_timeouts.insert(Flag::CURSOR_MOVED, 1);
-        flag_timeouts.insert(Flag::SETUP_DISPLAYS, 0);
-        flag_timeouts.insert(Flag::REMAP_ACTIVE_ROWS, 2);
-        flag_timeouts.insert(Flag::UPDATE_OFFSET, 0);
+        flag_timeouts.insert(Flag::CursorMoved, 1);
+        flag_timeouts.insert(Flag::SetupDisplays, 0);
+        flag_timeouts.insert(Flag::RemapActiveRows, 2);
+        flag_timeouts.insert(Flag::UpdateOffset, 0);
 
         for i in 0 .. 60 {
-            flag_timeouts.insert(Flag::UPDATE_ROW(i), 5);
+            flag_timeouts.insert(Flag::UpdateRow(i), 5);
         }
 
         let mut output = SbyteEditor {
@@ -175,7 +174,6 @@ impl SbyteEditor {
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            has_unsaved_changes: false,
             register: None,
             flag_input_context: None,
             new_input_sequences: Vec::new(),
@@ -223,8 +221,8 @@ impl SbyteEditor {
         output.assign_line_command("lw", "SET_WIDTH");
         output.assign_line_command("reg", "SET_REGISTER");
 
-        output.raise_flag(Flag::SETUP_DISPLAYS);
-        output.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        output.raise_flag(Flag::SetupDisplays);
+        output.raise_flag(Flag::RemapActiveRows);
         output
     }
 
@@ -379,7 +377,7 @@ impl SbyteEditor {
 
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
-        self.raise_flag(Flag::SETUP_DISPLAYS);
+        self.raise_flag(Flag::SetupDisplays);
 
         while !self.flag_kill {
             match input_interface.try_lock() {
@@ -429,7 +427,7 @@ impl SbyteEditor {
             }
         }
 
-        self.kill();
+        self.kill()?;
 
         Ok(())
     }
@@ -1293,7 +1291,7 @@ impl InConsole for SbyteEditor {
 
             self.check_resize();
 
-            if self.check_flag(Flag::SETUP_DISPLAYS) {
+            if self.check_flag(Flag::SetupDisplays) {
                 match self.setup_displays() {
                     Ok(_) => {}
                     Err(error) => {
@@ -1302,7 +1300,7 @@ impl InConsole for SbyteEditor {
                 }
             }
 
-            if self.check_flag(Flag::REMAP_ACTIVE_ROWS) {
+            if self.check_flag(Flag::RemapActiveRows) {
                 match self.remap_active_rows() {
                     Ok(_) => {}
                     Err(error) => {
@@ -1317,7 +1315,7 @@ impl InConsole for SbyteEditor {
                 let mut y;
                 while self.rows_to_refresh.len() > 0 {
                     y = self.rows_to_refresh.pop().unwrap();
-                    if self.check_flag(Flag::UPDATE_ROW(y)) {
+                    if self.check_flag(Flag::UpdateRow(y)) {
                         match self.set_row_characters(y) {
                             Ok(_) => {}
                             Err(error) => {
@@ -1332,7 +1330,7 @@ impl InConsole for SbyteEditor {
             }
 
 
-            if self.check_flag(Flag::CURSOR_MOVED) {
+            if self.check_flag(Flag::CursorMoved) {
                 match self.apply_cursor() {
                     Ok(_) => {}
                     Err(error) => {
@@ -1349,10 +1347,10 @@ impl InConsole for SbyteEditor {
 
                     // Prevent any user msg from clobbering this msg
                     self.user_msg = None;
-                    self.lower_flag(Flag::UPDATE_OFFSET);
+                    self.lower_flag(Flag::UpdateOffset);
                 }
                 None => {
-                    if self.check_flag(Flag::DISPLAY_CMDLINE) {
+                    if self.check_flag(Flag::DisplayCMDLine) {
                         self.display_command_line()?;
                     } else {
                         let tmp_usr_msg = self.user_msg.clone();
@@ -1360,10 +1358,10 @@ impl InConsole for SbyteEditor {
                             Some(msg) => {
                                 self.display_user_message(msg.clone())?;
                                 self.user_msg = None;
-                                self.lower_flag(Flag::UPDATE_OFFSET);
+                                self.lower_flag(Flag::UpdateOffset);
                             }
                             None => {
-                                if self.check_flag(Flag::UPDATE_OFFSET) {
+                                if self.check_flag(Flag::UpdateOffset) {
                                     self.display_user_offset()?;
                                 }
                             }
@@ -1517,7 +1515,7 @@ impl InConsole for SbyteEditor {
 
         self.flag_force_rerow = true;
 
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
 
         Ok(())
     }
@@ -1530,8 +1528,8 @@ impl InConsole for SbyteEditor {
             self.viewport.set_offset(0);
             self.cursor_set_offset(0);
 
-            self.raise_flag(Flag::SETUP_DISPLAYS);
-            self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+            self.raise_flag(Flag::SetupDisplays);
+            self.raise_flag(Flag::RemapActiveRows);
             self.flag_force_rerow = true;
             self.is_resizing = false;
         }
@@ -1743,11 +1741,11 @@ impl InConsole for SbyteEditor {
                 }
             }
 
-            self.raise_flag(Flag::UPDATE_OFFSET);
+            self.raise_flag(Flag::UpdateOffset);
         }
 
         self.flag_force_rerow = false;
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
 
         Ok(())
     }
@@ -2002,7 +2000,7 @@ impl InConsole for SbyteEditor {
         let last_active_row = range.end / viewport_width;
 
         for y in first_active_row .. max(last_active_row + 1, first_active_row + 1) {
-            self.raise_flag(Flag::UPDATE_ROW(y));
+            self.raise_flag(Flag::UpdateRow(y));
             self.raise_row_update_flag(y);
         }
     }
@@ -2019,7 +2017,7 @@ impl InConsole for SbyteEditor {
 
     fn raise_row_update_flag(&mut self, absolute_y: usize) {
 
-        self.raise_flag(Flag::UPDATE_ROW(absolute_y));
+        self.raise_flag(Flag::UpdateRow(absolute_y));
         self.rows_to_refresh.push(absolute_y);
     }
 
@@ -2083,9 +2081,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_prev_line();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::UPDATE_OFFSET);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::UpdateOffset);
+        self.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_cursor_down(&mut self, repeat: usize) {
@@ -2096,9 +2094,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_next_line();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::UPDATE_OFFSET);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::UpdateOffset);
+        self.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_cursor_left(&mut self, repeat: usize) {
@@ -2109,9 +2107,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_prev_byte();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::UPDATE_OFFSET);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::UpdateOffset);
+        self.raise_flag(Flag::CursorMoved);
 
     }
 
@@ -2125,9 +2123,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_next_byte();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_up(&mut self, repeat: usize) {
@@ -2135,9 +2133,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_decrease_length_by_line();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_down(&mut self, repeat: usize) {
@@ -2145,9 +2143,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_increase_length_by_line();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_left(&mut self, repeat: usize) {
@@ -2155,9 +2153,9 @@ impl CommandInterface for SbyteEditor {
             self.cursor_decrease_length();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_right(&mut self, repeat: usize) {
@@ -2165,24 +2163,24 @@ impl CommandInterface for SbyteEditor {
             self.cursor_increase_length();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_yank(&mut self) {
         self.copy_selection();
         self.cursor_set_length(1);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_jump_to_position(&mut self, new_offset: usize) {
         self.cursor_set_length(1);
         self.cursor_set_offset(new_offset);
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_jump_to_next(&mut self, argument: Option<Vec<u8>>, repeat: usize) {
@@ -2243,9 +2241,9 @@ impl CommandInterface for SbyteEditor {
         self.cursor_set_length(new_cursor_length as isize);
         self.cursor_set_offset(next_offset);
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::RemapActiveRows);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_delete(&mut self, repeat: usize) {
@@ -2259,9 +2257,9 @@ impl CommandInterface for SbyteEditor {
 
         self.cursor_set_length(1);
 
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
         self.flag_row_update_by_offset(offset);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_backspace(&mut self, repeat: usize) {
@@ -2291,7 +2289,7 @@ impl CommandInterface for SbyteEditor {
             self.user_msg = Some("Nothing to undo".to_string());
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::RemapActiveRows);
         if self.viewport.get_offset() == current_viewport_offset {
             let start = self.viewport.get_offset() / self.viewport.get_width();
             let end = self.viewport.get_height() + start;
@@ -2299,8 +2297,8 @@ impl CommandInterface for SbyteEditor {
                 self.raise_row_update_flag(y);
             }
         }
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_redo(&mut self, repeat: usize) {
@@ -2310,7 +2308,7 @@ impl CommandInterface for SbyteEditor {
             self.redo();
         }
 
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::RemapActiveRows);
         if self.viewport.get_offset() == current_viewport_offset {
             let start = self.viewport.get_offset() / self.viewport.get_width();
             let end = self.viewport.get_height() + start;
@@ -2318,8 +2316,8 @@ impl CommandInterface for SbyteEditor {
                 self.raise_row_update_flag(y);
             }
         }
-        self.raise_flag(Flag::CURSOR_MOVED);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::CursorMoved);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_insert_string(&mut self, argument: &str, repeat: usize) {
@@ -2342,7 +2340,7 @@ impl CommandInterface for SbyteEditor {
 
         self.run_structure_checks(offset);
         self.flag_row_update_by_offset(offset);
-        self.raise_flag(Flag::UPDATE_OFFSET);
+        self.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_overwrite_string(&mut self, argument: &str, repeat: usize) {
@@ -2367,7 +2365,7 @@ impl CommandInterface for SbyteEditor {
         self.run_structure_checks(offset);
 
         self.cursor_set_length(1);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
 
         self.flag_row_update_by_range(offset..offset);
     }
@@ -2380,7 +2378,6 @@ impl CommandInterface for SbyteEditor {
                     break;
                 }
                 Ok(_) => {}
-                Err(_) => {} // TODO
             }
         }
         self.run_structure_checks(offset);
@@ -2399,7 +2396,7 @@ impl CommandInterface for SbyteEditor {
         }
 
         self.flag_row_update_by_range(offset - suboffset .. offset);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_decrement(&mut self, repeat: usize) {
@@ -2410,13 +2407,12 @@ impl CommandInterface for SbyteEditor {
                 Err(EditorError::OutOfRange(_, _)) => {
                     break;
                 }
-                Err(_) => {} // TODO
             }
         }
         self.run_structure_checks(offset);
 
         self.cursor_set_length(1);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
 
         let mut chunk;
         let mut suboffset: usize = 0;
@@ -2430,7 +2426,7 @@ impl CommandInterface for SbyteEditor {
         }
 
         self.flag_row_update_by_range(offset - suboffset .. offset);
-        self.raise_flag(Flag::CURSOR_MOVED);
+        self.raise_flag(Flag::CursorMoved);
     }
     fn ci_save(&mut self, path: Option<&str>) {
         match path {
@@ -2461,14 +2457,14 @@ impl CommandInterface for SbyteEditor {
 
     fn ci_lock_viewport_width(&mut self, new_width: usize) {
         self.lock_viewport_width(new_width);
-        self.raise_flag(Flag::SETUP_DISPLAYS);
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::SetupDisplays);
+        self.raise_flag(Flag::RemapActiveRows);
     }
 
     fn ci_unlock_viewport_width(&mut self) {
         self.unlock_viewport_width();
-        self.raise_flag(Flag::SETUP_DISPLAYS);
-        self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+        self.raise_flag(Flag::SetupDisplays);
+        self.raise_flag(Flag::RemapActiveRows);
     }
 }
 
@@ -2611,10 +2607,10 @@ impl Commandable for SbyteEditor {
             "CMDLINE_BACKSPACE" => {
                 if self.commandline.is_empty() {
                     self.set_input_context("DEFAULT");
-                    self.raise_flag(Flag::UPDATE_OFFSET);
+                    self.raise_flag(Flag::UpdateOffset);
                 } else {
                     self.commandline.backspace();
-                    self.raise_flag(Flag::DISPLAY_CMDLINE);
+                    self.raise_flag(Flag::DisplayCMDLine);
                 }
             }
 
@@ -2703,13 +2699,13 @@ impl Commandable for SbyteEditor {
             "MODE_SET_DEFAULT" => {
                 self.clear_register();
                 self.clear_meta_rect()?;
-                self.raise_flag(Flag::UPDATE_OFFSET);
-                self.raise_flag(Flag::CURSOR_MOVED);
+                self.raise_flag(Flag::UpdateOffset);
+                self.raise_flag(Flag::CursorMoved);
             }
 
             "MODE_SET_CMD" => {
                 self.commandline.clear_register();
-                self.raise_flag(Flag::DISPLAY_CMDLINE);
+                self.raise_flag(Flag::DisplayCMDLine);
             }
 
             "MODE_SET_SEARCH" => {
@@ -2873,8 +2869,8 @@ impl Commandable for SbyteEditor {
                 } else if self.active_converter == ConverterRef::DEC {
                     self.active_converter = ConverterRef::BIN;
                 }
-                self.raise_flag(Flag::SETUP_DISPLAYS);
-                self.raise_flag(Flag::REMAP_ACTIVE_ROWS);
+                self.raise_flag(Flag::SetupDisplays);
+                self.raise_flag(Flag::RemapActiveRows);
             }
 
             "SET_WIDTH" => {
@@ -3114,20 +3110,13 @@ mod tests {
     use super::*;
     #[test]
     fn test_initializes_empty() {
-        let mut editor = SbyteEditor::new();
-        // Ok to kill for the test, we don't care about the
-        // visuals at the moment
-        editor.kill();
-
+        let editor = SbyteEditor::new();
         assert_eq!(editor.active_content.as_slice(), []);
     }
 
     #[test]
     fn test_insert_bytes() {
         let mut editor = SbyteEditor::new();
-        // Ok to kill for the test, we don't care about the
-        // visuals at the moment
-        editor.kill();
 
         editor.insert_bytes(0, vec![65]);
         assert_eq!(editor.active_content.as_slice(), [65]);
@@ -3140,11 +3129,7 @@ mod tests {
     #[test]
     fn test_remove_bytes() {
         let mut editor = SbyteEditor::new();
-        // Ok to kill for the test, we don't care about the
-        // visuals at the moment
-        editor.kill();
         editor.insert_bytes(0, vec![65]);
-
 
         assert_eq!(editor.remove_bytes(0, 1), vec![65]);
         assert_eq!(editor.active_content.as_slice(), []);
@@ -3154,9 +3139,7 @@ mod tests {
     #[test]
     fn test_yanking() {
         let mut editor = SbyteEditor::new();
-        // Ok to kill for the test, we don't care about the
-        // visuals at the moment
-        editor.kill();
+
         editor.insert_bytes(0, vec![65, 66, 67, 68]);
 
         editor.make_selection(1, 3);
@@ -3169,9 +3152,6 @@ mod tests {
     #[test]
     fn test_find() {
         let mut editor = SbyteEditor::new();
-        // Ok to kill for the test, we don't care about the
-        // visuals at the moment
-        editor.kill();
         editor.insert_bytes(0, vec![65, 66, 0, 0, 65, 65, 66, 65]);
 
         let found = editor.find_all(&vec![65, 66]);

@@ -3,14 +3,14 @@ use std::error::Error;
 
 #[derive(Hash, PartialEq, Eq)]
 pub enum Flag {
-    CURSOR_MOVED,
-    FULL_REFRESH,
-    DISPLAY_REFRESH,
-    SETUP_DISPLAYS,
-    REMAP_ACTIVE_ROWS,
-    UPDATE_OFFSET,
-    DISPLAY_CMDLINE,
-    UPDATE_ROW(usize)
+    CursorMoved,
+    FullRefresh,
+    DisplayRefresh,
+    SetupDisplays,
+    RemapActiveRows,
+    UpdateOffset,
+    DisplayCMDLine,
+    UpdateRow(usize)
 }
 
 pub enum FlagError {
@@ -49,4 +49,3 @@ pub trait InConsole {
     fn lock_viewport_width(&mut self, new_width: usize);
     fn unlock_viewport_width(&mut self);
 }
-

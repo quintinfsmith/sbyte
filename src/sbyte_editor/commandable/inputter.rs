@@ -1,5 +1,3 @@
-pub mod function_ref;
-
 use std::collections::HashMap;
 
 pub struct Inputter {
