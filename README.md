@@ -1,9 +1,16 @@
 # Sbyte
-An in-console byte editor. Work in progress, but fairly stable for basic work.
+An in-console byte editor. Work in progress, but fairly stable for basic work.<br/>
+![Crates.io](https://img.shields.io/crates/v/sbyte?style=flat-square)
+![Crates.io](https://img.shields.io/crates/d/sbyte?style=flat-square)
+![Crates.io](https://img.shields.io/crates/l/sbyte?style=flat-square)
+![Travis (.com)](https://img.shields.io/travis/com/quintinfsmith/sbyte?style=flat-square)
+
+
 
 ## About
 The environment was designed to feel and work as much like VIM as is reasonable for a byte editor. 
-(hjkl directional controls, numerical register, a command line with its own pseudo-language as well as modes [visual, insert, append, replace])
+(hjkl directional controls, numerical register, a command line with its own pseudo-language as well as modes [visual, inser
+t, append, replace])
 
 ## Installation & Usage
 ### From source:
