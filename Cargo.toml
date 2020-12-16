@@ -4,7 +4,7 @@ version = "0.1.1"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"
-categories = ["command-line-utilities", "development-tools"]
+categories = ["command-line-utilities", "text-editors"]
 keywords = ["hex", "byte", "editor"]
 repository = "https://github.com/quintinfsmith/sbyte.git"
 license = "GPL-3.0"
@@ -12,5 +12,6 @@ license = "GPL-3.0"
 [dependencies]
 wrecked = { git = "https://github.com/quintinfsmith/wrecked", version ="^0.1.10" }
 ctrlc = "3.1.6"
+regex = "^1.4.2"
 
 

@@ -8,6 +8,8 @@ use std::{time, thread};
 use std::sync::{Mutex, Arc};
 use std::fmt;
 
+use regex::bytes::Regex;
+
 use wrecked::{RectManager, RectColor, RectError};
 
 // Editor trait
@@ -40,7 +42,7 @@ use command_interface::CommandInterface;
 
 
 pub struct InputterEditorInterface {
-    function_queue: Vec<(String, Vec<u8>)>,
+    function_queue: Vec<(String, String)>,
 
     new_context: Option<String>,
     new_input_sequences: Vec<(String, String, String)>,
@@ -68,7 +70,8 @@ pub enum SbyteError {
     RemapFailed(RectError),
     RowSetFailed(RectError),
     ApplyCursorFailed(RectError),
-    DrawFailed(RectError)
+    DrawFailed(RectError),
+    InvalidRegex(String)
 }
 impl fmt::Display for SbyteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -129,7 +132,7 @@ pub struct SbyteEditor {
     row_dict: HashMap<usize, (usize, usize)>,
     cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
 
-    search_history: Vec<Vec<u8>>,
+    search_history: Vec<String>,
 
     structure_id_gen: u64,
     structures: HashMap<u64, Box<dyn StructuredDataHandler>>,
@@ -358,7 +361,7 @@ impl SbyteEditor {
                                     }
 
                                     if do_push {
-                                        (mutex.function_queue).push((funcref, input_sequence));
+                                        (mutex.function_queue).push((funcref, input_sequence.clone()));
                                     }
 
                                 }
@@ -961,19 +964,22 @@ impl Editor for SbyteEditor {
         }
     }
 
-    fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>) {
-        let mut matches = self.find_all(&search_for);
+    fn replace(&mut self, search_for: &str, replace_with: Vec<u8>) -> Result<(), SbyteError> {
+        let mut matches = self.find_all(&search_for)?;
         // replace in reverse order
         matches.reverse();
 
-        for i in matches.iter() {
-            for j in 0..replace_with.len() {
-                self.active_content.remove(i + j);
+        for (start, end) in matches.iter() {
+            for j in *start..*end {
+                self.active_content.remove(*start);
             }
+
             for (j, new_byte) in replace_with.iter().enumerate() {
-                self.active_content.insert(*i + j, *new_byte);
+                self.active_content.insert(*start + j, *new_byte);
             }
         }
+
+        Ok(())
     }
 
     fn make_selection(&mut self, offset: usize, length: usize) {
@@ -1058,50 +1064,111 @@ impl Editor for SbyteEditor {
         self.active_file_path = Some(new_file_path.to_string());
     }
 
-    fn find_all(&self, search_for: &Vec<u8>) -> Vec<usize> {
-        let mut output: Vec<usize> = Vec::new();
+    fn find_all(&self, search_for: &str) -> Result<Vec<(usize, usize)>, SbyteError> {
+        let mut modded_string: bool = false;
+        let mut working_search = search_for.to_string();
+        { // Look for wildcard in byte definitions, eg "\x.0" or "\x9."
+            let hexchars = "012345789ABCDEF";
+            match Regex::new("\\\\x[0-9a-fA-f]\\.") {
+                Ok(patt) => {
+                    let mut hits = vec![];
+                    for hit in patt.find_iter(search_for.to_string().as_bytes()) {
+                        hits.push(hit.start());
+                    }
+                    hits.sort();
+                    for hit in hits.iter().rev() {
 
-        let search_length = search_for.len();
+                        let mut option_chunks = vec![];
+                        let mut consistent_chunk = working_search[*hit..*hit + 3].to_string();
+                        for hchar in hexchars.chars() {
+                            option_chunks.push(
+                                vec![consistent_chunk.clone(), hchar.to_string()].join("").to_string()
+                            )
+                        }
 
-        let mut i = 0;
-        let mut j_offset;
-        while i <= self.active_content.len() - search_length {
-            j_offset = 0;
-            for (j, test_byte) in search_for.iter().enumerate() {
-                if self.active_content[i + j] != *test_byte {
-                    break;
+                        working_search = vec![
+                            working_search[0..*hit].to_string(),
+                            "[".to_string(),
+                            option_chunks.join("").to_string(),
+                            "]".to_string(),
+                            working_search[*hit + 4..].to_string()
+                        ].join("");
+
+                    }
                 }
-                j_offset += 1;
+                Err(e) => { }
             }
-            if j_offset == search_length {
-                output.push(i);
+
+            match Regex::new("\\\\x\\.[0-9a-fA-F]") {
+                Ok(patt) => {
+                    let mut hits = vec![];
+                    for hit in patt.find_iter(search_for.to_string().as_bytes()) {
+                        hits.push(hit.start());
+                    }
+                    hits.sort();
+                    for hit in hits.iter().rev() {
+                        let mut consistent_chunk = working_search[*hit + 3..*hit + 4].to_string();
+                        let mut option_chunks = vec![];
+                        for hchar in hexchars.chars() {
+                            option_chunks.push(
+                                vec![ "\\x".to_string(), hchar.to_string(), consistent_chunk.clone()].join("").to_string()
+                            )
+                        }
+
+                        working_search = vec![
+                            working_search[0..*hit].to_string(),
+                            "[".to_string(),
+                            option_chunks.join("").to_string(),
+                            "]".to_string(),
+                            working_search[*hit + 4..].to_string()
+                        ].join("");
+
+                    }
+                }
+                Err(e) => { }
             }
-            i += max(1, j_offset);
         }
 
-        output
+        let mut output = Vec::new();
+        let working_string = format!("(?-u:{})", working_search);
+        match Regex::new(&working_string) {
+            Ok(patt) => {
+
+                for hit in patt.find_iter(&self.active_content) {
+                    output.push((hit.start(), hit.end()))
+                }
+
+                output.sort();
+            }
+            Err(e) => {
+                Err(SbyteError::InvalidRegex(search_for.to_string()))?
+            }
+        }
+
+        Ok(output)
     }
-    fn find_nth_after(&self, pattern: &Vec<u8>, offset: usize, n: usize) -> Option<usize> {
+    fn find_nth_after(&self, pattern: &str, offset: usize, n: usize) -> Result<Option<(usize, usize)>, SbyteError> {
         //TODO: This could definitely be sped up.
-        let matches = self.find_all(pattern);
+        let matches = self.find_all(pattern)?;
         let mut match_index = 0;
+
         if matches.len() > 0 {
-            for i in matches.iter() {
-                if *i > offset {
-                    match_index = *i;
+            for (i, (x, _)) in matches.iter().enumerate() {
+                if *x > offset {
+                    match_index = i;
                     break;
                 }
             }
 
             match_index = (match_index + n) % matches.len();
 
-            Some(matches[match_index])
+            Ok(Some(matches[match_index]))
         } else {
-            None
+            Ok(None)
         }
     }
 
-    fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize> {
+    fn find_after(&self, pattern: &str, offset: usize) -> Result<Option<(usize, usize)>, SbyteError> {
         self.find_nth_after(pattern, offset, 0)
     }
 
@@ -2183,16 +2250,16 @@ impl CommandInterface for SbyteEditor {
         self.raise_flag(Flag::UpdateOffset);
     }
 
-    fn ci_jump_to_next(&mut self, argument: Option<Vec<u8>>, repeat: usize) {
+    fn ci_jump_to_next(&mut self, argument: Option<&str>, repeat: usize) {
         let current_offset = self.cursor.get_offset();
         let mut next_offset = current_offset;
         let mut new_cursor_length = self.cursor.get_length();
         let mut new_user_msg = None;
         let mut new_user_error_msg = None;
 
-        let option_pattern: Option<Vec<u8>> = match argument {
-            Some(byte_pattern) => { // argument was given, use that
-                Some(byte_pattern.clone())
+        let option_pattern: Option<String> = match argument {
+            Some(pattern) => { // argument was given, use that
+                Some(pattern.to_string())
             }
             None => { // No argument was given, check history
                 match self.search_history.last() {
@@ -2207,17 +2274,14 @@ impl CommandInterface for SbyteEditor {
         };
 
         match option_pattern {
-            Some(raw_bytes) => {
-                // First, convert utf8 bytes to a string...
-                let string_rep = std::str::from_utf8(&raw_bytes).unwrap();
-                // Then, convert the special characters in that string (eg, \x41 -> A)
-                match self.string_to_bytes(string_rep.to_string()) {
-                    Ok(byte_pattern) => {
-                        self.search_history.push(raw_bytes.to_vec());
-                        match self.find_nth_after(&byte_pattern, current_offset, repeat) {
+            Some(string_rep) => {
+                self.search_history.push(string_rep.clone());
+                match self.find_nth_after(&string_rep, current_offset, repeat) {
+                    Ok(result) => {
+                        match result {
                             Some(new_offset) => {
-                                new_cursor_length = byte_pattern.len();
-                                next_offset = new_offset;
+                                new_cursor_length = new_offset.1 - new_offset.0;
+                                next_offset = new_offset.0;
                                 new_user_msg = Some(format!("Found \"{}\" at byte {}", string_rep, next_offset));
                             }
                             None => {
@@ -2225,9 +2289,7 @@ impl CommandInterface for SbyteEditor {
                             }
                         }
                     }
-                    Err(_) => {
-                        new_user_error_msg = Some(format!("Invalid pattern: {}", string_rep));
-                    }
+                    Err(e) => {}
                 }
             }
             None => {
@@ -2482,10 +2544,10 @@ impl Commandable for SbyteEditor {
         let mut words = parse_words(query.to_string());
         if words.len() > 0 {
             let cmd = words.remove(0);
-            let mut arguments: Vec<Vec<u8>> = vec![];
+            let mut arguments: Vec<String> = vec![];
 
             for word in words.iter() {
-                arguments.push(word.as_bytes().to_vec());
+                arguments.push(word.clone());
             }
 
             let funcref = match self.line_commands.get(&cmd) {
@@ -2504,14 +2566,14 @@ impl Commandable for SbyteEditor {
         Ok(())
     }
 
-    fn run_cmd_from_functionref(&mut self, funcref: &str, arguments: Vec<Vec<u8>>) -> Result<(), Box<dyn Error>> {
+    fn run_cmd_from_functionref(&mut self, funcref: &str, arguments: Vec<String>) -> Result<(), Box<dyn Error>> {
         match funcref {
             "ASSIGN_INPUT" => {
                 let mut is_ok = true;
 
                 let new_funcref: String = match arguments.get(0) {
                     Some(_new_funcref) => {
-                        std::str::from_utf8(_new_funcref).unwrap().to_string()
+                        _new_funcref.clone()
                     }
                     None => {
                         is_ok = false;
@@ -2521,10 +2583,9 @@ impl Commandable for SbyteEditor {
 
                 let new_input_string: String = match arguments.get(1) {
                     Some(_new_inputs) => {
-                        let tmp = std::str::from_utf8(_new_inputs).unwrap().to_string();
                         let key_map = SbyteEditor::build_key_map();
                         let mut output = "".to_string();
-                        for word in tmp.split(",") {
+                        for word in _new_inputs.split(",") {
                             match key_map.get(word) {
                                 Some(seq) => {
                                     output += &seq.to_string();
@@ -2592,16 +2653,15 @@ impl Commandable for SbyteEditor {
 
             // TODO: look this logic over
             "JUMP_TO_NEXT" => {
-                let repeat = self.grab_register(1);
-                let pattern = match arguments.get(0) {
-                    Some(bytes) => {
-                       Some(bytes.clone())
+                let n = self.grab_register(0);
+                match arguments.get(0) {
+                    Some(pattern) => {
+                        self.ci_jump_to_next(Some(pattern), n);
                     }
                     None => {
-                        None
+                        self.ci_jump_to_next(None, n);
                     }
-                };
-                self.ci_jump_to_next(pattern, repeat);
+                }
             }
 
             "CMDLINE_BACKSPACE" => {
@@ -2627,7 +2687,6 @@ impl Commandable for SbyteEditor {
             "DELETE" => {
                 let repeat = self.grab_register(1);
                 self.ci_delete(repeat);
-
             }
 
             "REMOVE_STRUCTURE" => {
@@ -2749,8 +2808,8 @@ impl Commandable for SbyteEditor {
 
             "INSERT_STRING" => {
                 let pattern = match arguments.get(0) {
-                    Some(argument_bytes) => {
-                        std::str::from_utf8(argument_bytes).unwrap()
+                    Some(argument) => {
+                        argument
                     }
                     None => {
                         ""
@@ -2758,14 +2817,13 @@ impl Commandable for SbyteEditor {
                 };
                 let repeat = self.grab_register(1);
                 self.ci_insert_string(pattern, repeat);
-
             }
 
             "INSERT_RAW" => {
                 let repeat = self.grab_register(1);
                 let pattern = match arguments.get(0) {
                     Some(arg) => {
-                        arg.clone()
+                        arg.as_bytes().to_vec()
                     }
                     None => {
                         vec![]
@@ -2776,8 +2834,7 @@ impl Commandable for SbyteEditor {
 
             "INSERT_TO_CMDLINE" => {
                 match arguments.get(0) {
-                    Some(argument_bytes) => {
-                        let argument = std::str::from_utf8(argument_bytes).unwrap();
+                    Some(argument) => {
                         self.commandline.insert_to_register(argument);
                         self.commandline.move_cursor_right();
                         self.display_command_line()?;
@@ -2788,8 +2845,8 @@ impl Commandable for SbyteEditor {
 
             "OVERWRITE_STRING" => {
                 let pattern = match arguments.get(0) {
-                    Some(argument_bytes) => {
-                        std::str::from_utf8(argument_bytes).unwrap()
+                    Some(argument) => {
+                        argument
                     }
                     None => {
                         ""
@@ -2804,7 +2861,7 @@ impl Commandable for SbyteEditor {
                 let repeat = self.grab_register(1);
                 let pattern = match arguments.get(0) {
                     Some(arg) => {
-                        arg.clone()
+                        arg.as_bytes().to_vec()
                     }
                     None => {
                         vec![]
@@ -2844,16 +2901,12 @@ impl Commandable for SbyteEditor {
             }
 
             "SAVE" => {
-                let path = match arguments.get(0) {
-                    Some(byte_path) => {
-                        Some(std::str::from_utf8(byte_path).unwrap())
+                match arguments.get(0) {
+                    Some(arg) => {
+                        self.ci_save(Some(&arg));
                     }
-                    None => {
-                        None
-                    }
-                };
-
-                self.ci_save(path);
+                    None => ()
+                }
             }
 
             "SAVEQUIT" => {
@@ -2875,9 +2928,8 @@ impl Commandable for SbyteEditor {
 
             "SET_WIDTH" => {
                 match arguments.get(0) {
-                    Some(bytes) => {
-                        let str_rep = std::str::from_utf8(bytes).unwrap();
-                        match self.string_to_integer(str_rep) {
+                    Some(argument) => {
+                        match self.string_to_integer(argument) {
                             Ok(new_width) => {
                                 self.ci_lock_viewport_width(new_width);
                             }
@@ -2895,9 +2947,8 @@ impl Commandable for SbyteEditor {
             "SET_REGISTER" => {
                 self.clear_register();
                 match arguments.get(0) {
-                    Some(byterep) => {
-                        let stringrep = std::str::from_utf8(&byterep).unwrap();
-                        match self.string_to_integer(stringrep) {
+                    Some(argument) => {
+                        match self.string_to_integer(argument) {
                             Ok(n) => {
                                 self.register = Some(n);
                             }
@@ -2912,11 +2963,8 @@ impl Commandable for SbyteEditor {
             "APPEND_TO_REGISTER" => {
                 match arguments.get(0) {
                     Some(argument) => {
-                        // TODO: This is ridiculous. maybe make a nice wrapper for String (len 1) -> u8?
-                        let string = std::str::from_utf8(&argument).unwrap();
-
                         let mut digit;
-                        for character in string.chars() {
+                        for character in argument.chars() {
                             if character.is_digit(10) {
                                 digit = character.to_digit(10).unwrap() as usize;
                                 self.append_to_register(digit);
@@ -3042,7 +3090,6 @@ impl Commandable for SbyteEditor {
     }
 }
 
-
 // TODO: Consider quotes, apostrophes  and escapes
 fn parse_words(input_string: String) -> Vec<String> {
     let mut output = Vec::new();
@@ -3154,12 +3201,12 @@ mod tests {
         let mut editor = SbyteEditor::new();
         editor.insert_bytes(0, vec![65, 66, 0, 0, 65, 65, 66, 65]);
 
-        let found = editor.find_all(&vec![65, 66]);
+        let found = editor.find_all("AB").ok().unwrap();
         assert_eq!(found.len(), 2);
-        assert_eq!(found[0], 0);
-        assert_eq!(found[1], 5);
+        assert_eq!(found[0].0, 0);
+        assert_eq!(found[1].0, 5);
 
-        assert_eq!(editor.find_after(&vec![65, 66], 2), Some(5));
+        assert_eq!(editor.find_after("AB", 2).ok().unwrap(), Some((5, 2)));
 
     }
 }

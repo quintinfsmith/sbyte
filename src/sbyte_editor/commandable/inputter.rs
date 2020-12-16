@@ -17,7 +17,7 @@ impl Inputter {
         }
     }
 
-    pub fn read_input(&mut self, input_byte: u8) -> Option<(String, Vec<u8>)> {
+    pub fn read_input(&mut self, input_byte: u8) -> Option<(String, String)> {
         let mut output = None;
 
         self.input_buffer.push(input_byte);
@@ -35,7 +35,15 @@ impl Inputter {
                             }
                             None => ()
                         }
-                        output = Some((funcref, self.input_buffer.clone()));
+
+                        match std::str::from_utf8(&self.input_buffer) {
+                            Ok(string) => {
+                                output = Some((funcref, string.to_string()));
+                            }
+                            Err(e) => {
+                                output = Some((funcref, "".to_string()));
+                            }
+                        }
                     }
                     None => ()
                 }

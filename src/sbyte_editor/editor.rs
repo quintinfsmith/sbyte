@@ -4,6 +4,7 @@ use converter::*;
 use editor_cursor::*;
 use std::error::Error;
 
+use super::SbyteError;
 
 pub enum EditorError {
     OutOfRange(usize, usize)
@@ -14,7 +15,7 @@ pub trait Editor {
     fn redo(&mut self);
     fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>)) -> (usize, usize, Vec<u8>);
     fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Vec<u8>);
-    fn replace(&mut self, search_for: Vec<u8>, replace_with: Vec<u8>);
+    fn replace(&mut self, search_for: &str, replace_with: Vec<u8>) -> Result<(), SbyteError>;
     fn make_selection(&mut self, offset: usize, length: usize);
     fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>);
     fn copy_selection(&mut self);
@@ -23,9 +24,9 @@ pub trait Editor {
     fn save_as(&mut self, path: &str) -> std::io::Result<()>;
     fn save(&mut self) -> Result<(), Box<dyn Error>>;
     fn set_file_path(&mut self, new_file_path: &str);
-    fn find_all(&self, pattern: &Vec<u8>) -> Vec<usize>;
-    fn find_after(&self, pattern: &Vec<u8>, offset: usize) -> Option<usize>;
-    fn find_nth_after(&self, pattern: &Vec<u8>, offset: usize, n: usize) -> Option<usize>;
+    fn find_all(&self, pattern: &str) -> Result<Vec<(usize, usize)>, SbyteError>;
+    fn find_after(&self, pattern: &str, offset: usize) -> Result<Option<(usize, usize)>, SbyteError>;
+    fn find_nth_after(&self, pattern: &str, offset: usize, n: usize) -> Result<Option<(usize, usize)>, SbyteError>;
 
     fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8>;
     fn remove_bytes_at_cursor(&mut self) -> Vec<u8>;

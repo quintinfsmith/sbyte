@@ -10,7 +10,7 @@ pub trait CommandInterface {
     fn ci_cursor_length_left(&mut self, repeat: usize);
     fn ci_cursor_length_right(&mut self, repeat: usize);
 
-    fn ci_jump_to_next(&mut self, pattern: Option<Vec<u8>>, repeat: usize);
+    fn ci_jump_to_next(&mut self, pattern: Option<&str>, repeat: usize);
     fn ci_delete(&mut self, repeat: usize);
     fn ci_backspace(&mut self, repeat: usize);
     fn ci_undo(&mut self, repeat: usize);
