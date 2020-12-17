@@ -1067,6 +1067,77 @@ impl Editor for SbyteEditor {
     fn find_all(&self, search_for: &str) -> Result<Vec<(usize, usize)>, SbyteError> {
         let mut modded_string: bool = false;
         let mut working_search = search_for.to_string();
+
+
+        { // Look for binary byte definitions (\2) and translate them to \x
+            let hexchars = vec!["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"];
+            match Regex::new("\\\\2[01\\.]{8}") {
+                Ok(patt) => {
+                    let mut hits = vec![];
+                    for hit in patt.find_iter(search_for.to_string().as_bytes()) {
+                        hits.push(hit.start());
+                    }
+                    hits.sort();
+
+                    for hit in hits.iter().rev() {
+                        let mut binnum: usize = 0;
+                        let mut wildcard_indeces = vec![];
+                        for (i, c) in working_search[*hit + 2..*hit + 10].chars().enumerate() {
+                            binnum *= 2;
+                            match c {
+                                '1' => {
+                                    binnum += 1;
+                                }
+                                '0' => {}
+                                '.' => {
+                                    wildcard_indeces.push(i);
+                                }
+                                _ => {
+                                    Err(SbyteError::InvalidRegex(search_for.to_string()))?;
+                                }
+                            }
+                        }
+                        let mut state_bits = 0;
+
+                        let mut possible_numbers = vec![
+                            vec![
+                                "\\x".to_string(),
+                                hexchars[binnum / 16].to_string(),
+                                hexchars[binnum % 16].to_string()
+                            ].join("")
+                        ];
+
+                        for i in 0 .. 2_u32.pow(wildcard_indeces.len() as u32) as usize {
+                            state_bits += 1;
+                            let mut testn = binnum + 0;
+                            for j in 0 .. wildcard_indeces.len() {
+                                if state_bits & (2_u32.pow(j as u32) as usize) != 0 {
+                                    testn += 2_u32.pow(7 - (wildcard_indeces[j] as u32)) as usize;
+                                }
+                            }
+
+                            possible_numbers.push(
+                                vec![
+                                    "\\x".to_string(),
+                                    hexchars[testn / 16].to_string(),
+                                    hexchars[testn % 16].to_string()
+                                ].join("")
+                            );
+                        }
+
+                        working_search = vec![
+                            working_search[0..*hit].to_string(),
+                            "[".to_string(),
+                            possible_numbers.join(""),
+                            "]".to_string(),
+                            working_search[*hit + 10..].to_string()
+                        ].join("");
+                    }
+                }
+                Err(e) => { }
+            }
+        }
+
         { // Look for wildcard in byte definitions, eg "\x.0" or "\x9."
             let hexchars = "012345789ABCDEF";
             match Regex::new("\\\\x[0-9a-fA-f]\\.") {
@@ -1077,9 +1148,8 @@ impl Editor for SbyteEditor {
                     }
                     hits.sort();
                     for hit in hits.iter().rev() {
-
+                        let consistent_chunk = working_search[*hit..*hit + 3].to_string();
                         let mut option_chunks = vec![];
-                        let mut consistent_chunk = working_search[*hit..*hit + 3].to_string();
                         for hchar in hexchars.chars() {
                             option_chunks.push(
                                 vec![consistent_chunk.clone(), hchar.to_string()].join("").to_string()
@@ -1107,7 +1177,7 @@ impl Editor for SbyteEditor {
                     }
                     hits.sort();
                     for hit in hits.iter().rev() {
-                        let mut consistent_chunk = working_search[*hit + 3..*hit + 4].to_string();
+                        let consistent_chunk = working_search[*hit + 3..*hit + 4].to_string();
                         let mut option_chunks = vec![];
                         for hchar in hexchars.chars() {
                             option_chunks.push(
@@ -2289,7 +2359,9 @@ impl CommandInterface for SbyteEditor {
                             }
                         }
                     }
-                    Err(e) => {}
+                    Err(e) => {
+                        new_user_error_msg = Some(format!("Pattern \"{}\" is Invalid", string_rep));
+                    }
                 }
             }
             None => {
