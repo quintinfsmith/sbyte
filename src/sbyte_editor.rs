@@ -3278,7 +3278,7 @@ mod tests {
         assert_eq!(found[0].0, 0);
         assert_eq!(found[1].0, 5);
 
-        assert_eq!(editor.find_after("AB", 2).ok().unwrap(), Some((5, 2)));
+        assert_eq!(editor.find_after("AB", 2).ok().unwrap(), Some((5, 7)));
 
     }
 }
