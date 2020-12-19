@@ -71,7 +71,8 @@ pub enum SbyteError {
     RowSetFailed(RectError),
     ApplyCursorFailed(RectError),
     DrawFailed(RectError),
-    InvalidRegex(String)
+    InvalidRegex(String),
+    InvalidBinary(String)
 }
 impl fmt::Display for SbyteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1069,20 +1070,25 @@ impl Editor for SbyteEditor {
         let mut working_search = search_for.to_string();
 
 
-        { // Look for binary byte definitions (\2) and translate them to \x
+        { // Look for binary byte definitions (\b) and translate them to \x
             let hexchars = vec!["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"];
-            match Regex::new("\\\\2[01\\.]{8}") {
+            match Regex::new("\\\\b.{0,8}") {
                 Ok(patt) => {
                     let mut hits = vec![];
                     for hit in patt.find_iter(search_for.to_string().as_bytes()) {
-                        hits.push(hit.start());
+                        if (hit.end() - hit.start() == 2) {
+                            Err(SbyteError::InvalidBinary(search_for[hit.start() .. hit.end()].to_string()))?;
+                        } else {
+                            hits.push((hit.start(), hit.end()));
+                        }
                     }
                     hits.sort();
 
                     for hit in hits.iter().rev() {
                         let mut binnum: usize = 0;
                         let mut wildcard_indeces = vec![];
-                        for (i, c) in working_search[*hit + 2..*hit + 10].chars().enumerate() {
+                        let length = (hit.1 - hit.0) - 2;
+                        for (i, c) in working_search[hit.0 + 2..hit.1].chars().enumerate() {
                             binnum *= 2;
                             match c {
                                 '1' => {
@@ -1090,15 +1096,15 @@ impl Editor for SbyteEditor {
                                 }
                                 '0' => {}
                                 '.' => {
-                                    wildcard_indeces.push(i);
+                                    wildcard_indeces.push(length - 1 - i);
                                 }
                                 _ => {
-                                    Err(SbyteError::InvalidRegex(search_for.to_string()))?;
+                                    Err(SbyteError::InvalidBinary(working_search[hit.0 .. hit.1].to_string()))?;
                                 }
                             }
                         }
-                        let mut state_bits = 0;
 
+                        let mut state_bits = 0;
                         let mut possible_numbers = vec![
                             vec![
                                 "\\x".to_string(),
@@ -1112,7 +1118,7 @@ impl Editor for SbyteEditor {
                             let mut testn = binnum + 0;
                             for j in 0 .. wildcard_indeces.len() {
                                 if state_bits & (2_u32.pow(j as u32) as usize) != 0 {
-                                    testn += 2_u32.pow(7 - (wildcard_indeces[j] as u32)) as usize;
+                                    testn += 2_u32.pow((wildcard_indeces[j] as u32)) as usize;
                                 }
                             }
 
@@ -1126,11 +1132,11 @@ impl Editor for SbyteEditor {
                         }
 
                         working_search = vec![
-                            working_search[0..*hit].to_string(),
+                            working_search[0..hit.0].to_string(),
                             "[".to_string(),
                             possible_numbers.join(""),
                             "]".to_string(),
-                            working_search[*hit + 10..].to_string()
+                            working_search[hit.1 ..].to_string()
                         ].join("");
                     }
                 }
