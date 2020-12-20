@@ -2588,7 +2588,6 @@ impl CommandInterface for SbyteEditor {
                     }
                     Err(_e) => {
                         self.user_error_msg = Some("No path specified".to_string());
-
                     }
                 }
             }
@@ -2983,7 +2982,9 @@ impl Commandable for SbyteEditor {
                     Some(arg) => {
                         self.ci_save(Some(&arg));
                     }
-                    None => ()
+                    None => {
+                        self.ci_save(None);
+                    }
                 }
             }
 
