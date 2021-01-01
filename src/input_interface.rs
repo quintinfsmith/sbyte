@@ -321,26 +321,25 @@ impl InputInterface {
                     Err(_e) => ()
                 }
             }
-
         })
     }
 
-    //pub fn spawn_ctrl_c_daemon(&mut self) {
-    //    let signal_mutex = self.transient_data.clone()
-    //    // Catch the Ctrl+C Signal
-    //    ctrlc::set_handler(move || {
-    //        let mut ok = false;
-    //        while !ok {
-    //            match signal_mutex.try_lock() {
-    //                Ok(ref mut mutex) => {
-    //                    mutex.flag_kill = true;
-    //                    ok = true;
-    //                }
-    //                Err(_e) => ()
-    //            }
-    //        }
-    //    }).expect("Error setting Ctrl-C handler");
-    //}
+    pub fn spawn_ctrl_c_daemon(&mut self) {
+        let signal_mutex = self.input_pipe.clone();
+        // Catch the Ctrl+C Signal
+        ctrlc::set_handler(move || {
+            let mut ok = false;
+            while !ok {
+                match signal_mutex.try_lock() {
+                    Ok(ref mut mutex) => {
+                        mutex.kill();
+                        ok = true;
+                    }
+                    Err(_e) => ()
+                }
+            }
+        }).expect("Error setting Ctrl-C handler");
+    }
 
     pub fn new_inputter() -> Inputter {
         let mut inputter = Inputter::new();
@@ -390,7 +389,7 @@ impl InputInterface {
     }
 
     pub fn main(&mut self) -> Result<(), Box<dyn Error>> {
-        //self.spawn_ctrl_c_daemon();
+        self.spawn_ctrl_c_daemon();
         self.auto_resize();
         let mut _input_daemon = self.spawn_input_daemon();
 
@@ -415,6 +414,11 @@ impl InputInterface {
             command_pair = None;
             match self.input_pipe.try_lock() {
                 Ok(ref mut mutex) => {
+
+                    // Kill the main loop is the input loop dies
+                    if ! mutex.is_alive() {
+                        self.running = false;
+                    }
 
                     let mut buffer = mutex.get_buffer();
                     for byte in buffer.drain(..) {
