@@ -2,7 +2,7 @@ pub enum ConverterError {
     InvalidDigit
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum ConverterRef {
     HEX,
     BIN,

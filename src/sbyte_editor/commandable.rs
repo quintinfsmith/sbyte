@@ -1,5 +1,6 @@
 pub mod inputter;
 use super::editor::converter::ConverterError;
+use super::command_line::CommandLine;
 use std::error::Error;
 
 pub trait Commandable {
@@ -15,4 +16,6 @@ pub trait Commandable {
     fn string_to_integer(&self, input_string: &str) -> Result<usize, ConverterError>;
 
     fn set_input_context(&mut self, context: &str);
+
+    fn get_commandline(&self) -> CommandLine;
 }

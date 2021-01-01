@@ -47,4 +47,8 @@ pub trait Editor {
     fn get_active_converter(&self) -> Box<dyn Converter>;
     fn get_display_ratio(&mut self) -> u8;
 
+    fn get_cursor_offset(&self) -> usize;
+    fn get_cursor_length(&self) -> usize;
+
+    fn get_active_content(&self) -> Vec<u8>;
 }
