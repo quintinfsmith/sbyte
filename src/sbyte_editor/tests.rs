@@ -1,6 +1,7 @@
 #[cfg (test)]
 mod tests {
     use crate::sbyte_editor::BackEnd;
+
     #[test]
     fn test_initializes_empty() {
         let editor = BackEnd::new();
