@@ -1,14 +1,12 @@
 use std::env;
 use std::path::Path;
 use std::error::Error;
-use std::time;
 
 pub mod sbyte_editor;
 pub mod input_interface;
 pub mod console_displayer;
 
 use sbyte_editor::*;
-use sbyte_editor::tests;
 use input_interface::InputInterface;
 use console_displayer::FrontEnd;
 

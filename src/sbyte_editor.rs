@@ -1,11 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::cmp::{min, max};
 use std::fs::File;
-use std::io;
 use std::io::{Write, Read};
 use std::error::Error;
-use std::{time, thread};
-use std::sync::{Mutex, Arc};
 use std::fmt;
 use regex::bytes::Regex;
 
@@ -69,9 +66,6 @@ pub struct BackEnd {
     // Commandable
     commandline: CommandLine,
     line_commands: HashMap<String, String>,
-    register: Option<usize>,
-    flag_input_context: Option<String>,
-    new_input_sequences: Vec<(String, String, String)>,
 
     // VisualEditor
     viewport: ViewPort,
@@ -94,9 +88,6 @@ impl BackEnd {
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            register: None,
-            flag_input_context: None,
-            new_input_sequences: Vec::new(),
 
             viewport: ViewPort::new(1, 1),
 
@@ -501,7 +492,7 @@ impl BackEnd {
         matches.reverse();
 
         for (start, end) in matches.iter() {
-            for j in *start..*end {
+            for _ in *start..*end {
                 self.active_content.remove(*start);
             }
 
@@ -600,7 +591,6 @@ impl BackEnd {
     }
 
     pub fn find_all(&self, search_for: &str) -> Result<Vec<(usize, usize)>, SbyteError> {
-        let mut modded_string: bool = false;
         let mut working_search = search_for.to_string();
 
 
@@ -610,7 +600,7 @@ impl BackEnd {
                 Ok(patt) => {
                     let mut hits = vec![];
                     for hit in patt.find_iter(search_for.to_string().as_bytes()) {
-                        if (hit.end() - hit.start() == 2) {
+                        if hit.end() - hit.start() == 2 {
                             Err(SbyteError::InvalidBinary(search_for[hit.start() .. hit.end()].to_string()))?;
                         } else {
                             hits.push((hit.start(), hit.end()));
@@ -647,12 +637,12 @@ impl BackEnd {
                             ].join("")
                         ];
 
-                        for i in 0 .. 2_u32.pow(wildcard_indeces.len() as u32) as usize {
+                        for _ in 0 .. 2_u32.pow(wildcard_indeces.len() as u32) as usize {
                             state_bits += 1;
                             let mut testn = binnum + 0;
                             for j in 0 .. wildcard_indeces.len() {
                                 if state_bits & (2_u32.pow(j as u32) as usize) != 0 {
-                                    testn += 2_u32.pow((wildcard_indeces[j] as u32)) as usize;
+                                    testn += 2_u32.pow(wildcard_indeces[j] as u32) as usize;
                                 }
                             }
 
@@ -674,7 +664,7 @@ impl BackEnd {
                         ].join("");
                     }
                 }
-                Err(e) => { }
+                Err(_e) => { }
             }
         }
 
@@ -706,7 +696,7 @@ impl BackEnd {
 
                     }
                 }
-                Err(e) => { }
+                Err(_e) => { }
             }
 
             match Regex::new("\\\\x\\.[0-9a-fA-F]") {
@@ -735,7 +725,7 @@ impl BackEnd {
 
                     }
                 }
-                Err(e) => { }
+                Err(_e) => { }
             }
         }
 
@@ -750,7 +740,7 @@ impl BackEnd {
 
                 output.sort();
             }
-            Err(e) => {
+            Err(_e) => {
                 Err(SbyteError::InvalidRegex(search_for.to_string()))?
             }
         }

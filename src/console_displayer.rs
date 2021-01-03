@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::cmp::{min, max};
-use std::fmt;
+use std::cmp::max;
 use std::error::Error;
 use wrecked::{RectManager, RectColor, RectError};
 
@@ -35,7 +34,6 @@ pub struct FrontEnd {
 impl FrontEnd {
     pub fn new() -> FrontEnd {
         let mut rectmanager = RectManager::new();
-        let (width, height) = rectmanager.get_rect_size(wrecked::TOP).unwrap();
         let rect_display_wrapper = rectmanager.new_rect(wrecked::TOP).ok().unwrap();
         let id_display_bits = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
         let id_display_human = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
@@ -171,11 +169,11 @@ impl FrontEnd {
             .or_insert((0, true));
     }
 
-    fn lower_flag(&mut self, key: Flag) {
-        self.display_flags.entry(key)
-            .and_modify(|e| *e = (e.0, false))
-            .or_insert((0, false));
-    }
+    //fn lower_flag(&mut self, key: Flag) {
+    //    self.display_flags.entry(key)
+    //        .and_modify(|e| *e = (e.0, false))
+    //        .or_insert((0, false));
+    //}
 
     fn check_flag(&mut self, key: Flag) -> bool {
         let mut output = false;
@@ -510,7 +508,7 @@ impl FrontEnd {
         )?;
 
         let display_ratio = sbyte_editor.get_display_ratio();
-        let (vwidth, vheight) = sbyte_editor.get_viewport_size();
+        let (vwidth, _vheight) = sbyte_editor.get_viewport_size();
 
         let (bits_id, human_id) = self.rects_display;
         let human_display_width = vwidth;
@@ -603,7 +601,7 @@ impl FrontEnd {
     // TODO: Change this to use usize instead of BackEnd
     pub fn display_user_offset(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
         let mut cursor_string = format!("{}", sbyte_editor.get_cursor_offset());
-        let mut active_content = sbyte_editor.get_active_content();
+        let active_content = sbyte_editor.get_active_content();
 
         if active_content.len() > 0 {
             let digit_count = (active_content.len() as f64).log10().ceil() as usize;
@@ -633,8 +631,8 @@ impl FrontEnd {
         let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
 
         let x = meta_width - offset_display.len();
-        self.rectmanager.resize(self.rect_offset, offset_display.len(), 1);
-        self.rectmanager.set_position(self.rect_offset, x as isize, 0);
+        self.rectmanager.resize(self.rect_offset, offset_display.len(), 1)?;
+        self.rectmanager.set_position(self.rect_offset, x as isize, 0)?;
         self.rectmanager.set_string(self.rect_offset, 0, 0, &offset_display)?;
 
         Ok(())
@@ -764,7 +762,7 @@ impl FrontEnd {
             Ok(_) => {
                 Ok(())
             }
-            Err(e) => {
+            Err(_e) => {
                 Err(SbyteError::FailedToKill)
             }
         }

@@ -198,7 +198,6 @@ pub struct InputInterface {
 
     locked_viewport_width: Option<usize>,
 
-    flag_input_context: Option<String>,
     input_pipe: Arc<Mutex<InputPipe>>,
 
     register: Option<usize>,
@@ -210,7 +209,6 @@ pub struct InputInterface {
 impl InputInterface {
     pub fn new(backend: BackEnd, frontend: FrontEnd) -> InputInterface {
         let mut interface = InputInterface {
-            flag_input_context: None,
             input_pipe: Arc::new(Mutex::new(InputPipe::new())),
             locked_viewport_width: None,
             running: false,
@@ -419,7 +417,7 @@ impl InputInterface {
                         self.running = false;
                     }
 
-                    let mut buffer = mutex.get_buffer();
+                    let buffer = mutex.get_buffer();
                     for byte in buffer.drain(..) {
                         match self.inputter.read_input(byte) {
                             Some((funcref, input_sequence)) => {
@@ -617,7 +615,7 @@ impl InputInterface {
 
             "MODE_SET_CMD" => {
                 match self.backend.get_commandline_mut() {
-                    Some(mut commandline) => {
+                    Some(commandline) => {
                         commandline.clear_register();
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
                     }
@@ -627,7 +625,7 @@ impl InputInterface {
 
             "MODE_SET_SEARCH" => {
                 match self.backend.get_commandline_mut() {
-                    Some(mut commandline) => {
+                    Some(commandline) => {
                         commandline.set_register("find ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
                     }
@@ -665,7 +663,7 @@ impl InputInterface {
                 match arguments.get(0) {
                     Some(argument) => {
                         match self.backend.get_commandline_mut() {
-                            Some(mut commandline) => {
+                            Some(commandline) => {
                                 commandline.insert_to_register(argument);
                                 commandline.move_cursor_right();
                                 self.frontend.raise_flag(Flag::DisplayCMDLine);
@@ -716,7 +714,7 @@ impl InputInterface {
 
             "RUN_CUSTOM_COMMAND" => {
                 match self.backend.get_commandline_mut() {
-                    Some(mut commandline) => {
+                    Some(commandline) => {
                         match commandline.apply_register() {
                             Some(new_command) => {
                                 self.query(&new_command)?;
@@ -889,7 +887,7 @@ impl InputInterface {
         self.backend.set_viewport_offset(0);
         self.backend.set_cursor_offset(0);
 
-        let mut screensize = self.frontend.size();
+        let screensize = self.frontend.size();
         let display_ratio = self.backend.get_display_ratio() as f64;
         let r: f64 = 1f64 / display_ratio;
         let a: f64 = 1f64 - (1f64 / (r + 1f64));
@@ -1029,8 +1027,7 @@ impl InputInterface {
 
     fn ci_jump_to_next(&mut self, argument: Option<&str>, repeat: usize) {
         let current_offset = self.backend.get_cursor_offset();
-        let mut next_offset = current_offset;
-        let mut new_cursor_length = self.backend.get_cursor_length();
+        let next_offset = current_offset;
 
         let option_pattern: Option<String> = match argument {
             Some(pattern) => { // argument was given, use that
@@ -1116,15 +1113,15 @@ impl InputInterface {
         let mut adj_repeat = 0;
         for i in 0 .. repeat {
             match self.backend.undo() {
-                Ok(_) => {
-                    adj_repeat = i;
-                }
                 Err(SbyteError::EmptyStack) => {
                     break;
                 }
                 Err(_e) => {
                     // TODO
                     //Err(e)?;
+                }
+                Ok(_) => {
+                    adj_repeat = i;
                 }
             }
         }
@@ -1159,7 +1156,13 @@ impl InputInterface {
         let original_viewport_offset = self.backend.get_viewport_offset();
 
         for _ in 0 .. repeat {
-            self.backend.redo();
+            match self.backend.redo() {
+                Err(SbyteError::EmptyStack) => {
+                    break;
+                }
+                Err(_) => {}
+                Ok(_) => {}
+            }
         }
 
         let viewport_offset = self.backend.get_viewport_offset();
@@ -1297,17 +1300,28 @@ impl InputInterface {
                 }
             }
             None => {
-                match self.backend.save() {
+                let result = match self.backend.save() {
                     Ok(_) => {
                         match self.backend.get_active_file_path() {
                             Some(file_path) => {
-                                self.backend.set_user_msg(&format!("Saved to file: {}", file_path));
+                                Ok(format!("Saved to file: {}", file_path))
                             }
-                            None => () // Unreachable
+                            None => {
+                                Err("File path not set".to_string())
+                            } // Unreachable
                         }
                     }
-                    Err(_e) => {
-                        self.backend.set_user_error_msg("No path specified");
+                    Err(e) => {
+                        Err("No path specified".to_string())
+                    }
+                };
+
+                match result {
+                    Ok(msg) => {
+                        self.backend.set_user_msg(&msg);
+                    }
+                    Err(msg) => {
+                        self.backend.set_user_error_msg(&msg);
                     }
                 }
             }
