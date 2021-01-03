@@ -10,7 +10,6 @@ pub mod console_displayer;
 use sbyte_editor::*;
 use sbyte_editor::tests;
 use input_interface::InputInterface;
-use sbyte_editor::commandable::Commandable;
 use console_displayer::FrontEnd;
 
 fn result_catcher() -> Result<(), Box<dyn Error>> {

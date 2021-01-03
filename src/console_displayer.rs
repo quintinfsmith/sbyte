@@ -5,7 +5,7 @@ use std::error::Error;
 use wrecked::{RectManager, RectColor, RectError};
 
 use super::sbyte_editor::*;
-use super::sbyte_editor::editor::converter::*;
+use super::sbyte_editor::converter::*;
 use super::sbyte_editor::flag::Flag;
 
 

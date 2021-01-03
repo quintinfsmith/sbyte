@@ -7,8 +7,7 @@ use std::sync::{Mutex, Arc};
 
 //TODO Move string_to_integer
 use super::sbyte_editor::{BackEnd, SbyteError, string_to_integer, string_to_bytes};
-use super::sbyte_editor::editor::EditorError;
-use super::sbyte_editor::editor::converter::*;
+use super::sbyte_editor::converter::*;
 use super::sbyte_editor::flag::Flag;
 use super::console_displayer::FrontEnd;
 
@@ -866,8 +865,23 @@ impl InputInterface {
     }
 
     fn query(&mut self, query: &str) -> Result<(), Box<dyn Error>> {
-        let (funcref, args) = self.backend.try_command(query)?;
-        self.send_command(&funcref, args)?;
+
+        let result = match self.backend.try_command(query) {
+            Ok((funcref, args)) => {
+                self.send_command(&funcref, args)
+            }
+            Err(e) => {
+                Err(e)
+            }
+        };
+
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                self.backend.set_user_error_msg(&format!("{:?}", e));
+            }
+        }
+
         Ok(())
     }
 
@@ -1216,9 +1230,10 @@ impl InputInterface {
         let offset = self.backend.get_cursor_offset();
         for _ in 0 .. repeat {
             match self.backend.increment_byte(offset) {
-                Err(EditorError::OutOfRange(_, _)) => {
+                Err(SbyteError::OutOfRange(_, _)) => {
                     break;
                 }
+                Err(_) => {}
                 Ok(_) => {}
             }
         }
@@ -1245,9 +1260,10 @@ impl InputInterface {
         for _ in 0 .. repeat {
             match self.backend.decrement_byte(offset) {
                 Ok(_) => {}
-                Err(EditorError::OutOfRange(_, _)) => {
+                Err(SbyteError::OutOfRange(_, _)) => {
                     break;
                 }
+                Err(_) => { }
             }
         }
         self.backend.set_cursor_length(1);

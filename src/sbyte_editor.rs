@@ -7,24 +7,22 @@ use std::error::Error;
 use std::{time, thread};
 use std::sync::{Mutex, Arc};
 use std::fmt;
-
 use regex::bytes::Regex;
 
-// Editor trait
-pub mod editor;
+use wrecked::RectError;
+
 // CommandLine struct
 pub mod command_line;
 pub mod flag;
-pub mod commandable;
 pub mod viewport;
+pub mod cursor;
+pub mod converter;
 pub mod tests;
 
-use editor::{Editor, EditorError};
-use editor::editor_cursor::Cursor;
-use editor::converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError, DecConverter};
+use converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError, DecConverter};
 use viewport::ViewPort;
+use cursor::Cursor;
 use command_line::CommandLine;
-use wrecked::RectError;
 
 #[derive(Debug)]
 pub enum SbyteError {
@@ -36,6 +34,7 @@ pub enum SbyteError {
     DrawFailed(RectError),
     InvalidRegex(String),
     InvalidBinary(String),
+    OutOfRange(usize, usize),
     FailedToKill,
     EmptyStack,
     NoCommandGiven,
@@ -120,7 +119,7 @@ impl BackEnd {
         output
     }
 
-    pub fn increment_byte(&mut self, offset: usize) -> Result<(), EditorError> {
+    pub fn increment_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
         let mut current_byte_offset = offset;
         if self.active_content.len() > current_byte_offset {
             let mut current_byte_value = self.active_content[current_byte_offset];
@@ -146,11 +145,11 @@ impl BackEnd {
             self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
             Ok(())
         } else {
-            Err(EditorError::OutOfRange(offset, self.active_content.len()))
+            Err(SbyteError::OutOfRange(offset, self.active_content.len()))
         }
     }
 
-    pub fn decrement_byte(&mut self, offset: usize) -> Result<(), EditorError> {
+    pub fn decrement_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
         let mut current_byte_offset = offset;
 
         if self.active_content.len() > current_byte_offset {
@@ -177,7 +176,7 @@ impl BackEnd {
             self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
             Ok(())
         } else {
-            Err(EditorError::OutOfRange(offset, self.active_content.len()))
+            Err(SbyteError::OutOfRange(offset, self.active_content.len()))
         }
     }
 
@@ -195,7 +194,7 @@ impl BackEnd {
             #[cfg(debug_assertions)]
             {
                 //TODO Debug error log
-                //logg(Err(EditorError::OutOfRange(offset, self.active_content.len())));
+                //logg(Err(SbyteError::OutOfRange(offset, self.active_content.len())));
             }
         }
 
@@ -217,7 +216,7 @@ impl BackEnd {
             #[cfg(debug_assertions)]
             {
                 //TODO Debug error log
-                //logg(Err(EditorError::OutOfRange(offset, self.active_content.len())));
+                //logg(Err(SbyteError::OutOfRange(offset, self.active_content.len())));
             }
         }
 
@@ -880,6 +879,7 @@ impl BackEnd {
     pub fn set_cursor_offset(&mut self, new_offset: usize) {
         let adj_offset = min(self.active_content.len(), new_offset);
         self.cursor.set_offset(adj_offset);
+        self.adjust_viewport_offset();
     }
 
     pub fn set_cursor_length(&mut self, new_length: isize) {
@@ -893,6 +893,7 @@ impl BackEnd {
             adj_length = min(new_length as usize, self.active_content.len() - self.cursor.get_real_offset()) as isize;
             self.cursor.set_length(adj_length);
         }
+        self.adjust_viewport_offset();
     }
 
     pub fn get_display_ratio(&self) -> u8 {
@@ -916,6 +917,7 @@ impl BackEnd {
     pub fn get_active_content(&self) -> Vec<u8> {
         self.active_content.clone()
     }
+
     pub fn cursor_next_line(&mut self) {
         let new_offset = self.cursor.get_real_offset() + self.viewport.get_width();
         self.set_cursor_offset(new_offset);
