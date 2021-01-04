@@ -1,6 +1,7 @@
 use std::cmp::min;
 use regex::bytes::Regex;
 
+pub mod tests;
 
 pub struct Content {
     content_array: Vec<u8>
@@ -16,8 +17,13 @@ impl Content {
     pub fn get_byte(&self, offset: usize) -> u8 {
         self.content_array[offset]
     }
-    pub fn set_byte(&mut self, offset: usize, new_byte: u8) {
-        self.content_array[offset] = new_byte;
+    pub fn set_byte(&mut self, offset: usize, new_byte: u8) -> Result<(), ()> {
+        if offset < self.len() {
+            self.content_array[offset] = new_byte;
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     pub fn get_chunk(&self, offset: usize, length: usize) -> Vec<u8> {
@@ -33,15 +39,17 @@ impl Content {
         self.content_array.push(byte);
     }
 
-    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
-        if offset < self.content_array.len() {
-            for (i, new_byte) in new_bytes.iter().enumerate() {
-                self.content_array.insert(offset + i, *new_byte);
-            }
-        } else if offset == self.content_array.len() {
-            for new_byte in new_bytes.iter() {
-                self.content_array.push(*new_byte);
-            }
+    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), ()> {
+        if offset <= self.content_array.len() {
+            let mut new_content = self.content_array[0..offset].to_vec();
+            let chunk_last = self.content_array[offset..].to_vec();
+            new_content.extend(new_bytes.iter().copied());
+            new_content.extend(chunk_last.iter().copied());
+            self.content_array = new_content;
+
+            Ok(())
+        } else {
+            Err(())
         }
 
     }
@@ -70,6 +78,8 @@ impl Content {
         self.content_array.len()
     }
 
+    // TODO: Overlapping hits
+    // eg when look for 33 in 333, there should be 2 hits.
     pub fn find_all(&self, search_for: &str) -> Result<Vec<(usize, usize)>, regex::Error> {
 
         let working_string = format!("(?-u:{})", search_for);
