@@ -21,7 +21,7 @@ fn result_catcher() -> Result<(), Box<dyn Error>> {
         None => { }
     }
 
-    let mut frontend = FrontEnd::new();
+    let frontend = FrontEnd::new();
 
     let mut input_interface = InputInterface::new(backend, frontend);
 

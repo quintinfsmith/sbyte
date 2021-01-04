@@ -690,7 +690,7 @@ impl InputInterface {
 
             "CMDLINE_BACKSPACE" => {
                 match self.backend.get_commandline_mut() {
-                    Some(mut commandline) => {
+                    Some(commandline) => {
                         if commandline.is_empty() {
                             self.frontend.raise_flag(Flag::UpdateOffset);
                         } else {
@@ -1168,7 +1168,6 @@ impl InputInterface {
 
     fn ci_jump_to_next(&mut self, argument: Option<&str>, repeat: usize) {
         let current_offset = self.backend.get_cursor_offset();
-        let next_offset = current_offset;
 
         let option_pattern: Option<String> = match argument {
             Some(pattern) => { // argument was given, use that
@@ -1452,7 +1451,7 @@ impl InputInterface {
                             } // Unreachable
                         }
                     }
-                    Err(e) => {
+                    Err(_) => {
                         Err("No path specified".to_string())
                     }
                 };

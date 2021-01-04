@@ -15,11 +15,13 @@ pub mod viewport;
 pub mod cursor;
 pub mod converter;
 pub mod tests;
+pub mod content;
 
 use converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError, DecConverter};
 use viewport::ViewPort;
 use cursor::Cursor;
 use command_line::CommandLine;
+use content::Content;
 
 #[derive(Debug)]
 pub enum SbyteError {
@@ -47,16 +49,14 @@ impl fmt::Display for SbyteError {
 impl Error for SbyteError {}
 
 pub struct BackEnd {
-    // Flags for tick() to know when to arrange/edit rects
     user_msg: Option<String>,
     user_error_msg: Option<String>,
-
 
     flag_loading: bool,
 
     //Editor
     clipboard: Vec<u8>,
-    active_content: Vec<u8>,
+    active_content: Content,
     active_file_path: Option<String>,
     cursor: Cursor,
     active_converter: ConverterRef,
@@ -82,7 +82,7 @@ impl BackEnd {
             user_error_msg: None,
 
             clipboard: Vec::new(),
-            active_content: Vec::new(),
+            active_content: Content::new(),
             active_file_path: None,
             cursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
@@ -113,23 +113,23 @@ impl BackEnd {
     pub fn increment_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
         let mut current_byte_offset = offset;
         if self.active_content.len() > current_byte_offset {
-            let mut current_byte_value = self.active_content[current_byte_offset];
+            let mut current_byte_value = self.active_content.get_byte(current_byte_offset);
             let mut undo_bytes = vec![];
 
             loop {
                 undo_bytes.insert(0, current_byte_value);
                 if current_byte_value < 255 {
 
-                    self.active_content[current_byte_offset] = current_byte_value + 1;
+                    self.active_content.set_byte(current_byte_offset, current_byte_value + 1);
                     break;
                 } else {
-                    self.active_content[current_byte_offset] = 0;
+                    self.active_content.set_byte(current_byte_offset, 0);
                     if current_byte_offset > 0 {
                         current_byte_offset -= 1;
                     } else {
                         break;
                     }
-                    current_byte_value = self.active_content[current_byte_offset];
+                    current_byte_value = self.active_content.get_byte(current_byte_offset);
                 }
             }
 
@@ -144,23 +144,23 @@ impl BackEnd {
         let mut current_byte_offset = offset;
 
         if self.active_content.len() > current_byte_offset {
-            let mut current_byte_value = self.active_content[current_byte_offset];
+            let mut current_byte_value = self.active_content.get_byte(current_byte_offset);
 
             let mut undo_bytes = vec![];
 
             loop {
                 undo_bytes.insert(0, current_byte_value);
                 if current_byte_value > 0 {
-                    self.active_content[current_byte_offset] = current_byte_value - 1;
+                    self.active_content.set_byte(current_byte_offset, current_byte_value - 1);
                     break;
                 } else {
-                    self.active_content[current_byte_offset] = 255;
+                    self.active_content.set_byte(current_byte_offset, 255);
                     if current_byte_offset > 0 {
                         current_byte_offset -= 1;
                     } else {
                         break;
                     }
-                    current_byte_value = self.active_content[current_byte_offset];
+                    current_byte_value = self.active_content.get_byte(current_byte_offset);
                 }
             }
 
@@ -169,49 +169,6 @@ impl BackEnd {
         } else {
             Err(SbyteError::OutOfRange(offset, self.active_content.len()))
         }
-    }
-
-    // ONLY to be used in insert_bytes and overwrite_bytes. nowhere else.
-    fn _insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
-        if offset < self.active_content.len() {
-            for (i, new_byte) in new_bytes.iter().enumerate() {
-                self.active_content.insert(offset + i, *new_byte);
-            }
-        } else if offset == self.active_content.len() {
-            for new_byte in new_bytes.iter() {
-                self.active_content.push(*new_byte);
-            }
-        } else {
-            #[cfg(debug_assertions)]
-            {
-                //TODO Debug error log
-                //logg(Err(SbyteError::OutOfRange(offset, self.active_content.len())));
-            }
-        }
-
-    }
-
-    // ONLY to be  used by remove_bytes and overwrite_bytes functions, nowhere else.
-    fn _remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
-        let output;
-        if offset < self.active_content.len() {
-            let mut removed_bytes = Vec::new();
-            let adj_length = min(self.active_content.len() - offset, length);
-            for _ in 0..adj_length {
-                removed_bytes.push(self.active_content.remove(offset));
-            }
-            output = removed_bytes;
-        } else {
-            output = vec![];
-
-            #[cfg(debug_assertions)]
-            {
-                //TODO Debug error log
-                //logg(Err(SbyteError::OutOfRange(offset, self.active_content.len())));
-            }
-        }
-
-        output
     }
 
     pub fn set_user_error_msg(&mut self, msg: &str) {
@@ -225,6 +182,7 @@ impl BackEnd {
     pub fn is_loading(&self) -> bool {
         self.flag_loading
     }
+
     pub fn add_search_history(&mut self, search_string: String) {
         self.search_history.push(search_string.clone());
     }
@@ -265,14 +223,14 @@ impl BackEnd {
 
         let mut opposite_bytes_to_insert = vec![];
         if bytes_to_remove > 0 {
-            let removed_bytes = self._remove_bytes(offset, bytes_to_remove);
+            let removed_bytes = self.active_content.remove_bytes(offset, bytes_to_remove);
             opposite_bytes_to_insert = removed_bytes;
         }
 
         let mut opposite_bytes_to_remove = 0;
         if bytes_to_insert.len() > 0 {
             opposite_bytes_to_remove = bytes_to_insert.len();
-            self._insert_bytes(offset, bytes_to_insert);
+            self.active_content.insert_bytes(offset, bytes_to_insert);
         }
 
         (offset, opposite_bytes_to_remove, opposite_bytes_to_insert)
@@ -350,12 +308,10 @@ impl BackEnd {
 
         for (start, end) in matches.iter() {
             for _ in *start..*end {
-                self.active_content.remove(*start);
+                self.active_content.remove_bytes(*start, 1);
             }
 
-            for (j, new_byte) in replace_with.iter().enumerate() {
-                self.active_content.insert(*start + j, *new_byte);
-            }
+            self.active_content.insert_bytes(*start, replace_with.clone());
         }
 
         Ok(())
@@ -384,7 +340,7 @@ impl BackEnd {
 
     pub fn load_file(&mut self, file_path: &str) -> std::io::Result<()> {
         self.flag_loading = true;
-        self.active_content = Vec::new();
+        self.active_content = Content::new();
 
         self.set_file_path(file_path);
         match File::open(file_path) {
@@ -449,7 +405,6 @@ impl BackEnd {
 
     pub fn find_all(&self, search_for: &str) -> Result<Vec<(usize, usize)>, SbyteError> {
         let mut working_search = search_for.to_string();
-
 
         { // Look for binary byte definitions (\b) and translate them to \x
             let hexchars = vec!["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"];
@@ -586,23 +541,14 @@ impl BackEnd {
             }
         }
 
-        let mut output = Vec::new();
-        let working_string = format!("(?-u:{})", working_search);
-        match Regex::new(&working_string) {
-            Ok(patt) => {
-
-                for hit in patt.find_iter(&self.active_content) {
-                    output.push((hit.start(), hit.end()))
-                }
-
-                output.sort();
+        match self.active_content.find_all(&working_search) {
+            Ok(output) => {
+                Ok(output)
             }
-            Err(_e) => {
-                Err(SbyteError::InvalidRegex(search_for.to_string()))?
+            Err(_) => {
+                Err(SbyteError::InvalidRegex(search_for.to_string()))
             }
         }
-
-        Ok(output)
     }
 
     pub fn find_nth_after(&self, pattern: &str, offset: usize, n: usize) -> Result<Option<(usize, usize)>, SbyteError> {
@@ -632,7 +578,7 @@ impl BackEnd {
 
 
     pub fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
-        let removed_bytes = self._remove_bytes(offset, length);
+        let removed_bytes = self.active_content.remove_bytes(offset, length);
         self.push_to_undo_stack(offset, 0, removed_bytes.clone());
 
         removed_bytes
@@ -648,21 +594,16 @@ impl BackEnd {
 
     pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
         let adj_byte_width = new_bytes.len();
-        self._insert_bytes(offset, new_bytes);
+        self.active_content.insert_bytes(offset, new_bytes);
 
         self.push_to_undo_stack(offset, adj_byte_width, vec![]);
     }
 
-    pub fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Vec<u8> {
-        let position = self.cursor.get_offset();
-        self.overwrite_bytes(position, new_bytes)
-    }
-
     pub fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Vec<u8> {
         let length = new_bytes.len();
-        let removed_bytes = self._remove_bytes(position, length);
+        let removed_bytes = self.active_content.remove_bytes(position, length);
 
-        self._insert_bytes(position, new_bytes);
+        self.active_content.insert_bytes(position, new_bytes);
         self.push_to_undo_stack(position, length, removed_bytes.clone());
 
         removed_bytes
@@ -673,6 +614,11 @@ impl BackEnd {
         self.insert_bytes(position, new_bytes);
     }
 
+    pub fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Vec<u8> {
+        let position = self.cursor.get_offset();
+        self.overwrite_bytes(position, new_bytes)
+    }
+
     pub fn get_selected(&mut self) -> Vec<u8> {
         let offset = self.cursor.get_offset();
         let length = self.cursor.get_length();
@@ -681,12 +627,7 @@ impl BackEnd {
     }
 
     pub fn get_chunk(&self, offset: usize, length: usize) -> Vec<u8> {
-        let mut output: Vec<u8> = Vec::new();
-        for i in min(offset, self.active_content.len()) .. min(self.active_content.len(), offset + length) {
-            output.push(self.active_content[i]);
-        }
-
-        output
+        self.active_content.get_chunk(offset, length)
     }
 
     pub fn cursor_next_byte(&mut self) {
@@ -730,14 +671,13 @@ impl BackEnd {
     }
 
     pub fn set_cursor_length(&mut self, new_length: isize) {
-        let adj_length;
         if self.cursor.get_real_offset() == self.active_content.len() && new_length > 0 {
             self.cursor.set_length(1);
         } else if new_length < 0 {
             self.cursor.set_length(max(new_length, 0 - self.cursor.get_real_offset() as isize));
         } else if new_length == 0 {
         } else {
-            adj_length = min(new_length as usize, self.active_content.len() - self.cursor.get_real_offset()) as isize;
+            let adj_length = min(new_length as usize, self.active_content.len() - self.cursor.get_real_offset()) as isize;
             self.cursor.set_length(adj_length);
         }
         self.adjust_viewport_offset();
@@ -761,8 +701,8 @@ impl BackEnd {
         self.cursor.get_length()
     }
 
-    pub fn get_active_content(&self) -> Vec<u8> {
-        self.active_content.clone()
+    pub fn get_active_content(&self) -> &[u8] {
+        self.active_content.as_slice()
     }
 
     pub fn cursor_next_line(&mut self) {

@@ -9,6 +9,16 @@ mod tests {
     }
 
     #[test]
+    fn test_load_file() {
+        let mut editor = BackEnd::new();
+        editor.load_file("src/testfiles/00").expect("Couldn't open file");
+        assert_eq!(editor.active_content.as_slice(), "TESTFILECONTENTS".as_bytes());
+        assert_eq!(editor.get_chunk(0, 4).as_slice(), "TEST".as_bytes());
+        assert_eq!(editor.get_chunk(0, 44).as_slice(), "TESTFILECONTENTS".as_bytes());
+    }
+
+
+    #[test]
     fn test_insert_bytes() {
         let mut editor = BackEnd::new();
 
