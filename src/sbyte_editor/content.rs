@@ -14,8 +14,12 @@ impl Content {
         }
     }
 
-    pub fn get_byte(&self, offset: usize) -> u8 {
-        self.content_array[offset]
+    pub fn get_byte(&self, offset: usize) -> Option<u8> {
+        if offset < self.content_array.len() {
+            Some(self.content_array[offset])
+        } else {
+            None
+        }
     }
     pub fn set_byte(&mut self, offset: usize, new_byte: u8) -> Result<(), ()> {
         if offset < self.len() {
@@ -29,7 +33,7 @@ impl Content {
     pub fn get_chunk(&self, offset: usize, length: usize) -> Vec<u8> {
         let mut output: Vec<u8> = Vec::new();
         for i in min(offset, self.len()) .. min(self.len(), offset + length) {
-            output.push(self.get_byte(i));
+            output.push(self.get_byte(i).unwrap());
         }
 
         output
@@ -37,6 +41,63 @@ impl Content {
 
     pub fn push(&mut self, byte: u8) {
         self.content_array.push(byte);
+    }
+
+    pub fn increment_byte(&mut self, offset: usize) -> Result<Vec<u8>, ()> {
+        let mut current_byte_offset = offset;
+        if self.len() > current_byte_offset {
+            let mut current_byte_value = self.content_array[current_byte_offset];
+            let mut initial_bytes = vec![];
+
+            loop {
+                initial_bytes.insert(0, current_byte_value);
+                if current_byte_value < 255 {
+                    self.content_array[current_byte_offset] = current_byte_value + 1;
+                    break;
+                } else {
+                    self.content_array[current_byte_offset] = 0;
+                    if current_byte_offset > 0 {
+                        current_byte_offset -= 1;
+                    } else {
+                        break;
+                    }
+                    current_byte_value = self.content_array[current_byte_offset];
+                }
+            }
+
+            Ok(initial_bytes)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn decrement_byte(&mut self, offset: usize) -> Result<Vec<u8>, ()> {
+        let mut current_byte_offset = offset;
+
+        if self.content_array.len() > current_byte_offset {
+            let mut current_byte_value = self.content_array[current_byte_offset];
+            let mut initial_bytes = vec![];
+
+            loop {
+                initial_bytes.insert(0, current_byte_value);
+                if current_byte_value > 0 {
+                    self.content_array[current_byte_offset] = current_byte_value - 1;
+                    break;
+                } else {
+                    self.content_array[current_byte_offset] = 255;
+                    if current_byte_offset > 0 {
+                        current_byte_offset -= 1;
+                    } else {
+                        break;
+                    }
+                    current_byte_value = self.content_array[current_byte_offset];
+                }
+            }
+
+            Ok(initial_bytes)
+        } else {
+            Err(())
+        }
     }
 
     pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), ()> {

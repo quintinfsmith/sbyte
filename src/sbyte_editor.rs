@@ -111,63 +111,30 @@ impl BackEnd {
     }
 
     pub fn increment_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
-        let mut current_byte_offset = offset;
-        if self.active_content.len() > current_byte_offset {
-            let mut current_byte_value = self.active_content.get_byte(current_byte_offset);
-            let mut undo_bytes = vec![];
-
-            loop {
-                undo_bytes.insert(0, current_byte_value);
-                if current_byte_value < 255 {
-
-                    self.active_content.set_byte(current_byte_offset, current_byte_value + 1);
-                    break;
-                } else {
-                    self.active_content.set_byte(current_byte_offset, 0);
-                    if current_byte_offset > 0 {
-                        current_byte_offset -= 1;
-                    } else {
-                        break;
-                    }
-                    current_byte_value = self.active_content.get_byte(current_byte_offset);
-                }
+        match self.active_content.increment_byte(offset) {
+            Ok(undo_bytes) => {
+                let undo_len = undo_bytes.len();
+                let undo_offset = offset - undo_len + 1;
+                self.push_to_undo_stack(undo_offset, undo_len, undo_bytes);
+                Ok(())
             }
-
-            self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
-            Ok(())
-        } else {
-            Err(SbyteError::OutOfRange(offset, self.active_content.len()))
+            Err(_) => {
+                Err(SbyteError::OutOfRange(offset, self.active_content.len()))
+            }
         }
     }
 
     pub fn decrement_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
-        let mut current_byte_offset = offset;
-
-        if self.active_content.len() > current_byte_offset {
-            let mut current_byte_value = self.active_content.get_byte(current_byte_offset);
-
-            let mut undo_bytes = vec![];
-
-            loop {
-                undo_bytes.insert(0, current_byte_value);
-                if current_byte_value > 0 {
-                    self.active_content.set_byte(current_byte_offset, current_byte_value - 1);
-                    break;
-                } else {
-                    self.active_content.set_byte(current_byte_offset, 255);
-                    if current_byte_offset > 0 {
-                        current_byte_offset -= 1;
-                    } else {
-                        break;
-                    }
-                    current_byte_value = self.active_content.get_byte(current_byte_offset);
-                }
+        match self.active_content.decrement_byte(offset) {
+            Ok(undo_bytes) => {
+                let undo_len = undo_bytes.len();
+                let undo_offset = offset - undo_len + 1;
+                self.push_to_undo_stack(undo_offset, undo_len, undo_bytes);
+                Ok(())
             }
-
-            self.push_to_undo_stack(current_byte_offset, undo_bytes.len(), undo_bytes);
-            Ok(())
-        } else {
-            Err(SbyteError::OutOfRange(offset, self.active_content.len()))
+            Err(_) => {
+                Err(SbyteError::OutOfRange(offset, self.active_content.len()))
+            }
         }
     }
 

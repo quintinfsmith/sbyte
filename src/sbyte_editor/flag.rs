@@ -7,6 +7,7 @@ pub enum Flag {
     RemapActiveRows,
     UpdateOffset,
     DisplayCMDLine,
+    HideFeedback,
     ForceRerow,
     UpdateRow(usize)
 }

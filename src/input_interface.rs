@@ -243,7 +243,7 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", vec!["PASTE".to_string(), "P_LOWER".to_string()])?;
         self.send_command("ASSIGN_INPUT", vec!["UNDO".to_string(), "U_LOWER".to_string()])?;
         self.send_command("ASSIGN_INPUT", vec!["REDO".to_string(), "CTRL+R".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CLEAR_REGISTER".to_string(), "ESCAPE,ESCAPE".to_string()])?;
+        self.send_command("ASSIGN_INPUT", vec!["CLEAR_REGISTER".to_string(), "ESCAPE".to_string()])?;
         self.send_command("ASSIGN_INPUT", vec!["INCREMENT".to_string(), "PLUS".to_string()])?;
         self.send_command("ASSIGN_INPUT", vec!["DECREMENT".to_string(), "DASH".to_string()])?;
         self.send_command("ASSIGN_INPUT", vec!["BACKSPACE".to_string(), "BACKSPACE".to_string()])?;
@@ -350,6 +350,7 @@ impl InputInterface {
         inputter.assign_context_switch("MODE_SET_OVERWRITE", mode_overwrite);
         inputter.assign_context_switch("MODE_SET_APPEND", mode_insert);
         inputter.assign_context_switch("MODE_SET_DEFAULT", mode_default);
+        inputter.assign_context_switch("ESCAPE_CMDLINE", mode_default);
         inputter.assign_context_switch("MODE_SET_CMD", mode_cmd);
         inputter.assign_context_switch("MODE_SET_SEARCH", mode_cmd);
         inputter.assign_context_switch("MODE_SET_INSERT_SPECIAL", mode_cmd);
@@ -378,7 +379,7 @@ impl InputInterface {
         }
 
         inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[10]).unwrap().to_string(), "RUN_CUSTOM_COMMAND");
-        inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
+        inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[27]).unwrap().to_string(), "ESCAPE_CMDLINE");
         inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[127]).unwrap().to_string(), "CMDLINE_BACKSPACE");
 
 
@@ -798,6 +799,12 @@ impl InputInterface {
                     }
                 };
                 self.ci_insert_bytes(pattern, repeat);
+            }
+            "ESCAPE_CMDLINE" => {
+                self.clear_register();
+                self.frontend.raise_flag(Flag::HideFeedback);
+                self.frontend.raise_flag(Flag::UpdateOffset);
+                self.frontend.raise_flag(Flag::CursorMoved);
             }
 
             "INSERT_TO_CMDLINE" => {

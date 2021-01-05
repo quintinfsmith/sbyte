@@ -69,6 +69,10 @@ impl FrontEnd {
     pub fn tick(&mut self, sbyte_editor: &BackEnd) -> Result<(), Box::<dyn Error>> {
         if !sbyte_editor.is_loading() {
 
+            if self.check_flag(Flag::HideFeedback) {
+                self.clear_feedback()?;
+            }
+
             if self.check_flag(Flag::SetupDisplays) {
                 match self.setup_displays(sbyte_editor) {
                     Ok(_) => {}
