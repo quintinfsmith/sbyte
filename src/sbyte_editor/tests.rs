@@ -1,6 +1,6 @@
 #[cfg (test)]
 mod tests {
-    use crate::sbyte_editor::BackEnd;
+    use crate::sbyte_editor::{BackEnd, ConverterRef, HexConverter, BinaryConverter, DecConverter};
 
     #[test]
     fn test_initializes_empty() {
@@ -65,5 +65,78 @@ mod tests {
 
         assert_eq!(editor.find_after("AB", 2).ok().unwrap(), Some((5, 7)));
 
+    }
+
+    #[test]
+    fn test_increment_byte() {
+        let mut editor = BackEnd::new();
+        assert!(editor.increment_byte(0).is_err(), "Didn't throw error when incrementing outside of valid range.");
+
+        editor.insert_bytes(0, vec![0]);
+        assert!(editor.increment_byte(0).is_ok(), "Failed to increment byte");
+        assert_eq!(
+            editor.undo_stack.last(),
+            Some(&(0,1, vec![0])),
+            "Undo stack wasn't properly pushed to"
+        );
+    }
+
+    #[test]
+    fn test_decrement_byte() {
+        let mut editor = BackEnd::new();
+        assert!(editor.decrement_byte(0).is_err(), "Didn't throw error when decrementing outside of valid range.");
+
+        editor.insert_bytes(0, vec![1]);
+        assert!(editor.decrement_byte(0).is_ok(), "Failed to decrement byte");
+        assert_eq!(
+            editor.undo_stack.last(),
+            Some(&(0,1, vec![1])),
+            "Undo stack wasn't properly pushed to"
+        );
+    }
+
+    #[test]
+    fn test_set_user_msg() {
+        let mut editor = BackEnd::new();
+        editor.set_user_msg("Test MSG");
+        assert_eq!(editor.get_user_msg(), Some(&"Test MSG".to_string()));
+    }
+    #[test]
+    fn test_set_user_error_msg() {
+        let mut editor = BackEnd::new();
+        editor.set_user_error_msg("Test MSG");
+        assert_eq!(editor.get_user_error_msg(), Some(&"Test MSG".to_string()));
+    }
+
+    #[test]
+    fn test_undo() {
+        let mut editor = BackEnd::new();
+        assert!(editor.undo().is_err(), "Didn't raise error when trying to undo from an empty stack");
+
+        editor.insert_bytes(0, vec![0]);
+
+        assert!(editor.undo().is_ok(), "Failed to undo");
+    }
+
+    #[test]
+    fn test_redo() {
+        let mut editor = BackEnd::new();
+
+        editor.insert_bytes(0, vec![0]);
+        assert!(editor.redo().is_err(), "Didn't raise error when trying to redo from an (presumably) empty stack");
+        editor.undo();
+
+        assert!(editor.redo().is_ok(), "Failed to redo");
+    }
+
+    #[test]
+    fn test_set_active_converter() {
+        let mut editor = BackEnd::new();
+        editor.set_active_converter(ConverterRef::HEX);
+        assert_eq!(editor.get_active_converter_ref(), ConverterRef::HEX);
+        editor.set_active_converter(ConverterRef::BIN);
+        assert_eq!(editor.get_active_converter_ref(), ConverterRef::BIN);
+        editor.set_active_converter(ConverterRef::DEC);
+        assert_eq!(editor.get_active_converter_ref(), ConverterRef::DEC);
     }
 }

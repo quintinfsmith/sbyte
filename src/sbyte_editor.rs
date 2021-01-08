@@ -114,7 +114,7 @@ impl BackEnd {
         match self.active_content.increment_byte(offset) {
             Ok(undo_bytes) => {
                 let undo_len = undo_bytes.len();
-                let undo_offset = offset - undo_len + 1;
+                let undo_offset = offset + 1 - undo_len;
                 self.push_to_undo_stack(undo_offset, undo_len, undo_bytes);
                 Ok(())
             }
@@ -128,7 +128,7 @@ impl BackEnd {
         match self.active_content.decrement_byte(offset) {
             Ok(undo_bytes) => {
                 let undo_len = undo_bytes.len();
-                let undo_offset = offset - undo_len + 1;
+                let undo_offset = offset + 1 - undo_len;
                 self.push_to_undo_stack(undo_offset, undo_len, undo_bytes);
                 Ok(())
             }
