@@ -18,8 +18,7 @@ use std::collections::HashMap;
 pub struct Inputter {
     input_managers: HashMap<String, InputNode>,
     input_buffer: Vec<u8>,
-    context: String,
-    context_switch: HashMap<String, String>
+    context: String
 }
 
 impl Inputter {
@@ -27,8 +26,7 @@ impl Inputter {
         Inputter {
             input_managers: HashMap::new(),
             input_buffer: Vec::new(),
-            context: "DEFAULT".to_string(),
-            context_switch: HashMap::new()
+            context: "DEFAULT".to_string()
         }
     }
 
@@ -44,13 +42,6 @@ impl Inputter {
                 let (cmd, completed_path) = root_node.fetch_command(input_buffer);
                 match cmd {
                     Some(funcref) => {
-                        match self.context_switch.get(&funcref) {
-                            Some(new_context) => {
-                                self.context = new_context.to_string();
-                            }
-                            None => ()
-                        }
-
                         match std::str::from_utf8(&self.input_buffer) {
                             Ok(string) => {
                                 output = Some((funcref, string.to_string()));
@@ -82,12 +73,6 @@ impl Inputter {
 
     pub fn set_context(&mut self, new_context: &str) {
         self.context = new_context.to_string();
-    }
-
-    pub fn assign_context_switch(&mut self, funcref: &str, context: &str) {
-        self.context_switch.entry(funcref.to_string())
-            .and_modify(|e| *e = context.to_string())
-            .or_insert(context.to_string());
     }
 }
 
@@ -346,16 +331,6 @@ impl InputInterface {
         let mode_overwrite = "OVERWRITE";
         let mode_cmd = "CMD";
 
-        inputter.assign_context_switch("MODE_SET_INSERT", mode_insert);
-        inputter.assign_context_switch("MODE_SET_OVERWRITE", mode_overwrite);
-        inputter.assign_context_switch("MODE_SET_APPEND", mode_insert);
-        inputter.assign_context_switch("MODE_SET_DEFAULT", mode_default);
-        inputter.assign_context_switch("ESCAPE_CMDLINE", mode_default);
-        inputter.assign_context_switch("MODE_SET_CMD", mode_cmd);
-        inputter.assign_context_switch("MODE_SET_SEARCH", mode_cmd);
-        inputter.assign_context_switch("MODE_SET_INSERT_SPECIAL", mode_cmd);
-        inputter.assign_context_switch("MODE_SET_OVERWRITE_SPECIAL", mode_cmd);
-        inputter.assign_context_switch("RUN_CUSTOM_COMMAND", mode_default);
 
 
         // Enable ctrl-c
@@ -736,23 +711,47 @@ impl InputInterface {
             "MODE_SET_INSERT" => {
                 self.clear_register();
                 self.backend.set_user_msg("--INSERT--");
+                self.inputter.set_context("INSERT");
             }
-
+            "MODE_SET_INSERT_SPECIAL" => {
+                match self.backend.get_commandline_mut() {
+                    Some(commandline) => {
+                        commandline.set_register("insert ");
+                        self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
+                    }
+                    None => ()
+                }
+            }
+            "MODE_SET_OVERWRITE_SPECIAL" => {
+                match self.backend.get_commandline_mut() {
+                    Some(commandline) => {
+                        commandline.set_register("overwrite ");
+                        self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
+                    }
+                    None => ()
+                }
+            }
             "MODE_SET_OVERWRITE" => {
                 self.clear_register();
                 self.backend.set_user_msg("--OVERWRITE--");
+                self.inputter.set_context("OVERWRITE");
             }
 
             "MODE_SET_APPEND" => {
                 self.clear_register();
                 self.ci_cursor_right(1);
                 self.backend.set_user_msg("--INSERT--");
+                self.inputter.set_context("INSERT");
             }
 
             "MODE_SET_DEFAULT" => {
                 self.clear_register();
                 self.frontend.raise_flag(Flag::UpdateOffset);
                 self.frontend.raise_flag(Flag::CursorMoved);
+                self.inputter.set_context("DEFAULT");
+
             }
 
             "MODE_SET_CMD" => {
@@ -760,6 +759,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.clear_register();
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
                     }
                     None => ()
                 }
@@ -770,6 +770,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("find ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
                     }
                     None => ()
                 }
@@ -801,10 +802,8 @@ impl InputInterface {
                 self.ci_insert_bytes(pattern, repeat);
             }
             "ESCAPE_CMDLINE" => {
-                self.clear_register();
                 self.frontend.raise_flag(Flag::HideFeedback);
-                self.frontend.raise_flag(Flag::UpdateOffset);
-                self.frontend.raise_flag(Flag::CursorMoved);
+                self.send_command("MODE_SET_DEFAULT", vec![]);
             }
 
             "INSERT_TO_CMDLINE" => {
@@ -873,6 +872,10 @@ impl InputInterface {
                     }
                     None => ()
                 }
+                if !self.user_feedback_ready() {
+                    self.frontend.raise_flag(Flag::HideFeedback);
+                }
+                self.inputter.set_context("DEFAULT");
             }
 
             "KILL" => {
@@ -917,10 +920,7 @@ impl InputInterface {
                 };
 
                 self.backend.set_active_converter(new_converter);
-                self.backend.adjust_viewport_offset();
-
-                self.frontend.raise_flag(Flag::SetupDisplays);
-                self.frontend.raise_flag(Flag::RemapActiveRows);
+                self.__resize_hook();
             }
 
             "SET_WIDTH" => {
@@ -1052,13 +1052,18 @@ impl InputInterface {
         self.backend.set_viewport_size(base_width, height);
     }
 
+    fn __resize_hook(&mut self) {
+        self.resize_backend_viewport();
+
+        self.frontend.raise_flag(Flag::SetupDisplays);
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::ForceRerow);
+    }
     fn auto_resize(&mut self) {
         if self.frontend.auto_resize() {
-            self.resize_backend_viewport();
-
-            self.frontend.raise_flag(Flag::SetupDisplays);
-            self.frontend.raise_flag(Flag::RemapActiveRows);
-            self.frontend.raise_flag(Flag::ForceRerow);
+            let delay = time::Duration::from_nanos(1_000_000_000);
+            thread::sleep(delay);
+            self.__resize_hook();
         }
     }
 
@@ -1477,16 +1482,12 @@ impl InputInterface {
 
     fn ci_lock_viewport_width(&mut self, new_width: usize) {
         self.lock_viewport_width(new_width);
-
-        self.frontend.raise_flag(Flag::SetupDisplays);
-        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.__resize_hook();
     }
 
     fn ci_unlock_viewport_width(&mut self) {
         self.unlock_viewport_width();
-
-        self.frontend.raise_flag(Flag::SetupDisplays);
-        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.__resize_hook();
     }
 
     fn get_locked_viewport_width(&mut self) -> Option<usize> {
@@ -1518,5 +1519,9 @@ impl InputInterface {
         for y in first_active_row .. first_active_row + viewport_height {
             self.frontend.raise_flag(Flag::UpdateRow(y));
         }
+    }
+
+    fn user_feedback_ready(&mut self) -> bool {
+        self.backend.get_user_msg().is_some() || self.backend.get_user_error_msg().is_some()
     }
 }
