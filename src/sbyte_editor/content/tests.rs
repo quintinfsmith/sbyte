@@ -41,7 +41,7 @@ mod tests {
         let slice = [45,46,47,23,12];
         content.insert_bytes(0, slice.to_vec());
         for (i, byte) in slice.iter().enumerate() {
-            assert_eq!(content.get_byte(i), *byte);
+            assert_eq!(content.get_byte(i), Some(*byte));
         }
     }
 
