@@ -38,6 +38,15 @@ mod tests {
         assert_eq!(editor.remove_bytes(0, 1), vec![65]);
         assert_eq!(editor.active_content.as_slice(), []);
         assert_eq!(editor.remove_bytes(1000, 300), vec![]);
+
+    }
+    #[test]
+    fn test_remove_bytes_at_cursor() {
+        let mut editor = BackEnd::new();
+        editor.insert_bytes(0, vec![65]);
+        editor.set_cursor_offset(0);
+        assert_eq!(editor.remove_bytes_at_cursor(), vec![65]);
+        assert_eq!(editor.active_content.as_slice(), []);
     }
 
     #[test]
@@ -56,15 +65,47 @@ mod tests {
     #[test]
     fn test_find() {
         let mut editor = BackEnd::new();
-        editor.insert_bytes(0, vec![65, 66, 0, 0, 65, 65, 66, 65]);
-
-        let found = editor.find_all("AB").ok().unwrap();
-        assert_eq!(found.len(), 2);
-        assert_eq!(found[0].0, 0);
-        assert_eq!(found[1].0, 5);
-
+        editor.insert_bytes(0, vec![65, 66, 0, 0, 65, 65, 66, 60, 0x30]);
+        assert_eq!(
+            editor.find_all("AB").ok(),
+            Some(vec![(0,2), (5,7)])
+        );
         assert_eq!(editor.find_after("AB", 2).ok().unwrap(), Some((5, 7)));
 
+        assert_eq!(
+            editor.find_all("\\x4.").ok(),
+            Some(vec![(0,1), (1,2), (4,5), (5,6), (6,7)])
+        );
+        assert_eq!(
+            editor.find_all("\\x.0").ok(),
+            Some(vec![(2,3), (3,4), (8,9)])
+        );
+
+        editor.remove_bytes(0, 9);
+
+        editor.insert_bytes(
+            0,
+            vec![0xFF, 0x0F, 0xF0, 0x77, 0x7F, 0xF7, 0xC0, 0x0C]
+        );
+
+        assert_eq!(
+            editor.find_all("\\b.1111111").ok(),
+            Some(vec![(0,1), (4,5)])
+        );
+
+        assert_eq!(
+            editor.find_all("\\b.111.111").ok(),
+            Some(vec![(0,1), (3,4), (4,5), (5,6)])
+        );
+
+        assert_eq!(
+            editor.find_all("\\b0000....").ok(),
+            Some(vec![(1,2), (7,8)])
+        );
+
+        assert!(editor.find_all("\\x..").is_err());
+        assert!(editor.find_all("\\b0000000b").is_err());
+        assert!(editor.find_all("\\b00000.0b").is_err());
     }
 
     #[test]
