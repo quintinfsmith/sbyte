@@ -28,6 +28,29 @@ mod tests {
         // inserting out of range should ignore insertion
         editor.insert_bytes(10, vec![65]);
         assert_eq!(editor.active_content.as_slice(), [65]);
+
+        editor.set_cursor_offset(1);
+        editor.insert_bytes_at_cursor(vec![13,15,16]);
+        assert_eq!(editor.active_content.as_slice(), [65, 13,15,16]);
+    }
+
+    #[test]
+    fn test_overwrite_bytes() {
+        let mut editor = BackEnd::new();
+
+        editor.overwrite_bytes(0, vec![65]);
+        assert_eq!(editor.active_content.as_slice(), [65]);
+
+        editor.overwrite_bytes(0, vec![24, 25, 26]);
+        assert_eq!(editor.active_content.as_slice(), [24, 25, 26]);
+
+        // overwriting out of range should ignore overwrite
+        editor.overwrite_bytes(10, vec![65]);
+        assert_eq!(editor.active_content.as_slice(), [24, 25, 26]);
+
+        editor.set_cursor_offset(1);
+        editor.overwrite_bytes_at_cursor(vec![13,15,16]);
+        assert_eq!(editor.active_content.as_slice(), [24, 13,15,16]);
     }
 
     #[test]
@@ -179,5 +202,47 @@ mod tests {
         assert_eq!(editor.get_active_converter_ref(), ConverterRef::BIN);
         editor.set_active_converter(ConverterRef::DEC);
         assert_eq!(editor.get_active_converter_ref(), ConverterRef::DEC);
+    }
+
+    #[test]
+    fn test_viewport_size() {
+        let mut editor = BackEnd::new();
+        editor.set_viewport_size(20,20);
+        assert_eq!(editor.get_viewport_size(), (20, 20));
+    }
+
+    #[test]
+    fn test_viewport_offset() {
+        let mut editor = BackEnd::new();
+        editor.set_viewport_offset(10);
+        assert_eq!(editor.get_viewport_offset(), 10);
+    }
+
+    #[test]
+    fn test_active_file_path() {
+        let mut editor = BackEnd::new();
+        assert_eq!(editor.get_active_file_path(), None);
+
+        editor.active_file_path = Some("testpath".to_string());
+        assert_eq!(editor.get_active_file_path(), Some(&"testpath".to_string()));
+    }
+
+    #[test]
+    fn test_cursor_movement() {
+        let mut editor = BackEnd::new();
+        editor.set_viewport_size(3,3);
+        editor.insert_bytes(0, vec![0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
+        editor.set_cursor_offset(1);
+        assert_eq!(editor.get_cursor_offset(), 1);
+        editor.cursor_next_byte();
+        assert_eq!(editor.get_cursor_offset(), 2);
+        editor.cursor_prev_byte();
+        assert_eq!(editor.get_cursor_offset(), 1);
+
+        editor.set_cursor_offset(3);
+        editor.cursor_next_line();
+        assert_eq!(editor.get_cursor_offset(), 6);
+        editor.cursor_prev_line();
+        assert_eq!(editor.get_cursor_offset(), 3);
     }
 }
