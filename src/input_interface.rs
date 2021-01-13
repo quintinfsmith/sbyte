@@ -574,6 +574,7 @@ impl InputInterface {
     }
     fn send_command(&mut self, funcref: &str, arguments: Vec<String>) -> Result<(), Box<dyn Error>> {
         match funcref {
+
             "ASSIGN_INPUT" => {
                 let new_funcref: String = match arguments.get(0) {
                     Some(_new_funcref) => {
@@ -645,6 +646,13 @@ impl InputInterface {
             "CURSOR_LENGTH_RIGHT" => {
                 let repeat = self.grab_register(1);
                 self.ci_cursor_length_right(repeat);
+            }
+
+            "REPLACE_ALL" => {
+                let change_from = arguments.get(0).unwrap();
+                let change_to = arguments.get(1).unwrap();
+
+                self.ci_replace(change_from, change_to);
             }
 
             "JUMP_TO_REGISTER" => {
@@ -1176,6 +1184,28 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::RemapActiveRows);
         self.frontend.raise_flag(Flag::CursorMoved);
         self.frontend.raise_flag(Flag::UpdateOffset);
+    }
+
+    fn ci_replace(&mut self, old_pattern: &str, new_pattern: &str) {
+        let result = self.backend.replace(old_pattern, new_pattern.as_bytes().to_vec());
+
+        match result {
+            Ok(hits) => {
+                if hits.len() > 0 {
+                    self.backend.set_user_msg(&format!("Replaced {} matches", hits.len()));
+                } else {
+                    self.backend.set_user_error_msg(&format!("Pattern \"{}\" not found", old_pattern));
+                }
+            }
+            Err(_e) => {
+                // TODO
+            }
+        }
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+
     }
 
     fn ci_jump_to_next(&mut self, argument: Option<&str>, repeat: usize) {

@@ -138,11 +138,7 @@ mod tests {
 
         editor.insert_bytes(0, vec![0]);
         assert!(editor.increment_byte(0).is_ok(), "Failed to increment byte");
-        assert_eq!(
-            editor.undo_stack.last(),
-            Some(&(0,1, vec![0])),
-            "Undo stack wasn't properly pushed to"
-        );
+
     }
 
     #[test]
@@ -152,11 +148,12 @@ mod tests {
 
         editor.insert_bytes(0, vec![1]);
         assert!(editor.decrement_byte(0).is_ok(), "Failed to decrement byte");
-        assert_eq!(
-            editor.undo_stack.last(),
-            Some(&(0,1, vec![1])),
-            "Undo stack wasn't properly pushed to"
-        );
+
+        let task = editor.undo_stack.last();
+        assert!(task.is_some());
+        assert_eq!(task.unwrap().0, 0);
+        assert_eq!(task.unwrap().1, 1);
+        assert_eq!(task.unwrap().2, vec![1]);
     }
 
     #[test]

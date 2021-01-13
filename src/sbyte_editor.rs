@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{Write, Read};
 use std::error::Error;
 use std::fmt;
+use std::time::{Duration, Instant};
 use regex::bytes::Regex;
 
 use wrecked::RectError;
@@ -60,8 +61,8 @@ pub struct BackEnd {
     active_file_path: Option<String>,
     cursor: Cursor,
     active_converter: ConverterRef,
-    undo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
-    redo_stack: Vec<(usize, usize, Vec<u8>)>, // Position, bytes to remove, bytes to insert
+    undo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
+    redo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
 
     // Commandable
     commandline: CommandLine,
@@ -101,6 +102,7 @@ impl BackEnd {
         output.assign_line_command("w", "SAVE");
         output.assign_line_command("wq", "SAVEQUIT");
         output.assign_line_command("find", "JUMP_TO_NEXT");
+        output.assign_line_command("fr", "REPLACE_ALL");
         output.assign_line_command("insert", "INSERT_STRING");
         output.assign_line_command("overwrite", "OVERWRITE");
         output.assign_line_command("setcmd", "ASSIGN_INPUT");
@@ -153,38 +155,76 @@ impl BackEnd {
     pub fn add_search_history(&mut self, search_string: String) {
         self.search_history.push(search_string.clone());
     }
-    pub fn undo(&mut self) -> Result<(), SbyteError> {
-        let task = self.undo_stack.pop();
-        match task {
-            Some(_task) => {
-                let redo_task = self.do_undo_or_redo(_task);
-                self.redo_stack.push(redo_task);
-                Ok(())
+    pub fn undo(&mut self) -> Result<usize, SbyteError> {
+        let mut tasks_undone = 0;
+        let threshold = Duration::from_nanos(50_000_000);
+        let mut latest_instant: Option<Instant> = None;
+        loop {
+            let mut task_option = self.undo_stack.pop();
+            match task_option {
+                Some(task) => {
+                    if match latest_instant {
+                        Some(then) => { (then - task.3) <= threshold }
+                        None => { true }
+                    } {
+                        latest_instant = Some(task.3.clone());
+                        let redo_task = self.do_undo_or_redo(task);
+                        self.redo_stack.push(redo_task);
+                        tasks_undone += 1;
+                    } else {
+                        self.undo_stack.push(task);
+                        break;
+                    }
+                }
+                None => {
+                    break;
+                }
             }
-            None => {
-                Err(SbyteError::EmptyStack)
-            }
+        }
+
+        if tasks_undone > 0 {
+            Ok(tasks_undone)
+        } else {
+            Err(SbyteError::EmptyStack)
         }
     }
 
-    pub fn redo(&mut self) -> Result<(), SbyteError> {
-        let task = self.redo_stack.pop();
-        match task {
-            Some(_task) => {
-                let undo_task = self.do_undo_or_redo(_task);
-                // NOTE: Not using self.push_to_undo_stack. don't want to clear the redo stack
-                self.undo_stack.push(undo_task);
-                Ok(())
+    pub fn redo(&mut self) -> Result<usize, SbyteError> {
+        let mut tasks_redone = 0;
+        let threshold = Duration::from_nanos(50_000_000);
+        let mut latest_instant: Option<Instant> = None;
+        loop {
+            let mut task_option = self.redo_stack.pop();
+            match task_option {
+                Some(task) => {
+                    if match latest_instant {
+                        Some(then) => { (then - task.3) <= threshold }
+                        None => { true }
+                    } {
+                        latest_instant = Some(task.3.clone());
+                        let redo_task = self.do_undo_or_redo(task);
+                        self.undo_stack.push(redo_task);
+                        tasks_redone += 1;
+                    } else {
+                        self.undo_stack.push(task);
+                        break;
+                    }
+                }
+                None => {
+                    break;
+                }
             }
-            None => {
-                Err(SbyteError::EmptyStack)
-            }
+        }
+
+        if tasks_redone > 0 {
+            Ok(tasks_redone)
+        } else {
+            Err(SbyteError::EmptyStack)
         }
     }
 
-
-    fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>)) -> (usize, usize, Vec<u8>) {
-        let (offset, bytes_to_remove, bytes_to_insert) = task;
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>, Instant)) -> (usize, usize, Vec<u8>, Instant) {
+        let (offset, bytes_to_remove, bytes_to_insert, _) = task;
 
         self.set_cursor_offset(offset);
 
@@ -200,7 +240,7 @@ impl BackEnd {
             self.active_content.insert_bytes(offset, bytes_to_insert);
         }
 
-        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert)
+        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, Instant::now())
     }
 
     fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Vec<u8>) {
@@ -210,9 +250,10 @@ impl BackEnd {
         let is_remove = bytes_to_remove > 0 && bytes_to_insert.len() == 0;
         let is_overwrite = !is_insert && !is_remove;
 
+
         let mut was_merged = false;
         match self.undo_stack.last_mut() {
-            Some((next_offset, next_bytes_to_remove, next_bytes_to_insert)) => {
+            Some((next_offset, next_bytes_to_remove, next_bytes_to_insert, prev_timestamp)) => {
                 let will_insert = *next_bytes_to_remove == 0 && next_bytes_to_insert.len() > 0;
                 let will_remove = *next_bytes_to_remove > 0 && next_bytes_to_insert.len() == 0;
                 let will_overwrite = !will_insert && !will_remove;
@@ -235,12 +276,16 @@ impl BackEnd {
                     }
                 } else if is_overwrite && will_overwrite {
                 }
+
+                if was_merged {
+                    *prev_timestamp = Instant::now();
+                }
             }
             None => ()
         }
 
         if !was_merged {
-            self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert));
+            self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert, Instant::now()));
         }
     }
     pub fn set_active_converter(&mut self, converter: ConverterRef) {
@@ -268,20 +313,22 @@ impl BackEnd {
         }
     }
 
-    fn replace(&mut self, search_for: &str, replace_with: Vec<u8>) -> Result<(), SbyteError> {
+    pub fn replace(&mut self, search_for: &str, replace_with: Vec<u8>) -> Result<Vec<usize>, SbyteError> {
         let mut matches = self.find_all(&search_for)?;
         // replace in reverse order
+        matches.sort();
         matches.reverse();
 
+        let mut removed_bytes: Vec<u8>;
+        let mut hit_positions: Vec<usize> = Vec::new();
         for (start, end) in matches.iter() {
-            for _ in *start..*end {
-                self.active_content.remove_bytes(*start, 1);
-            }
-
+            hit_positions.push(*start);
+            removed_bytes = self.active_content.remove_bytes(*start, *end - *start);
             self.active_content.insert_bytes(*start, replace_with.clone());
+            self.push_to_undo_stack(*start, replace_with.len(), removed_bytes.clone());
         }
 
-        Ok(())
+        Ok(hit_positions)
     }
 
     pub fn make_selection(&mut self, offset: usize, length: usize) {
