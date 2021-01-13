@@ -1,6 +1,7 @@
 #[cfg (test)]
 mod tests {
-    use crate::sbyte_editor::{BackEnd, ConverterRef, HexConverter, BinaryConverter, DecConverter};
+    use crate::sbyte_editor::{BackEnd, ConverterRef, HexConverter, BinaryConverter, DecConverter, SbyteError, parse_words, string_to_integer, string_to_bytes};
+    use std::{time, thread};
 
     #[test]
     fn test_initializes_empty() {
@@ -175,8 +176,22 @@ mod tests {
         assert!(editor.undo().is_err(), "Didn't raise error when trying to undo from an empty stack");
 
         editor.insert_bytes(0, vec![0]);
-
         assert!(editor.undo().is_ok(), "Failed to undo");
+
+        editor.insert_bytes(0, vec![0]);
+        editor.insert_bytes(0, vec![0]);
+        editor.insert_bytes(0, vec![0]);
+        assert_eq!(editor.undo_stack.len(), 3);
+        assert!(editor.undo().is_ok());
+        assert_eq!(editor.undo_stack.len(), 0, "Sequential tasks aren't getting undone");
+
+        editor.insert_bytes(0, vec![0]);
+        thread::sleep(time::Duration::from_nanos(100_000_000));
+        editor.insert_bytes(0, vec![0]);
+        assert!(editor.undo().is_ok());
+        assert_eq!(editor.undo_stack.len(), 1, "Undo is merging unrelated tasks");
+
+
     }
 
     #[test]
@@ -188,6 +203,22 @@ mod tests {
         editor.undo();
 
         assert!(editor.redo().is_ok(), "Failed to redo");
+
+        assert_eq!(editor.redo_stack.len(), 0);
+
+        thread::sleep(time::Duration::from_nanos(60_000_000));
+
+        editor.insert_bytes(0, vec![0]);
+        editor.insert_bytes(0, vec![0]);
+        editor.undo();
+        assert_eq!(editor.redo_stack.len(), 2);
+        editor.undo();
+        assert_eq!(editor.redo_stack.len(), 3);
+        editor.redo();
+        assert_eq!(editor.redo_stack.len(), 1);
+        editor.redo();
+        assert_eq!(editor.redo_stack.len(), 0);
+
     }
 
     #[test]
@@ -227,7 +258,7 @@ mod tests {
     #[test]
     fn test_cursor_movement() {
         let mut editor = BackEnd::new();
-        editor.set_viewport_size(3,3);
+        editor.set_viewport_size(3,10);
         editor.insert_bytes(0, vec![0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
         editor.set_cursor_offset(1);
         assert_eq!(editor.get_cursor_offset(), 1);
@@ -241,5 +272,152 @@ mod tests {
         assert_eq!(editor.get_cursor_offset(), 6);
         editor.cursor_prev_line();
         assert_eq!(editor.get_cursor_offset(), 3);
+
+        editor.set_cursor_offset(9);
+        editor.set_cursor_length(1);
+        editor.cursor_decrease_length();
+        assert_eq!(editor.get_cursor_offset(), 8);
+        assert_eq!(editor.get_cursor_length(), 2);
+        editor.cursor_decrease_length();
+        assert_eq!(editor.get_cursor_offset(), 7);
+        assert_eq!(editor.get_cursor_length(), 3);
+        editor.cursor_increase_length();
+        assert_eq!(editor.get_cursor_offset(), 8);
+        assert_eq!(editor.get_cursor_length(), 2);
+
+        editor.set_cursor_offset(9);
+        editor.set_cursor_length(1);
+        editor.cursor_increase_length();
+        assert_eq!(editor.get_cursor_offset(), 9);
+        assert_eq!(editor.get_cursor_length(), 2);
+        editor.cursor_increase_length();
+        assert_eq!(editor.get_cursor_offset(), 9);
+        assert_eq!(editor.get_cursor_length(), 3);
+        editor.cursor_decrease_length();
+        assert_eq!(editor.get_cursor_offset(), 9);
+        assert_eq!(editor.get_cursor_length(), 2);
+
+        editor.set_cursor_offset(18);
+        editor.set_cursor_length(4);
+        assert_eq!(editor.get_cursor_length(), 1, "Cursor length was set to overflow");
+
+        editor.set_cursor_offset(9);
+        editor.set_cursor_length(1);
+        editor.cursor_increase_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 4);
+        editor.cursor_increase_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 7);
+        editor.cursor_decrease_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 4);
+        editor.cursor_decrease_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 1);
+        editor.cursor_decrease_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 4);
+        assert_eq!(editor.get_cursor_offset(), 6);
+        editor.cursor_decrease_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 7);
+        assert_eq!(editor.get_cursor_offset(), 3);
+
+        editor.cursor_increase_length_by_line();
+        editor.cursor_increase_length_by_line();
+        assert_eq!(editor.get_cursor_length(), 1);
+        assert_eq!(editor.get_cursor_offset(), 9);
+    }
+
+    #[test]
+    fn test_get_display_ratio() {
+        let mut editor = BackEnd::new();
+        editor.set_active_converter(ConverterRef::HEX);
+        assert_eq!(editor.get_display_ratio(), 3);
+
+        editor.set_active_converter(ConverterRef::BIN);
+        assert_eq!(editor.get_display_ratio(), 9);
+
+        editor.set_active_converter(ConverterRef::DEC);
+        assert_eq!(editor.get_display_ratio(), 4);
+    }
+
+    #[test]
+    fn test_user_feedback() {
+        let mut editor = BackEnd::new();
+        let test_msg = "Test MSG";
+        let test_error = "Test Error MSG";
+        assert!(editor.get_user_msg().is_none());
+        editor.set_user_msg(test_msg);
+        assert_eq!(editor.get_user_msg(), Some(&test_msg.to_string()));
+        editor.unset_user_msg();
+        assert!(editor.get_user_msg().is_none());
+
+        assert!(editor.get_user_error_msg().is_none());
+        editor.set_user_error_msg(test_error);
+        assert_eq!(editor.get_user_error_msg(), Some(&test_error.to_string()));
+        editor.unset_user_error_msg();
+        assert!(editor.get_user_error_msg().is_none());
+    }
+
+    #[test]
+    fn test_try_command() {
+        let mut editor = BackEnd::new();
+        let mut result = editor.try_command("badcmd");
+        match result {
+            Ok(_) => {
+                assert!(false);
+            }
+            Err(e) => {
+                assert_eq!(e, SbyteError::InvalidCommand("badcmd".to_string()));
+            }
+        }
+
+        editor.assign_line_command("testcmd", "TEST");
+        result = editor.try_command("testcmd arg1 arg2");
+        assert_eq!(result, Ok(("TEST".to_string(), vec!["arg1".to_string(), "arg2".to_string()])));
+
+        result = editor.try_command("");
+        assert_eq!(result, Err(SbyteError::NoCommandGiven));
+    }
+
+    #[test]
+    fn test_replace() {
+        let mut editor = BackEnd::new();
+        let slice = [0,4,2,0];
+        editor.insert_bytes(0, slice.to_vec());
+
+        editor.replace("\\x00", vec![87]);
+        assert_eq!(editor.get_active_content(), &[87,4,2,87]);
+        editor.replace("\\x04", vec![55,66,77]);
+        assert_eq!(editor.get_active_content(), &[87,55,66,77,2,87]);
+
+    }
+
+    #[test]
+    fn test_parse_words() {
+        let test_string = "word   one two \\\" \\  'double word' 'dub\\'two' \"b l a h\"";
+        let assumption = [
+            "word".to_string(),
+            "one".to_string(),
+            "two".to_string(),
+            "\"".to_string(),
+            " ".to_string(),
+            "double word".to_string(),
+            "dub'two".to_string(),
+            "b l a h".to_string(),
+        ];
+        let words = parse_words(test_string);
+        assert_eq!(words, assumption);
+    }
+
+    #[test]
+    fn test_string_to_integer() {
+        assert_eq!(string_to_integer("12345"), Ok(12345));
+        assert_eq!(string_to_integer("\\b1010"), Ok(10));
+        assert_eq!(string_to_integer("\\x20"), Ok(32));
+    }
+
+    #[test]
+    fn test_string_to_bytes() {
+        assert_eq!(string_to_bytes("Test"), Ok("Test".as_bytes().to_vec()));
+        assert_eq!(string_to_bytes("\\x90"), Ok(vec![0x90]));
+        assert_eq!(string_to_bytes("\\b0100000010000000"), Ok(vec![64, 128]));
+        assert_eq!(string_to_bytes("\\d16391"), Ok(vec![64, 7]));
     }
 }

@@ -24,7 +24,7 @@ use cursor::Cursor;
 use command_line::CommandLine;
 use content::Content;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum SbyteError {
     PathNotSet,
     SetupFailed(RectError),
@@ -38,6 +38,7 @@ pub enum SbyteError {
     FailedToKill,
     EmptyStack,
     NoCommandGiven,
+    ReadFail,
     InvalidCommand(String)
 }
 
@@ -155,6 +156,7 @@ impl BackEnd {
     pub fn add_search_history(&mut self, search_string: String) {
         self.search_history.push(search_string.clone());
     }
+
     pub fn undo(&mut self) -> Result<usize, SbyteError> {
         let mut tasks_undone = 0;
         let threshold = Duration::from_nanos(50_000_000);
@@ -198,7 +200,7 @@ impl BackEnd {
             match task_option {
                 Some(task) => {
                     if match latest_instant {
-                        Some(then) => { (then - task.3) <= threshold }
+                        Some(then) => { (task.3 - then) <= threshold }
                         None => { true }
                     } {
                         latest_instant = Some(task.3.clone());
@@ -224,7 +226,7 @@ impl BackEnd {
     }
 
     fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>, Instant)) -> (usize, usize, Vec<u8>, Instant) {
-        let (offset, bytes_to_remove, bytes_to_insert, _) = task;
+        let (offset, bytes_to_remove, bytes_to_insert, timestamp) = task;
 
         self.set_cursor_offset(offset);
 
@@ -240,7 +242,7 @@ impl BackEnd {
             self.active_content.insert_bytes(offset, bytes_to_insert);
         }
 
-        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, Instant::now())
+        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, timestamp)
     }
 
     fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Vec<u8>) {
@@ -288,6 +290,7 @@ impl BackEnd {
             self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert, Instant::now()));
         }
     }
+
     pub fn set_active_converter(&mut self, converter: ConverterRef) {
         self.active_converter = converter;
     }
@@ -306,9 +309,6 @@ impl BackEnd {
             }
             ConverterRef::DEC => {
                 Box::new(DecConverter {})
-            }
-            _ => {
-                Box::new(HexConverter {})
             }
         }
     }
@@ -808,8 +808,8 @@ impl BackEnd {
         self.search_history.clone()
     }
 
-    pub fn try_command(&mut self, query: &str) -> Result<(String, Vec<String>), Box<dyn Error>> {
-        let mut words = parse_words(query.to_string());
+    pub fn try_command(&mut self, query: &str) -> Result<(String, Vec<String>), SbyteError> {
+        let mut words = parse_words(query);
         if words.len() > 0 {
             let cmd = words.remove(0);
             let mut arguments: Vec<String> = vec![];
@@ -823,11 +823,11 @@ impl BackEnd {
                     Ok((_funcref.to_string(), arguments.clone()))
                 }
                 None => {
-                    Err(Box::new(SbyteError::InvalidCommand(query.to_string())))
+                    Err(SbyteError::InvalidCommand(query.to_string()))
                 }
             }
         } else {
-            Err(Box::new(SbyteError::NoCommandGiven))
+            Err(SbyteError::NoCommandGiven)
         }
     }
 
@@ -850,7 +850,8 @@ impl BackEnd {
     }
 }
 
-pub fn parse_words(input_string: String) -> Vec<String> {
+/// Takes strings input within the program and parses the words.
+pub fn parse_words(input_string: &str) -> Vec<String> {
     let mut output = Vec::new();
 
     let mut delimiters = HashMap::new();
@@ -867,19 +868,22 @@ pub fn parse_words(input_string: String) -> Vec<String> {
                 if !is_escaped {
                     if c == '\\' {
                         is_escaped = true;
-                    }
-                    match delimiters.get(&c) {
-                        Some(test_opener) => {
-                            if *test_opener == o_c {
-                                opener = None;
-                                if working_word.len() > 0 {
-                                    output.push(working_word.clone());
+                    } else {
+                        match delimiters.get(&c) {
+                            Some(test_opener) => {
+                                if *test_opener == o_c {
+                                    opener = None;
+                                    if working_word.len() > 0 {
+                                        output.push(working_word.clone());
+                                    }
+                                    working_word = "".to_string();
+                                } else {
+                                    working_word.push(c);
                                 }
-                                working_word = "".to_string();
                             }
-                        }
-                        None => {
-                            working_word.push(c);
+                            None => {
+                                working_word.push(c);
+                            }
                         }
                     }
                 } else {
@@ -888,17 +892,20 @@ pub fn parse_words(input_string: String) -> Vec<String> {
                 }
             }
             None => {
-                if c == '\\' {
-                    is_escaped = true;
-                }
-
-                if c != ' ' {
-
-                    if c != '"' && c != '\'' {
-                        opener = Some(' ');
-                        working_word.push(c);
-                    } else {
-                        opener = Some(c);
+                if is_escaped {
+                    opener = Some(' ');
+                    working_word.push(c);
+                    is_escaped = false;
+                } else {
+                    if c == '\\' {
+                        is_escaped = true;
+                    } else if c != ' ' {
+                        if c != '"' && c != '\'' {
+                            opener = Some(' ');
+                            working_word.push(c);
+                        } else {
+                            opener = Some(c);
+                        }
                     }
                 }
             }
@@ -911,6 +918,7 @@ pub fn parse_words(input_string: String) -> Vec<String> {
     output
 }
 
+/// Take number string provided in the editor and convert it to integer
 pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
     let mut use_converter: Option<Box<dyn Converter>> = None;
 
@@ -921,9 +929,6 @@ pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
                 98 => { // b
                     use_converter = Some(Box::new(BinaryConverter {}));
                 }
-                100 => { // d
-                    use_converter = Some(Box::new(DecConverter {}));
-                }
                 120 => { // x
                     use_converter = Some(Box::new(HexConverter {}));
                 }
@@ -933,7 +938,7 @@ pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
     }
     match use_converter {
         Some(converter) => {
-            converter.decode_integer(input_bytes.split_at(2).1.to_vec())
+            converter.decode_integer(input_bytes[2..].to_vec())
         }
         None => {
             let mut output = 0;
@@ -951,7 +956,7 @@ pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
 }
 
 // Convert argument string to bytes.
-pub fn string_to_bytes(input_string: String) -> Result<Vec<u8>, ConverterError> {
+pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, ConverterError> {
     let mut use_converter: Option<Box<dyn Converter>> = None;
 
     let input_bytes = input_string.as_bytes().to_vec();
@@ -974,7 +979,7 @@ pub fn string_to_bytes(input_string: String) -> Result<Vec<u8>, ConverterError> 
 
     match use_converter {
         Some(converter) => {
-            converter.decode(input_bytes.split_at(2).1.to_vec())
+            converter.decode(input_bytes[2..].to_vec())
         }
         None => {
             Ok(input_string.as_bytes().to_vec())

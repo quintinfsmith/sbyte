@@ -210,7 +210,7 @@ impl InputInterface {
         interface
     }
 
-    fn setup_default_controls(&mut self) -> Result<(), Box<dyn Error>> {
+    fn setup_default_controls(&mut self) -> Result<(), SbyteError> {
         // Default Controls
         self.send_command("ASSIGN_INPUT", vec!["TOGGLE_CONVERTER".to_string(), "EQUALS".to_string()])?;
         self.send_command("ASSIGN_INPUT", vec!["CURSOR_DOWN".to_string(), "J_LOWER".to_string()])?;
@@ -361,7 +361,7 @@ impl InputInterface {
         inputter
     }
 
-    pub fn main(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn main(&mut self) -> Result<(), SbyteError> {
         self.spawn_ctrl_c_daemon();
         self.auto_resize();
         let mut _input_daemon = self.spawn_input_daemon();
@@ -572,7 +572,7 @@ impl InputInterface {
 
         key_map
     }
-    fn send_command(&mut self, funcref: &str, arguments: Vec<String>) -> Result<(), Box<dyn Error>> {
+    fn send_command(&mut self, funcref: &str, arguments: Vec<String>) -> Result<(), SbyteError> {
         match funcref {
 
             "ASSIGN_INPUT" => {
@@ -992,7 +992,7 @@ impl InputInterface {
         Ok(())
     }
 
-    pub fn load_config(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
+    pub fn load_config(&mut self, file_path: &str) -> Result<(), SbyteError> {
         match File::open(file_path) {
             Ok(mut file) => {
                 let file_length = match file.metadata() {
@@ -1005,7 +1005,12 @@ impl InputInterface {
                 };
 
                 let mut buffer: Vec<u8> = vec![0; file_length as usize];
-                file.read(&mut buffer)?;
+                match file.read(&mut buffer) {
+                    Ok(_) => { }
+                    Err(_e) => {
+                        Err(SbyteError::ReadFail)?;
+                    }
+                }
 
                 let working_cmds: Vec<&str> = std::str::from_utf8(buffer.as_slice()).unwrap().split("\n").collect();
                 for cmd in working_cmds.iter() {
@@ -1018,7 +1023,7 @@ impl InputInterface {
         Ok(())
     }
 
-    fn query(&mut self, query: &str) -> Result<(), Box<dyn Error>> {
+    fn query(&mut self, query: &str) -> Result<(), SbyteError> {
 
         let result = match self.backend.try_command(query) {
             Ok((funcref, args)) => {
@@ -1364,7 +1369,7 @@ impl InputInterface {
     }
 
     fn ci_insert_string(&mut self, argument: &str, repeat: usize) {
-        match string_to_bytes(argument.to_string()) {
+        match string_to_bytes(argument) {
             Ok(converted_bytes) => {
                 self.ci_insert_bytes(converted_bytes.clone(), repeat);
             }
@@ -1387,7 +1392,7 @@ impl InputInterface {
     }
 
     fn ci_overwrite_string(&mut self, argument: &str, repeat: usize) {
-        match string_to_bytes(argument.to_string()) {
+        match string_to_bytes(argument) {
             Ok(converted_bytes) => {
                 self.ci_overwrite_bytes(converted_bytes.clone(), repeat);
             }

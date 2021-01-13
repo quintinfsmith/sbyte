@@ -1,3 +1,4 @@
+#[derive(Debug, PartialEq, Eq)]
 pub enum ConverterError {
     InvalidDigit
 }
@@ -6,7 +7,6 @@ pub enum ConverterError {
 pub enum ConverterRef {
     HEX,
     BIN,
-    OCT,
     DEC
 }
 
@@ -136,7 +136,9 @@ impl Converter for HexConverter {
                 }
             }
         }
-
+        if output.is_ok() {
+            output = Ok(output_number);
+        }
         output
     }
 }
@@ -205,7 +207,6 @@ impl Converter for BinaryConverter {
         }
 
         if output.is_ok() {
-            output_bytes.reverse();
             output = Ok(output_bytes);
         }
 
@@ -216,7 +217,7 @@ impl Converter for BinaryConverter {
         let mut output_number: usize = 0;
         let mut output = Ok(output_number);
 
-        for byte in byte_string.iter().rev() {
+        for byte in byte_string.iter() {
             output_number *= 2;
             if *byte == 48 || *byte == 49 {
                 output_number += (*byte as usize) - 48;
