@@ -142,7 +142,6 @@ impl Content {
     // TODO: Overlapping hits
     // eg when look for 33 in 333, there should be 2 hits.
     pub fn find_all(&self, search_for: &str) -> Result<Vec<(usize, usize)>, regex::Error> {
-
         let working_string = format!("(?-u:{})", search_for);
 
         match Regex::new(&working_string) {
