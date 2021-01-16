@@ -41,7 +41,7 @@ impl CommandLine {
     }
 
     pub fn apply_register(&mut self) -> Option<String> {
-        let output = self.register.replace("\\", "\\\\").clone();
+        let output = self.register.clone();
         self.history.push(self.register.clone());
         self.register = "".to_string();
         Some(output)

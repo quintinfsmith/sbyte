@@ -404,6 +404,8 @@ mod tests {
         ];
         let words = parse_words(test_string);
         assert_eq!(words, assumption);
+
+        assert_eq!(parse_words("\\x90"), vec!["\\x90".to_string()]);
     }
 
     #[test]

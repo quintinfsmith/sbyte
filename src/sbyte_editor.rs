@@ -887,12 +887,24 @@ pub fn parse_words(input_string: &str) -> Vec<String> {
                         }
                     }
                 } else {
+                    match c {
+                        ' ' | '\'' | '"' => { }
+                        _ => {
+                            working_word.push('\\');
+                        }
+                    }
                     working_word.push(c);
                     is_escaped = false;
                 }
             }
             None => {
                 if is_escaped {
+                    match c {
+                        ' ' | '\'' | '"' => { }
+                        _ => {
+                            working_word.push('\\');
+                        }
+                    }
                     opener = Some(' ');
                     working_word.push(c);
                     is_escaped = false;
