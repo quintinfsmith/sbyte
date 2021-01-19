@@ -275,6 +275,9 @@ impl Converter for HumanConverter {
             0..=31 => {
                 output.push(46);
             }
+            127..=255 => {
+                output.push(46);
+            }
             _ => {
                 output.push(byte);
             }
@@ -284,7 +287,6 @@ impl Converter for HumanConverter {
     }
 
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
-
         Ok(bytes)
     }
 
