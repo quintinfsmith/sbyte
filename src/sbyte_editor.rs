@@ -65,6 +65,7 @@ impl From<ContentError> for SbyteError {
         }
     }
 }
+
 impl From<ConverterError> for SbyteError {
     fn from(err: ConverterError) -> Self {
         match err {

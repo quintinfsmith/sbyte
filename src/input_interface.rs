@@ -12,6 +12,7 @@ use super::console_displayer::FrontEnd;
 
 use std::{time, thread};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 pub struct Inputter {
     input_managers: HashMap<String, InputNode>,
@@ -28,16 +29,13 @@ impl Inputter {
         }
     }
 
-    pub fn read_input(&mut self, input_byte: u8) -> Option<(String, String)> {
+    pub fn check_buffer(&mut self) -> Option<(String, String)> {
         let mut output = None;
 
-        self.input_buffer.push(input_byte);
-
         let input_buffer = self.input_buffer.clone();
-        let mut clear_buffer = false;
         match self.input_managers.get_mut(&self.context) {
             Some(root_node) => {
-                let (cmd, completed_path) = root_node.fetch_command(input_buffer);
+                let cmd = root_node.fetch_command(input_buffer);
                 match cmd {
                     Some(funcref) => {
                         match std::str::from_utf8(&self.input_buffer) {
@@ -51,26 +49,26 @@ impl Inputter {
                     }
                     None => ()
                 }
-                clear_buffer = completed_path;
             }
             None => ()
         }
-
-        if clear_buffer {
-            self.input_buffer.drain(..);
-        }
+        self.input_buffer.drain(..);
 
         output
     }
 
-    pub fn assign_mode_command(&mut self, mode: &str, command_string: String, hook: &str) {
-        let command_vec = command_string.as_bytes().to_vec();
+    pub fn assign_mode_command(&mut self, mode: &str, command_string: &str, hook: &str) {
+        let command_vec = command_string.to_string().as_bytes().to_vec();
         let mode_node = self.input_managers.entry(mode.to_string()).or_insert(InputNode::new());
         mode_node.assign_command(command_vec, hook);
     }
 
     pub fn set_context(&mut self, new_context: &str) {
         self.context = new_context.to_string();
+    }
+
+    pub fn input(&mut self, byte: u8) {
+        self.input_buffer.push(byte)
     }
 }
 
@@ -104,48 +102,55 @@ impl InputNode {
         }
     }
 
-    fn fetch_command(&mut self, input_pattern: Vec<u8>) -> (Option<String>, bool) {
+    fn fetch_command(&mut self, input_pattern: Vec<u8>) -> Option<String> {
+        let mut found_command: bool = false;
+        let mut output = None;
         match &self.hook {
             Some(hook) => {
-                // Found, Clear buffer
-                (Some(hook.to_string()), true)
+                if input_pattern.len() == 0 {
+                    found_command = true;
+                    output = Some(hook.to_string())
+                }
             }
-            None => {
-                let mut tmp_pattern = input_pattern.clone();
-                if tmp_pattern.len() > 0 {
-                    let next_byte = tmp_pattern.remove(0);
-                    match self.next_nodes.get_mut(&next_byte) {
-                        Some(node) => {
-                            node.fetch_command(tmp_pattern)
-                        }
-                        None => {
-                            // Dead End, Clear Buffer
-                            (None, true)
-                        }
+            None => { }
+        }
+
+        if ! found_command {
+            let mut tmp_pattern = input_pattern.clone();
+            if tmp_pattern.len() > 0 {
+                let next_byte = tmp_pattern.remove(0);
+                output = match self.next_nodes.get_mut(&next_byte) {
+                    Some(node) => {
+                        node.fetch_command(tmp_pattern)
                     }
-                } else {
-                    // Nothing Found Yet, keep buffer
-                    (None, false)
+                    None => {
+                        None
+                    }
                 }
             }
         }
+
+        output
     }
 }
 
 pub struct InputPipe {
     input_buffer: Vec<u8>,
-    killed: bool
+    killed: bool,
+    modified: Option<Instant>
 }
 impl InputPipe {
     fn new() -> InputPipe {
         InputPipe {
             input_buffer: Vec::new(),
-            killed: false
+            killed: false,
+            modified: None
         }
     }
 
     fn push(&mut self, item: u8) {
         self.input_buffer.push(item);
+        self.modified = Some(Instant::now());
     }
 
     fn kill(&mut self) {
@@ -156,8 +161,23 @@ impl InputPipe {
         !self.killed
     }
 
-    fn get_buffer(&mut self) -> &mut Vec<u8> {
-        &mut self.input_buffer
+    fn has_waited(&self, duration: Duration) -> bool {
+        match self.modified {
+            Some(t) => {
+                t.elapsed() > duration
+            }
+            None => {
+                false
+            }
+        }
+
+    }
+
+    fn get_buffer(&mut self) -> Vec<u8> {
+        self.modified = None;
+        let output = self.input_buffer.clone();
+        self.input_buffer.drain(..);
+        output
     }
 }
 
@@ -199,35 +219,71 @@ impl InputInterface {
 
     fn setup_default_controls(&mut self) -> Result<(), SbyteError> {
         // Default Controls
-        self.send_command("ASSIGN_INPUT", vec!["TOGGLE_CONVERTER".to_string(), "EQUALS".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_DOWN".to_string(), "J_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_UP".to_string(), "K_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_LEFT".to_string(), "H_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_RIGHT".to_string(), "L_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_LENGTH_DOWN".to_string(), "J_UPPER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_LENGTH_UP".to_string(), "K_UPPER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_LENGTH_LEFT".to_string(), "H_UPPER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CURSOR_LENGTH_RIGHT".to_string(), "L_UPPER".to_string()])?;
+        self.send_command("ASSIGN_INPUT", &["TOGGLE_CONVERTER", "EQUALS"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_DOWN", "J_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_UP", "K_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_LEFT", "H_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_RIGHT", "L_LOWER"])?;
 
-        self.send_command("ASSIGN_INPUT", vec!["JUMP_TO_REGISTER".to_string(), "G_UPPER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["DELETE".to_string(), "X_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["YANK".to_string(), "Y_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["PASTE".to_string(), "P_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["UNDO".to_string(), "U_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["REDO".to_string(), "CTRL+R".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["CLEAR_REGISTER".to_string(), "ESCAPE".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["INCREMENT".to_string(), "PLUS".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["DECREMENT".to_string(), "DASH".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["BACKSPACE".to_string(), "BACKSPACE".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["DELETE".to_string(), "DELETE".to_string()])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_DOWN", "ARROW_DOWN"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_UP", "ARROW_UP"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_LEFT", "ARROW_LEFT"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_RIGHT", "ARROW_RIGHT"])?;
 
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_INSERT".to_string(), "I_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_INSERT_SPECIAL".to_string(), "I_UPPER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_OVERWRITE".to_string(), "O_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_OVERWRITE_SPECIAL".to_string(), "O_UPPER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_APPEND".to_string(), "A_LOWER".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_SEARCH".to_string(), "SLASH".to_string()])?;
-        self.send_command("ASSIGN_INPUT", vec!["MODE_SET_CMD".to_string(), "COLON".to_string()])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_LENGTH_DOWN", "J_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_LENGTH_UP", "K_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_LENGTH_LEFT", "H_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["CURSOR_LENGTH_RIGHT", "L_UPPER"])?;
+
+        self.send_command("ASSIGN_INPUT", &["JUMP_TO_REGISTER", "G_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["DELETE", "X_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["YANK", "Y_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["PASTE", "P_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["UNDO", "U_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["REDO", "CTRL+R"])?;
+        self.send_command("ASSIGN_INPUT", &["CLEAR_REGISTER", "ESCAPE"])?;
+        self.send_command("ASSIGN_INPUT", &["INCREMENT", "PLUS"])?;
+        self.send_command("ASSIGN_INPUT", &["DECREMENT", "DASH"])?;
+        self.send_command("ASSIGN_INPUT", &["BACKSPACE", "BACKSPACE"])?;
+        self.send_command("ASSIGN_INPUT", &["DELETE", "DELETE"])?;
+
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT", "I_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT_SPECIAL", "I_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_OVERWRITE", "O_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_OVERWRITE_SPECIAL", "O_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_APPEND", "A_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_SEARCH", "SLASH"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_CMD", "COLON"])?;
+
+
+
+
+        for i in 0 .. 10 {
+            let strrep = std::str::from_utf8(&[i + 48]).unwrap().to_string();
+            let cmdstr = &format!("KEY_{}", &strrep);
+            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", &cmdstr])?;
+        }
+
+        self.send_command("ASSIGN_MODE_INPUT", &["INSERT", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE", "MODE_SET_DEFAULT", "ESCAPE"])?;
+
+        let key_map = InputInterface::build_key_map();
+        let mut ascii_map = HashMap::new();
+        for (key, value) in key_map.iter() {
+            ascii_map.insert(value.to_string(), key.to_string());
+        }
+
+        for i in 32 .. 127 {
+            let strrep = std::str::from_utf8(&[i]).unwrap().to_string();
+            let keycode = ascii_map.get(&strrep).unwrap();
+            self.send_command("ASSIGN_MODE_INPUT", &["INSERT", "INSERT_STRING", &keycode])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE", "OVERWRITE_STRING", &keycode])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["CMD", "INSERT_TO_CMDLINE", &keycode])?;
+        }
+
+        self.send_command("ASSIGN_MODE_INPUT", &["CMD", "RUN_CUSTOM_COMMAND", "LINE_FEED"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["CMD", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["CMD", "CMDLINE_BACKSPACE", "BACKSPACE"])?;
         Ok(())
     }
 
@@ -311,41 +367,7 @@ impl InputInterface {
     }
 
     pub fn new_inputter() -> Inputter {
-        let mut inputter = Inputter::new();
-
-        let mode_default = "DEFAULT";
-        let mode_insert = "INSERT";
-        let mode_overwrite = "OVERWRITE";
-        let mode_cmd = "CMD";
-
-
-
-        // Enable ctrl-c
-        inputter.assign_mode_command(mode_default, std::str::from_utf8(&[3]).unwrap().to_string(), "KILL");
-        inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[3]).unwrap().to_string(), "KILL");
-        inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[3]).unwrap().to_string(), "KILL");
-        inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[3]).unwrap().to_string(), "KILL");
-
-
-        for i in 0 .. 10 {
-            inputter.assign_mode_command(mode_default, std::str::from_utf8(&[i + 48]).unwrap().to_string(), "APPEND_TO_REGISTER");
-        }
-
-        inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
-        inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[27]).unwrap().to_string(), "MODE_SET_DEFAULT");
-
-        for i in 32 .. 127 {
-            inputter.assign_mode_command(mode_insert, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT_STRING");
-            inputter.assign_mode_command(mode_overwrite, std::str::from_utf8(&[i]).unwrap().to_string(), "OVERWRITE_STRING");
-            inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[i]).unwrap().to_string(), "INSERT_TO_CMDLINE");
-        }
-
-        inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[10]).unwrap().to_string(), "RUN_CUSTOM_COMMAND");
-        inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[27]).unwrap().to_string(), "ESCAPE_CMDLINE");
-        inputter.assign_mode_command(mode_cmd, std::str::from_utf8(&[127]).unwrap().to_string(), "CMDLINE_BACKSPACE");
-
-
-        inputter
+        Inputter::new()
     }
 
     pub fn main(&mut self) -> Result<(), SbyteError> {
@@ -356,6 +378,7 @@ impl InputInterface {
         let fps = 59.97;
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
+        let input_delay = time::Duration::from_nanos(50);
 
         let mut command_pair: Option<(String, Vec<String>)>;
         self.running = true;
@@ -374,20 +397,23 @@ impl InputInterface {
             command_pair = None;
             match self.input_pipe.try_lock() {
                 Ok(ref mut mutex) => {
-
                     // Kill the main loop is the input loop dies
                     if ! mutex.is_alive() {
                         self.running = false;
                     }
 
-                    let buffer = mutex.get_buffer();
-                    for byte in buffer.drain(..) {
-                        match self.inputter.read_input(byte) {
+                    if mutex.has_waited(input_delay) {
+                        for byte in mutex.get_buffer() {
+                            self.inputter.input(byte);
+                        }
+
+                        match self.inputter.check_buffer() {
                             Some((funcref, input_sequence)) => {
                                 command_pair = Some((funcref, vec![input_sequence]));
                             }
                             None => ()
                         }
+
                     }
                 }
                 Err(_e) => ()
@@ -395,7 +421,12 @@ impl InputInterface {
 
             match command_pair {
                 Some((funcref, input_sequence)) => {
-                    self.send_command(&funcref, input_sequence)?;
+                    let mut adj_seq: Vec<&str> = Vec::new();
+                    for item in input_sequence.iter() {
+                        adj_seq.push(item);
+                    }
+
+                    self.send_command(&funcref, adj_seq.as_slice())?;
                 }
                 None => {
                     thread::sleep(delay);
@@ -417,6 +448,7 @@ impl InputInterface {
 
         Ok(())
     }
+
     pub fn build_key_map() -> HashMap<&'static str, &'static str> {
         let mut key_map = HashMap::new();
         // Common control characters
@@ -559,20 +591,37 @@ impl InputInterface {
 
         key_map
     }
-    fn send_command(&mut self, funcref: &str, arguments: Vec<String>) -> Result<(), SbyteError> {
+    fn send_command(&mut self, funcref: &str, arguments: &[&str]) -> Result<(), SbyteError> {
         match funcref {
-
             "ASSIGN_INPUT" => {
-                let new_funcref: String = match arguments.get(0) {
-                    Some(_new_funcref) => {
-                        _new_funcref.clone()
+                let mut alt_args = vec!["DEFAULT"];
+                for arg in arguments.iter() {
+                    alt_args.push(*arg);
+                }
+                self.send_command("ASSIGN_MODE_INPUT", &alt_args)?;
+            }
+
+            "ASSIGN_MODE_INPUT" => {
+                let mode_key: &str = match arguments.get(0) {
+                    Some(arg) => {
+                        arg
                     }
                     None => {
-                        "".to_string()
+                 //       Err(SbyteError::InvalidCommand(arguments.join("")))?;
+                        ""
                     }
                 };
 
-                let new_input_string: String = match arguments.get(1) {
+                let new_funcref: &str = match arguments.get(1) {
+                    Some(_new_funcref) => {
+                        _new_funcref
+                    }
+                    None => {
+                        ""
+                    }
+                };
+
+                let new_input_string: String = match arguments.get(2) {
                     Some(_new_inputs) => {
                         let key_map = InputInterface::build_key_map();
                         let mut output = "".to_string();
@@ -591,8 +640,7 @@ impl InputInterface {
                     }
                 };
 
-
-                self.inputter.assign_mode_command("DEFAULT", new_input_string, &new_funcref);
+                self.inputter.assign_mode_command(mode_key, &new_input_string, &new_funcref);
             }
 
             "CURSOR_UP" => {
@@ -743,6 +791,9 @@ impl InputInterface {
 
             "MODE_SET_DEFAULT" => {
                 self.clear_register();
+                if ! self.user_feedback_ready() {
+                    self.frontend.raise_flag(Flag::HideFeedback);
+                }
                 self.frontend.raise_flag(Flag::UpdateOffset);
                 self.frontend.raise_flag(Flag::CursorMoved);
                 self.inputter.set_context("DEFAULT");
@@ -795,10 +846,6 @@ impl InputInterface {
                     }
                 };
                 self.ci_insert_bytes(pattern, repeat)?;
-            }
-            "ESCAPE_CMDLINE" => {
-                self.frontend.raise_flag(Flag::HideFeedback);
-                self.send_command("MODE_SET_DEFAULT", vec![])?;
             }
 
             "INSERT_TO_CMDLINE" => {
@@ -1010,10 +1057,13 @@ impl InputInterface {
     }
 
     fn query(&mut self, query: &str) -> Result<(), SbyteError> {
-
         let result = match self.backend.try_command(query) {
             Ok((funcref, args)) => {
-                self.send_command(&funcref, args)
+                let mut str_args: Vec<&str> = vec![];
+                for arg in args.iter() {
+                    str_args.push(&arg);
+                }
+                self.send_command(&funcref, str_args.as_slice())
             }
             Err(e) => {
                 Err(e)
