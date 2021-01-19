@@ -5,6 +5,7 @@ use std::io::{Write, Read};
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
+use std::convert::From;
 use regex::bytes::Regex;
 
 use wrecked::RectError;
@@ -22,7 +23,8 @@ use converter::{HumanConverter, BinaryConverter, HexConverter, Converter, Conver
 use viewport::ViewPort;
 use cursor::Cursor;
 use command_line::CommandLine;
-use content::Content;
+use content::{Content, ContentError};
+
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum SbyteError {
@@ -34,12 +36,16 @@ pub enum SbyteError {
     DrawFailed(RectError),
     InvalidRegex(String),
     InvalidBinary(String),
-    OutOfRange(usize, usize),
+    InvalidHexidecimal(String),
+    InvalidDecimal(String),
+    OutOfBounds(usize, usize),
     FailedToKill,
     EmptyStack,
     NoCommandGiven,
     ReadFail,
-    InvalidCommand(String)
+    InvalidCommand(String),
+    ConversionFailed,
+    InvalidDigit(ConverterRef)
 }
 
 impl fmt::Display for SbyteError {
@@ -49,6 +55,25 @@ impl fmt::Display for SbyteError {
 }
 
 impl Error for SbyteError {}
+
+impl From<ContentError> for SbyteError {
+    fn from(err: ContentError) -> Self {
+        match err {
+            ContentError::OutOfBounds(offset, length) => {
+                SbyteError::OutOfBounds(offset, length)
+            }
+        }
+    }
+}
+impl From<ConverterError> for SbyteError {
+    fn from(err: ConverterError) -> Self {
+        match err {
+            ConverterError::InvalidDigit(conv) => {
+                SbyteError::InvalidDigit(conv)
+            }
+        }
+    }
+}
 
 pub struct BackEnd {
     user_msg: Option<String>,
@@ -122,7 +147,7 @@ impl BackEnd {
                 Ok(())
             }
             Err(_) => {
-                Err(SbyteError::OutOfRange(offset, self.active_content.len()))
+                Err(SbyteError::OutOfBounds(offset, self.active_content.len()))
             }
         }
     }
@@ -136,7 +161,7 @@ impl BackEnd {
                 Ok(())
             }
             Err(_) => {
-                Err(SbyteError::OutOfRange(offset, self.active_content.len()))
+                Err(SbyteError::OutOfBounds(offset, self.active_content.len()))
             }
         }
     }
@@ -162,7 +187,7 @@ impl BackEnd {
         let threshold = Duration::from_nanos(50_000_000);
         let mut latest_instant: Option<Instant> = None;
         loop {
-            let mut task_option = self.undo_stack.pop();
+            let task_option = self.undo_stack.pop();
             match task_option {
                 Some(task) => {
                     if match latest_instant {
@@ -170,7 +195,7 @@ impl BackEnd {
                         None => { true }
                     } {
                         latest_instant = Some(task.3.clone());
-                        let redo_task = self.do_undo_or_redo(task);
+                        let redo_task = self.do_undo_or_redo(task)?;
                         self.redo_stack.push(redo_task);
                         tasks_undone += 1;
                     } else {
@@ -196,7 +221,7 @@ impl BackEnd {
         let threshold = Duration::from_nanos(50_000_000);
         let mut latest_instant: Option<Instant> = None;
         loop {
-            let mut task_option = self.redo_stack.pop();
+            let task_option = self.redo_stack.pop();
             match task_option {
                 Some(task) => {
                     if match latest_instant {
@@ -204,7 +229,7 @@ impl BackEnd {
                         None => { true }
                     } {
                         latest_instant = Some(task.3.clone());
-                        let redo_task = self.do_undo_or_redo(task);
+                        let redo_task = self.do_undo_or_redo(task)?;
                         self.undo_stack.push(redo_task);
                         tasks_redone += 1;
                     } else {
@@ -225,7 +250,7 @@ impl BackEnd {
         }
     }
 
-    fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>, Instant)) -> (usize, usize, Vec<u8>, Instant) {
+    fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>, Instant)) -> Result<(usize, usize, Vec<u8>, Instant), SbyteError> {
         let (offset, bytes_to_remove, bytes_to_insert, timestamp) = task;
 
         self.set_cursor_offset(offset);
@@ -239,10 +264,10 @@ impl BackEnd {
         let mut opposite_bytes_to_remove = 0;
         if bytes_to_insert.len() > 0 {
             opposite_bytes_to_remove = bytes_to_insert.len();
-            self.active_content.insert_bytes(offset, bytes_to_insert);
+            self.active_content.insert_bytes(offset, bytes_to_insert)?;
         }
 
-        (offset, opposite_bytes_to_remove, opposite_bytes_to_insert, timestamp)
+        Ok((offset, opposite_bytes_to_remove, opposite_bytes_to_insert, timestamp))
     }
 
     fn push_to_undo_stack(&mut self, offset: usize, bytes_to_remove: usize, bytes_to_insert: Vec<u8>) {
@@ -324,7 +349,7 @@ impl BackEnd {
         for (start, end) in matches.iter() {
             hit_positions.push(*start);
             removed_bytes = self.active_content.remove_bytes(*start, *end - *start);
-            self.active_content.insert_bytes(*start, replace_with.clone());
+            self.active_content.insert_bytes(*start, replace_with.clone())?;
             self.push_to_undo_stack(*start, replace_with.len(), removed_bytes.clone());
         }
 
@@ -606,29 +631,30 @@ impl BackEnd {
     }
 
 
-    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) {
+    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), SbyteError> {
         let adj_byte_width = new_bytes.len();
-        self.active_content.insert_bytes(offset, new_bytes);
+        self.active_content.insert_bytes(offset, new_bytes)?;
 
         self.push_to_undo_stack(offset, adj_byte_width, vec![]);
+        Ok(())
     }
 
-    pub fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Vec<u8> {
+    pub fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, SbyteError> {
         let length = new_bytes.len();
         let removed_bytes = self.active_content.remove_bytes(position, length);
 
-        self.active_content.insert_bytes(position, new_bytes);
+        self.active_content.insert_bytes(position, new_bytes)?;
         self.push_to_undo_stack(position, length, removed_bytes.clone());
 
-        removed_bytes
+        Ok(removed_bytes)
     }
 
-    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) {
+    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<(), SbyteError> {
         let position = self.cursor.get_offset();
-        self.insert_bytes(position, new_bytes);
+        self.insert_bytes(position, new_bytes)
     }
 
-    pub fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Vec<u8> {
+    pub fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<Vec<u8>, SbyteError> {
         let position = self.cursor.get_offset();
         self.overwrite_bytes(position, new_bytes)
     }
@@ -968,7 +994,7 @@ pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
 }
 
 // Convert argument string to bytes.
-pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, ConverterError> {
+pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, SbyteError> {
     let mut use_converter: Option<Box<dyn Converter>> = None;
 
     let input_bytes = input_string.as_bytes().to_vec();
@@ -989,12 +1015,26 @@ pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, ConverterError> {
         }
     }
 
-    match use_converter {
+    let result = match use_converter {
         Some(converter) => {
             converter.decode(input_bytes[2..].to_vec())
         }
         None => {
             Ok(input_string.as_bytes().to_vec())
+        }
+    };
+
+
+    match result {
+        Ok(output) => {
+            Ok(output)
+        }
+        Err(ConverterError::InvalidDigit(conv)) => {
+            Err(match conv {
+                ConverterRef::HEX => { SbyteError::InvalidHexidecimal(input_string.to_string()) }
+                ConverterRef::BIN => { SbyteError::InvalidBinary(input_string.to_string()) }
+                ConverterRef::DEC => { SbyteError::InvalidDecimal(input_string.to_string()) }
+            })
         }
     }
 }

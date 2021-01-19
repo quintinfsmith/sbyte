@@ -1,5 +1,4 @@
 use std::cmp::{min, max};
-use std::error::Error;
 use std::fs::File;
 use std::io;
 use std::io::{Write, Read};
@@ -13,7 +12,6 @@ use super::console_displayer::FrontEnd;
 
 use std::{time, thread};
 use std::collections::HashMap;
-
 
 pub struct Inputter {
     input_managers: HashMap<String, InputNode>,
@@ -129,17 +127,6 @@ impl InputNode {
                     // Nothing Found Yet, keep buffer
                     (None, false)
                 }
-            }
-        }
-    }
-
-    fn input(&mut self, new_input: u8) -> bool {
-        match self.next_nodes.get(&new_input) {
-            Some(_) => {
-                true
-            }
-            None => {
-                false
             }
         }
     }
@@ -693,7 +680,7 @@ impl InputInterface {
             "PASTE" => {
                 let repeat = self.grab_register(1);
                 let to_paste = self.backend.get_clipboard();
-                self.ci_insert_bytes(to_paste, repeat);
+                self.ci_insert_bytes(to_paste, repeat)?;
             }
 
             "DELETE" => {
@@ -794,7 +781,7 @@ impl InputInterface {
                     }
                 };
                 let repeat = self.grab_register(1);
-                self.ci_insert_string(pattern, repeat);
+                self.ci_insert_string(pattern, repeat)?;
             }
 
             "INSERT_RAW" => {
@@ -807,11 +794,11 @@ impl InputInterface {
                         vec![]
                     }
                 };
-                self.ci_insert_bytes(pattern, repeat);
+                self.ci_insert_bytes(pattern, repeat)?;
             }
             "ESCAPE_CMDLINE" => {
                 self.frontend.raise_flag(Flag::HideFeedback);
-                self.send_command("MODE_SET_DEFAULT", vec![]);
+                self.send_command("MODE_SET_DEFAULT", vec![])?;
             }
 
             "INSERT_TO_CMDLINE" => {
@@ -840,7 +827,7 @@ impl InputInterface {
                     }
                 };
                 let repeat = self.grab_register(1);
-                self.ci_overwrite_string(pattern, repeat);
+                self.ci_overwrite_string(pattern, repeat)?;
 
             }
 
@@ -854,7 +841,7 @@ impl InputInterface {
                         vec![]
                     }
                 };
-                self.ci_overwrite_bytes(pattern, repeat);
+                self.ci_overwrite_bytes(pattern, repeat)?;
             }
 
             "DECREMENT" => {
@@ -921,9 +908,6 @@ impl InputInterface {
                     }
                     ConverterRef::DEC => {
                         ConverterRef::BIN
-                    }
-                    _ => {
-                        ConverterRef::HEX
                     }
                 };
 
@@ -1014,7 +998,9 @@ impl InputInterface {
 
                 let working_cmds: Vec<&str> = std::str::from_utf8(buffer.as_slice()).unwrap().split("\n").collect();
                 for cmd in working_cmds.iter() {
-                    self.query(cmd)?;
+                    if cmd.len() > 0 {
+                        self.query(cmd)?;
+                    }
                 }
             }
             Err(_e) => { }
@@ -1368,45 +1354,47 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
-    fn ci_insert_string(&mut self, argument: &str, repeat: usize) {
+    fn ci_insert_string(&mut self, argument: &str, repeat: usize) -> Result<(), SbyteError> {
         match string_to_bytes(argument) {
             Ok(converted_bytes) => {
-                self.ci_insert_bytes(converted_bytes.clone(), repeat);
+                self.ci_insert_bytes(converted_bytes.clone(), repeat)
             }
-            Err(_) => {
+            Err(e) => {
                 self.backend.set_user_error_msg(&format!("Invalid Pattern: {}", argument.clone()));
+                Err(e)
             }
         }
     }
 
-    fn ci_insert_bytes(&mut self, bytes: Vec<u8>, repeat: usize) {
+    fn ci_insert_bytes(&mut self, bytes: Vec<u8>, repeat: usize) -> Result<(), SbyteError> {
         let offset = self.backend.get_cursor_offset();
         for _ in 0 .. repeat {
-            self.backend.insert_bytes_at_cursor(bytes.clone());
+            self.backend.insert_bytes_at_cursor(bytes.clone())?;
         }
 
         self.ci_cursor_right(bytes.len() * repeat);
 
         self.flag_row_update_by_offset(offset);
         self.frontend.raise_flag(Flag::UpdateOffset);
+        Ok(())
     }
 
-    fn ci_overwrite_string(&mut self, argument: &str, repeat: usize) {
+    fn ci_overwrite_string(&mut self, argument: &str, repeat: usize) -> Result<(), SbyteError> {
         match string_to_bytes(argument) {
             Ok(converted_bytes) => {
-                self.ci_overwrite_bytes(converted_bytes.clone(), repeat);
+                self.ci_overwrite_bytes(converted_bytes.clone(), repeat)
             }
-            Err(_) => {
+            Err(e) => {
                 self.backend.set_user_error_msg(&format!("Invalid Pattern: {}", argument.clone()));
+                Err(e)
             }
         }
-
     }
 
-    fn ci_overwrite_bytes(&mut self, bytes: Vec<u8>, repeat: usize) {
+    fn ci_overwrite_bytes(&mut self, bytes: Vec<u8>, repeat: usize) -> Result<(), SbyteError> {
         let offset = self.backend.get_cursor_offset();
         for _ in 0 .. repeat {
-            self.backend.overwrite_bytes_at_cursor(bytes.clone());
+            self.backend.overwrite_bytes_at_cursor(bytes.clone())?;
             self.ci_cursor_right(bytes.len());
         }
         self.backend.set_cursor_length(1);
@@ -1414,13 +1402,14 @@ impl InputInterface {
 
         self.frontend.raise_flag(Flag::CursorMoved);
         self.flag_row_update_by_range(offset..offset);
+        Ok(())
     }
 
     fn ci_increment(&mut self, repeat: usize) {
         let offset = self.backend.get_cursor_offset();
         for _ in 0 .. repeat {
             match self.backend.increment_byte(offset) {
-                Err(SbyteError::OutOfRange(_, _)) => {
+                Err(SbyteError::OutOfBounds(_, _)) => {
                     break;
                 }
                 Err(_) => {}
@@ -1450,7 +1439,7 @@ impl InputInterface {
         for _ in 0 .. repeat {
             match self.backend.decrement_byte(offset) {
                 Ok(_) => {}
-                Err(SbyteError::OutOfRange(_, _)) => {
+                Err(SbyteError::OutOfBounds(_, _)) => {
                     break;
                 }
                 Err(_) => { }

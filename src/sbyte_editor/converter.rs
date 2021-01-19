@@ -1,13 +1,14 @@
-#[derive(Debug, PartialEq, Eq)]
-pub enum ConverterError {
-    InvalidDigit
-}
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug, Eq)]
 pub enum ConverterRef {
     HEX,
     BIN,
     DEC
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConverterError {
+    InvalidDigit(ConverterRef)
 }
 
 pub trait Converter {
@@ -40,7 +41,7 @@ impl HexConverter {
                 Ok(index as u8)
             }
             Err(_) => {
-                Err(ConverterError::InvalidDigit)
+                Err(ConverterError::InvalidDigit(ConverterRef::HEX))
             }
         }
     }
@@ -86,7 +87,6 @@ impl Converter for HexConverter {
 
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
         let mut output_bytes: Vec<u8> = Vec::new();
-        let mut output = Ok(Vec::new());
 
         let mut byte_value: u8;
         let mut lode_byte = 0;
@@ -102,27 +102,22 @@ impl Converter for HexConverter {
                     }
                 }
                 Err(e) => {
-                    output = Err(e);
-                    break;
+                    Err(e)?;
                 }
             }
         }
 
-        if output.is_ok() {
-            if lode_byte != 0 {
-                output_bytes.push(lode_byte);
-            }
-
-            output_bytes.reverse();
-            output = Ok(output_bytes);
+        if lode_byte != 0 {
+            output_bytes.push(lode_byte);
         }
 
-        output
+        output_bytes.reverse();
+
+        Ok(output_bytes)
     }
 
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
         let mut output_number: usize = 0;
-        let mut output = Ok(output_number);
 
         for byte in byte_string.iter() {
             match self.hex_char_to_dec_int(*byte) {
@@ -131,15 +126,12 @@ impl Converter for HexConverter {
                     output_number += decimal_int as usize;
                 }
                 Err(e) => {
-                    output = Err(e);
-                    break;
+                    Err(e)?;
                 }
             }
         }
-        if output.is_ok() {
-            output = Ok(output_number);
-        }
-        output
+
+        Ok(output_number)
     }
 }
 
@@ -186,7 +178,6 @@ impl Converter for BinaryConverter {
 
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
         let mut output_bytes: Vec<u8> = Vec::new();
-        let mut output = Ok(Vec::new());
 
         let mut lode_byte = 0;
 
@@ -196,8 +187,7 @@ impl Converter for BinaryConverter {
             if *byte == 48 || *byte == 49 {
                 lode_byte += *byte - 48;
             } else {
-                output = Err(ConverterError::InvalidDigit);
-                break;
+                Err(ConverterError::InvalidDigit(ConverterRef::BIN))?;
             }
 
             if i == 7 || i == bytes.len() - 1 {
@@ -206,33 +196,23 @@ impl Converter for BinaryConverter {
             }
         }
 
-        if output.is_ok() {
-            output = Ok(output_bytes);
-        }
-
-        output
+        Ok(output_bytes)
     }
 
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
         let mut output_number: usize = 0;
-        let mut output = Ok(output_number);
 
         for byte in byte_string.iter() {
             output_number *= 2;
             if *byte == 48 || *byte == 49 {
                 output_number += (*byte as usize) - 48;
             } else {
-                output = Err(ConverterError::InvalidDigit);
-                break;
+                Err(ConverterError::InvalidDigit(ConverterRef::BIN))?;
             }
 
         }
 
-        if output.is_ok() {
-            output = Ok(output_number);
-        }
-
-        output
+        Ok(output_number)
     }
 }
 
@@ -246,7 +226,7 @@ impl HumanConverter {
                 Ok(index as u8)
             }
             Err(_) => {
-                Err(ConverterError::InvalidDigit)
+                Err(ConverterError::InvalidDigit(ConverterRef::DEC))
             }
         }
     }
@@ -292,7 +272,6 @@ impl Converter for HumanConverter {
 
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
         let mut output_number: usize = 0;
-        let mut output = Ok(output_number);
 
         for byte in byte_string.iter() {
             match self.dec_char_to_dec_int(*byte) {
@@ -301,17 +280,11 @@ impl Converter for HumanConverter {
                     output_number += decimal_int as usize;
                 }
                 Err(e) => {
-                    output = Err(e);
-                    break;
+                    Err(e)?;
                 }
             }
         }
-
-        if output.is_ok() {
-            output = Ok(output_number);
-        }
-
-        output
+        Ok(output_number)
     }
 
     fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
@@ -340,7 +313,7 @@ impl DecConverter {
                 Ok(index as u8)
             }
             Err(_) => {
-                Err(ConverterError::InvalidDigit)
+                Err(ConverterError::InvalidDigit(ConverterRef::DEC))
             }
         }
     }

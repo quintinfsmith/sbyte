@@ -1,6 +1,11 @@
 use std::cmp::min;
 use regex::bytes::Regex;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ContentError {
+    OutOfBounds(usize, usize)
+}
+
 pub mod tests;
 
 pub struct Content {
@@ -21,12 +26,12 @@ impl Content {
             None
         }
     }
-    pub fn set_byte(&mut self, offset: usize, new_byte: u8) -> Result<(), ()> {
+    pub fn set_byte(&mut self, offset: usize, new_byte: u8) -> Result<(), ContentError> {
         if offset < self.len() {
             self.content_array[offset] = new_byte;
             Ok(())
         } else {
-            Err(())
+            Err(ContentError::OutOfBounds(offset, self.len()))
         }
     }
 
@@ -43,7 +48,7 @@ impl Content {
         self.content_array.push(byte);
     }
 
-    pub fn increment_byte(&mut self, offset: usize) -> Result<Vec<u8>, ()> {
+    pub fn increment_byte(&mut self, offset: usize) -> Result<Vec<u8>, ContentError> {
         let mut current_byte_offset = offset;
         if self.len() > current_byte_offset {
             let mut current_byte_value = self.content_array[current_byte_offset];
@@ -67,11 +72,11 @@ impl Content {
 
             Ok(initial_bytes)
         } else {
-            Err(())
+            Err(ContentError::OutOfBounds(offset, self.len()))
         }
     }
 
-    pub fn decrement_byte(&mut self, offset: usize) -> Result<Vec<u8>, ()> {
+    pub fn decrement_byte(&mut self, offset: usize) -> Result<Vec<u8>, ContentError> {
         let mut current_byte_offset = offset;
 
         if self.content_array.len() > current_byte_offset {
@@ -96,11 +101,11 @@ impl Content {
 
             Ok(initial_bytes)
         } else {
-            Err(())
+            Err(ContentError::OutOfBounds(offset, self.len()))
         }
     }
 
-    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), ()> {
+    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), ContentError> {
         if offset <= self.content_array.len() {
             let mut new_content = self.content_array[0..offset].to_vec();
             let chunk_last = self.content_array[offset..].to_vec();
@@ -110,7 +115,7 @@ impl Content {
 
             Ok(())
         } else {
-            Err(())
+            Err(ContentError::OutOfBounds(offset, self.len()))
         }
 
     }
