@@ -135,6 +135,8 @@ impl BackEnd {
         output.assign_line_command("setcmd", "ASSIGN_INPUT");
         output.assign_line_command("lw", "SET_WIDTH");
         output.assign_line_command("reg", "SET_REGISTER");
+        output.assign_line_command("and", "MASK_AND");
+        output.assign_line_command("or", "MASK_OR");
 
         output
     }
@@ -896,6 +898,33 @@ impl BackEnd {
     }
     pub fn get_user_error_msg(&self) -> Option<&String> {
         self.user_error_msg.as_ref()
+    }
+
+    pub fn apply_or_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        let mut new_mask = Vec::new();
+        let mask_len = mask.len();
+        for i in 0 .. mask_len * ((self.get_cursor_length() as f64 / mask_len as f64).ceil() as usize) {
+            new_mask.push(mask[i % mask_len]);
+        }
+
+        let offset = self.get_cursor_offset();
+        let old_bytes = self.active_content.apply_or_mask(offset, &new_mask)?;
+        self.push_to_undo_stack(offset, new_mask.len(), old_bytes);
+
+        Ok(())
+    }
+    pub fn apply_and_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        let mut new_mask = Vec::new();
+        let mask_len = mask.len();
+        for i in 0 .. mask_len * ((mask_len as f64 / self.get_cursor_length() as f64).ceil() as usize) {
+            new_mask.push(mask[i % mask_len]);
+        }
+
+        let offset = self.get_cursor_offset();
+        let old_bytes = self.active_content.apply_and_mask(offset, &new_mask)?;
+        self.push_to_undo_stack(offset, new_mask.len(), old_bytes);
+
+        Ok(())
     }
 }
 

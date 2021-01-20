@@ -256,8 +256,8 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["MODE_SET_APPEND", "A_LOWER"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_SEARCH", "SLASH"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_CMD", "COLON"])?;
-
-
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_MASK_OR", "BAR"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_MASK_AND", "AMPERSAND"])?;
 
 
         let num_words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
@@ -729,6 +729,49 @@ impl InputInterface {
                         }
                     }
                     None => ()
+                }
+            }
+            "MODE_SET_MASK_OR" => {
+                match self.backend.get_commandline_mut() {
+                    Some(commandline) => {
+                        commandline.set_register("or ");
+                        self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
+                    }
+                    None => ()
+                }
+            }
+            "MODE_SET_MASK_AND" => {
+                match self.backend.get_commandline_mut() {
+                    Some(commandline) => {
+                        commandline.set_register("and ");
+                        self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
+                    }
+                    None => ()
+                }
+            }
+
+            "MASK_OR" => {
+                match arguments.get(0) {
+                    Some(arg) => {
+                        let mask = string_to_bytes(arg)?;
+                        self.ci_apply_or_mask(&mask)?;
+                    }
+                    None => {
+                        self.backend.set_user_error_msg("No mask provided");
+                    }
+                }
+            }
+            "MASK_AND" => {
+                match arguments.get(0) {
+                    Some(arg) => {
+                        let mask = string_to_bytes(arg)?;
+                        self.ci_apply_and_mask(&mask)?;
+                    }
+                    None => {
+                        self.backend.set_user_error_msg("No mask provided");
+                    }
                 }
             }
 
@@ -1242,6 +1285,23 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::RemapActiveRows);
         self.frontend.raise_flag(Flag::CursorMoved);
         self.frontend.raise_flag(Flag::UpdateOffset);
+    }
+
+    fn ci_apply_or_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.backend.apply_or_mask(mask)?;
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+        Ok(())
+    }
+    fn ci_apply_and_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.backend.apply_and_mask(mask)?;
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+        Ok(())
     }
 
     fn ci_replace(&mut self, old_pattern: &str, new_pattern: &str) {
