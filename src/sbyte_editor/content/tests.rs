@@ -1,6 +1,6 @@
 #[cfg (test)]
 mod tests {
-    use crate::sbyte_editor::content::Content;
+    use crate::sbyte_editor::content::{Content, BitMask};
 
     #[test]
     fn test_initialize() {
@@ -12,11 +12,11 @@ mod tests {
     fn test_insert_bytes() {
         let mut content = Content::new();
 
-        assert!(content.insert_bytes(1, [99].to_vec()).is_err());
-        assert!(content.insert_bytes(0, [34,35,36,37].to_vec()).is_ok());
+        assert!(content.insert_bytes(1, &[99]).is_err());
+        assert!(content.insert_bytes(0, &[34,35,36,37]).is_ok());
         assert_eq!(content.as_slice(), [34, 35, 36, 37]);
 
-        assert!(content.insert_bytes(2, [0, 0, 0].to_vec()).is_ok());
+        assert!(content.insert_bytes(2, &[0, 0, 0]).is_ok());
         assert_eq!(content.as_slice(), [34, 35, 0, 0, 0, 36, 37]);
     }
 
@@ -39,7 +39,7 @@ mod tests {
     fn test_get_byte() {
         let mut content = Content::new();
         let slice = [45,46,47,23,12];
-        content.insert_bytes(0, slice.to_vec());
+        content.insert_bytes(0, &slice);
         for (i, byte) in slice.iter().enumerate() {
             assert_eq!(content.get_byte(i), Some(*byte));
         }
@@ -49,7 +49,7 @@ mod tests {
     fn test_get_chunk() {
         let mut content = Content::new();
         let slice = [45,46,47,23,12];
-        content.insert_bytes(0, slice.to_vec());
+        content.insert_bytes(0, &slice);
         assert_eq!(content.get_chunk(0, 5).as_slice(), slice);
         assert_eq!(content.get_chunk(0, 9999).as_slice(), slice);
         assert_eq!(content.get_chunk(0,0).as_slice(), []);
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn test_remove_bytes() {
         let mut content = Content::new();
-        content.insert_bytes(0, [34,35,36,37].to_vec());
+        content.insert_bytes(0, &[34,35,36,37]);
         content.remove_bytes(2, 1);
         assert_eq!(content.as_slice(), [34, 35, 37]);
         assert_eq!(content.remove_bytes(200, 10).as_slice(), []);
@@ -88,16 +88,16 @@ mod tests {
         content.remove_bytes(0, 1);
 
         let slice = [0,1,2,3,4,5,6,7,8,9,10];
-        content.insert_bytes(0, slice.to_vec());
+        content.insert_bytes(0, &slice);
 
-        assert_eq!(content.as_slice(), slice);
+        assert_eq!(content.as_slice(), &slice);
     }
 
     #[test]
     fn test_find_all() {
         let mut content = Content::new();
         let mut slice = [0x90, 0x91, 0x80, 0x80, 0x90, 0x90, 0x90, 0x90];
-        content.insert_bytes(0, slice.to_vec());
+        content.insert_bytes(0, &slice);
 
         assert!(content.find_all("\\x.0").is_err(), "Regex not throwing error when given a bad pattern");
         match content.find_all("\\x80") {
@@ -147,5 +147,78 @@ mod tests {
         assert_eq!(content.get_byte(1), Some(255));
 
         assert!(content.decrement_byte(3).is_err());
+    }
+
+    #[test]
+    fn test_masks() {
+        let mut content = Content::new();
+        let or_tests = vec![
+            ([0,0], [0xFF, 0xFF], [0xFF, 0xFF]),
+            ([0xAA, 0xAA], [0x55, 0x55], [0xFF, 0xFF]),
+            ([0xAA, 0xAA], [0x55, 0x00], [0xFF, 0xAA])
+        ];
+
+        for (input, mask, output) in or_tests.iter() {
+            content.clear();
+            content.insert_bytes(0, input);
+            content.apply_mask(0, mask, BitMask::Or);
+            assert_eq!(content.as_slice(), output);
+        }
+
+        let and_tests = vec![
+            ([0x6C], [0xFF], [0x6C]),
+            ([0x6C], [0x55], [0x44]),
+            ([0x00], [0xFF], [0x00]),
+            ([0xFF], [0x00], [0x00])
+        ];
+
+        for (input, mask, output) in and_tests.iter() {
+            content.clear();
+            content.insert_bytes(0, input);
+            content.apply_mask(0, mask, BitMask::And);
+            assert_eq!(content.as_slice(), output);
+        }
+
+        let nand_tests = vec![
+            ([0x6C], [0xFF], [0x93]),
+            ([0x6C], [0x55], [0xBB]),
+            ([0x00], [0xFF], [0xFF]),
+            ([0xFF], [0x00], [0xFF])
+        ];
+
+        for (input, mask, output) in nand_tests.iter() {
+            content.clear();
+            content.insert_bytes(0, input);
+            content.apply_mask(0, mask, BitMask::Nand);
+            assert_eq!(content.as_slice(), output);
+        }
+
+        let nor_tests = vec![
+            ([0x6C], [0xFF], [0x00]),
+            ([0x6C], [0x55], [0x82]),
+            ([0x00], [0xFF], [0x00]),
+            ([0xFF], [0x00], [0x00])
+        ];
+
+        for (input, mask, output) in nor_tests.iter() {
+            content.clear();
+            content.insert_bytes(0, input);
+            content.apply_mask(0, mask, BitMask::Nor);
+            assert_eq!(content.as_slice(), output);
+        }
+
+        let xor_tests = vec![
+            ([0x6C], [0xFF], [0x93]),
+            ([0x6C], [0x55], [0x39]),
+            ([0x00], [0xFF], [0xFF]),
+            ([0xFF], [0xFF], [0x00])
+        ];
+
+        for (input, mask, output) in xor_tests.iter() {
+            content.clear();
+            content.insert_bytes(0, input);
+            content.apply_mask(0, mask, BitMask::Xor);
+            assert_eq!(content.as_slice(), output);
+        }
     }
 }

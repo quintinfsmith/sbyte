@@ -258,6 +258,8 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["MODE_SET_CMD", "COLON"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_MASK_OR", "BAR"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_MASK_AND", "AMPERSAND"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_MASK_XOR", "CARET"])?;
+        self.send_command("ASSIGN_INPUT", &["BITWISE_NOT", "TILDE"])?;
 
 
         let num_words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
@@ -731,6 +733,16 @@ impl InputInterface {
                     None => ()
                 }
             }
+            "MODE_SET_MASK_XOR" => {
+                match self.backend.get_commandline_mut() {
+                    Some(commandline) => {
+                        commandline.set_register("xor ");
+                        self.frontend.raise_flag(Flag::DisplayCMDLine);
+                        self.inputter.set_context("CMD");
+                    }
+                    None => ()
+                }
+            }
             "MODE_SET_MASK_OR" => {
                 match self.backend.get_commandline_mut() {
                     Some(commandline) => {
@@ -749,6 +761,42 @@ impl InputInterface {
                         self.inputter.set_context("CMD");
                     }
                     None => ()
+                }
+            }
+            "BITWISE_NOT" => {
+                self.ci_bitwise_not()?;
+            }
+            "MASK_NAND" => {
+                match arguments.get(0) {
+                    Some(arg) => {
+                        let mask = string_to_bytes(arg)?;
+                        self.ci_apply_nand_mask(&mask)?;
+                    }
+                    None => {
+                        self.backend.set_user_error_msg("No mask provided");
+                    }
+                }
+            }
+            "MASK_NOR" => {
+                match arguments.get(0) {
+                    Some(arg) => {
+                        let mask = string_to_bytes(arg)?;
+                        self.ci_apply_nor_mask(&mask)?;
+                    }
+                    None => {
+                        self.backend.set_user_error_msg("No mask provided");
+                    }
+                }
+            }
+            "MASK_XOR" => {
+                match arguments.get(0) {
+                    Some(arg) => {
+                        let mask = string_to_bytes(arg)?;
+                        self.ci_apply_xor_mask(&mask)?;
+                    }
+                    None => {
+                        self.backend.set_user_error_msg("No mask provided");
+                    }
                 }
             }
 
@@ -782,7 +830,7 @@ impl InputInterface {
             "PASTE" => {
                 let repeat = self.grab_register(1);
                 let to_paste = self.backend.get_clipboard();
-                self.ci_insert_bytes(to_paste, repeat)?;
+                self.ci_insert_bytes(&to_paste, repeat)?;
             }
 
             "DELETE" => {
@@ -899,7 +947,7 @@ impl InputInterface {
                         vec![]
                     }
                 };
-                self.ci_insert_bytes(pattern, repeat)?;
+                self.ci_insert_bytes(&pattern, repeat)?;
             }
 
             "INSERT_TO_CMDLINE" => {
@@ -942,7 +990,7 @@ impl InputInterface {
                         vec![]
                     }
                 };
-                self.ci_overwrite_bytes(pattern, repeat)?;
+                self.ci_overwrite_bytes(&pattern, repeat)?;
             }
 
             "DECREMENT" => {
@@ -1287,6 +1335,42 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
+    fn ci_bitwise_not(&mut self) -> Result<(), SbyteError> {
+        self.backend.bitwise_not()?;
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+        Ok(())
+    }
+
+    fn ci_apply_nand_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.backend.apply_nand_mask(mask)?;
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+        Ok(())
+    }
+
+    fn ci_apply_nor_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.backend.apply_nor_mask(mask)?;
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+        Ok(())
+    }
+
+    fn ci_apply_xor_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.backend.apply_xor_mask(mask)?;
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+
+        Ok(())
+    }
+
     fn ci_apply_or_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_or_mask(mask)?;
         self.frontend.raise_flag(Flag::RemapActiveRows);
@@ -1305,7 +1389,7 @@ impl InputInterface {
     }
 
     fn ci_replace(&mut self, old_pattern: &str, new_pattern: &str) {
-        let result = self.backend.replace(old_pattern, new_pattern.as_bytes().to_vec());
+        let result = self.backend.replace(old_pattern, new_pattern.as_bytes());
 
         match result {
             Ok(hits) => {
@@ -1484,7 +1568,7 @@ impl InputInterface {
     fn ci_insert_string(&mut self, argument: &str, repeat: usize) -> Result<(), SbyteError> {
         match string_to_bytes(argument) {
             Ok(converted_bytes) => {
-                self.ci_insert_bytes(converted_bytes.clone(), repeat)
+                self.ci_insert_bytes(&converted_bytes, repeat)
             }
             Err(e) => {
                 self.backend.set_user_error_msg(&format!("Invalid Pattern: {}", argument.clone()));
@@ -1493,10 +1577,10 @@ impl InputInterface {
         }
     }
 
-    fn ci_insert_bytes(&mut self, bytes: Vec<u8>, repeat: usize) -> Result<(), SbyteError> {
+    fn ci_insert_bytes(&mut self, bytes: &[u8], repeat: usize) -> Result<(), SbyteError> {
         let offset = self.backend.get_cursor_offset();
         for _ in 0 .. repeat {
-            self.backend.insert_bytes_at_cursor(bytes.clone())?;
+            self.backend.insert_bytes_at_cursor(bytes)?;
         }
 
         self.ci_cursor_right(bytes.len() * repeat);
@@ -1509,7 +1593,7 @@ impl InputInterface {
     fn ci_overwrite_string(&mut self, argument: &str, repeat: usize) -> Result<(), SbyteError> {
         match string_to_bytes(argument) {
             Ok(converted_bytes) => {
-                self.ci_overwrite_bytes(converted_bytes.clone(), repeat)
+                self.ci_overwrite_bytes(&converted_bytes, repeat)
             }
             Err(e) => {
                 self.backend.set_user_error_msg(&format!("Invalid Pattern: {}", argument.clone()));
@@ -1518,10 +1602,10 @@ impl InputInterface {
         }
     }
 
-    fn ci_overwrite_bytes(&mut self, bytes: Vec<u8>, repeat: usize) -> Result<(), SbyteError> {
+    fn ci_overwrite_bytes(&mut self, bytes: &[u8], repeat: usize) -> Result<(), SbyteError> {
         let offset = self.backend.get_cursor_offset();
         for _ in 0 .. repeat {
-            self.backend.overwrite_bytes_at_cursor(bytes.clone())?;
+            self.backend.overwrite_bytes_at_cursor(bytes)?;
             self.ci_cursor_right(bytes.len());
         }
         self.backend.set_cursor_length(1);

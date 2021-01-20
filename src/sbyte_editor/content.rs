@@ -6,6 +6,15 @@ pub enum ContentError {
     OutOfBounds(usize, usize)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum BitMask {
+    And,
+    Or,
+    Nor,
+    Nand,
+    Xor
+}
+
 pub mod tests;
 
 pub struct Content {
@@ -17,6 +26,10 @@ impl Content {
         Content {
             content_array: Vec::new()
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.content_array.drain(..);
     }
 
     pub fn get_byte(&self, offset: usize) -> Option<u8> {
@@ -105,48 +118,33 @@ impl Content {
         }
     }
 
-    pub fn apply_or_mask(&mut self, offset: usize, mask: &[u8]) -> Result<Vec<u8>, ContentError> {
+
+    pub fn apply_mask(&mut self, offset: usize, mask: &[u8], operation: BitMask) -> Result<Vec<u8>, ContentError> {
         let mut new_bytes = Vec::new();
         for (i, byte) in mask.iter().enumerate() {
             match self.get_byte(offset + i) {
                 Some(v) => {
-                    new_bytes.push(v | *byte);
+                    match operation {
+                        BitMask::Or => { new_bytes.push(v | *byte); }
+                        BitMask::Xor => { new_bytes.push(v ^ *byte); }
+                        BitMask::Nor => { new_bytes.push(!(v | *byte)); }
+                        BitMask::And => { new_bytes.push(v & *byte); }
+                        BitMask::Nand => { new_bytes.push(!(v & *byte)); }
+                    }
                 }
-                None => {
-                    new_bytes.push(*byte);
-                }
+                None => { }
             }
         }
 
         let old_bytes = self.remove_bytes(offset, mask.len());
 
-        self.insert_bytes(offset, new_bytes)?;
+        self.insert_bytes(offset, &new_bytes)?;
 
         Ok(old_bytes)
     }
 
-    pub fn apply_and_mask(&mut self, offset: usize, mask: &[u8]) -> Result<Vec<u8>, ContentError> {
-        let mut new_bytes = Vec::new();
-        for (i, byte) in mask.iter().enumerate() {
-            match self.get_byte(offset + i) {
-                Some(v) => {
-                    new_bytes.push(v & *byte);
-                }
-                None => {
-                    new_bytes.push(*byte);
-                }
-            }
-        }
 
-        let old_bytes = self.remove_bytes(offset, mask.len());
-
-        self.insert_bytes(offset, new_bytes)?;
-
-        Ok(old_bytes)
-
-    }
-
-    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), ContentError> {
+    pub fn insert_bytes(&mut self, offset: usize, new_bytes: &[u8]) -> Result<(), ContentError> {
         if offset <= self.content_array.len() {
             let mut new_content = self.content_array[0..offset].to_vec();
             let chunk_last = self.content_array[offset..].to_vec();
@@ -206,5 +204,6 @@ impl Content {
         }
 
     }
+
 }
 

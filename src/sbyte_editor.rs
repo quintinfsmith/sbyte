@@ -23,7 +23,7 @@ use converter::{HumanConverter, BinaryConverter, HexConverter, Converter, Conver
 use viewport::ViewPort;
 use cursor::Cursor;
 use command_line::CommandLine;
-use content::{Content, ContentError};
+use content::{Content, ContentError, BitMask};
 
 
 #[derive(Debug, Eq, PartialEq)]
@@ -135,8 +135,15 @@ impl BackEnd {
         output.assign_line_command("setcmd", "ASSIGN_INPUT");
         output.assign_line_command("lw", "SET_WIDTH");
         output.assign_line_command("reg", "SET_REGISTER");
+
         output.assign_line_command("and", "MASK_AND");
+        output.assign_line_command("nand", "MASK_NAND");
         output.assign_line_command("or", "MASK_OR");
+        output.assign_line_command("nor", "MASK_NOR");
+        output.assign_line_command("xor", "MASK_XOR");
+        output.assign_line_command("not", "MASK_NOT");
+
+
 
         output
     }
@@ -271,7 +278,7 @@ impl BackEnd {
         let mut opposite_bytes_to_remove = 0;
         if bytes_to_insert.len() > 0 {
             opposite_bytes_to_remove = bytes_to_insert.len();
-            self.active_content.insert_bytes(offset, bytes_to_insert)?;
+            self.active_content.insert_bytes(offset, &bytes_to_insert)?;
         }
 
         Ok((offset, opposite_bytes_to_remove, opposite_bytes_to_insert, timestamp))
@@ -345,7 +352,7 @@ impl BackEnd {
         }
     }
 
-    pub fn replace(&mut self, search_for: &str, replace_with: Vec<u8>) -> Result<Vec<usize>, SbyteError> {
+    pub fn replace(&mut self, search_for: &str, replace_with: &[u8]) -> Result<Vec<usize>, SbyteError> {
         let mut matches = self.find_all(&search_for)?;
         // replace in reverse order
         matches.sort();
@@ -356,7 +363,7 @@ impl BackEnd {
         for (start, end) in matches.iter() {
             hit_positions.push(*start);
             removed_bytes = self.active_content.remove_bytes(*start, *end - *start);
-            self.active_content.insert_bytes(*start, replace_with.clone())?;
+            self.active_content.insert_bytes(*start, replace_with)?;
             self.push_to_undo_stack(*start, replace_with.len(), removed_bytes.clone());
         }
 
@@ -638,7 +645,7 @@ impl BackEnd {
     }
 
 
-    pub fn insert_bytes(&mut self, offset: usize, new_bytes: Vec<u8>) -> Result<(), SbyteError> {
+    pub fn insert_bytes(&mut self, offset: usize, new_bytes: &[u8]) -> Result<(), SbyteError> {
         let adj_byte_width = new_bytes.len();
         self.active_content.insert_bytes(offset, new_bytes)?;
 
@@ -646,7 +653,7 @@ impl BackEnd {
         Ok(())
     }
 
-    pub fn overwrite_bytes(&mut self, position: usize, new_bytes: Vec<u8>) -> Result<Vec<u8>, SbyteError> {
+    pub fn overwrite_bytes(&mut self, position: usize, new_bytes: &[u8]) -> Result<Vec<u8>, SbyteError> {
         let length = new_bytes.len();
         let removed_bytes = self.active_content.remove_bytes(position, length);
 
@@ -656,12 +663,12 @@ impl BackEnd {
         Ok(removed_bytes)
     }
 
-    pub fn insert_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<(), SbyteError> {
+    pub fn insert_bytes_at_cursor(&mut self, new_bytes: &[u8]) -> Result<(), SbyteError> {
         let position = self.cursor.get_offset();
         self.insert_bytes(position, new_bytes)
     }
 
-    pub fn overwrite_bytes_at_cursor(&mut self, new_bytes: Vec<u8>) -> Result<Vec<u8>, SbyteError> {
+    pub fn overwrite_bytes_at_cursor(&mut self, new_bytes: &[u8]) -> Result<Vec<u8>, SbyteError> {
         let position = self.cursor.get_offset();
         self.overwrite_bytes(position, new_bytes)
     }
@@ -900,31 +907,47 @@ impl BackEnd {
         self.user_error_msg.as_ref()
     }
 
-    pub fn apply_or_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+    fn apply_mask(&mut self, operation: BitMask, mask: &[u8]) -> Result<(), SbyteError> {
         let mut new_mask = Vec::new();
         let mask_len = mask.len();
-        for i in 0 .. mask_len * ((self.get_cursor_length() as f64 / mask_len as f64).ceil() as usize) {
-            new_mask.push(mask[i % mask_len]);
+        let cursor_len = self.get_cursor_length();
+        if cursor_len != 1 {
+            for i in 0 .. cursor_len {
+                new_mask.push(mask[i % mask_len]);
+            }
+        } else {
+            new_mask = mask.to_vec();
         }
 
         let offset = self.get_cursor_offset();
-        let old_bytes = self.active_content.apply_or_mask(offset, &new_mask)?;
+        let old_bytes = self.active_content.apply_mask(offset, &new_mask, operation)?;
         self.push_to_undo_stack(offset, new_mask.len(), old_bytes);
 
         Ok(())
     }
+
+    pub fn apply_or_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.apply_mask(BitMask::Or, mask)
+    }
+    pub fn apply_xor_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.apply_mask(BitMask::Xor, mask)
+    }
+    pub fn apply_nor_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.apply_mask(BitMask::Nor, mask)
+    }
     pub fn apply_and_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
-        let mut new_mask = Vec::new();
-        let mask_len = mask.len();
-        for i in 0 .. mask_len * ((mask_len as f64 / self.get_cursor_length() as f64).ceil() as usize) {
-            new_mask.push(mask[i % mask_len]);
+        self.apply_mask(BitMask::And, mask)
+    }
+    pub fn apply_nand_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
+        self.apply_mask(BitMask::Nand, mask)
+    }
+
+    pub fn bitwise_not(&mut self) -> Result<(), SbyteError> {
+        let mut mask = Vec::new();
+        for _ in 0 .. self.get_cursor_length() {
+            mask.push(0xFF);
         }
-
-        let offset = self.get_cursor_offset();
-        let old_bytes = self.active_content.apply_and_mask(offset, &new_mask)?;
-        self.push_to_undo_stack(offset, new_mask.len(), old_bytes);
-
-        Ok(())
+        self.apply_mask(BitMask::Xor, &mask)
     }
 }
 
