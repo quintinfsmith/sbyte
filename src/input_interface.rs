@@ -236,6 +236,8 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["CURSOR_LENGTH_RIGHT", "L_UPPER"])?;
 
         self.send_command("ASSIGN_INPUT", &["JUMP_TO_REGISTER", "G_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["POINTER_BE_JUMP", "R_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["POINTER_LE_JUMP", "T_UPPER"])?;
         self.send_command("ASSIGN_INPUT", &["DELETE", "X_LOWER"])?;
         self.send_command("ASSIGN_INPUT", &["YANK", "Y_LOWER"])?;
         self.send_command("ASSIGN_INPUT", &["PASTE", "P_LOWER"])?;
@@ -258,10 +260,9 @@ impl InputInterface {
 
 
 
-        for i in 0 .. 10 {
-            let strrep = std::str::from_utf8(&[i + 48]).unwrap().to_string();
-            let cmdstr = &format!("KEY_{}", &strrep);
-            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", &cmdstr])?;
+        let num_words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
+        for i in num_words.iter() {
+            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", i])?;
         }
 
         self.send_command("ASSIGN_MODE_INPUT", &["INSERT", "MODE_SET_DEFAULT", "ESCAPE"])?;
@@ -688,6 +689,16 @@ impl InputInterface {
                 let change_to = arguments.get(1).unwrap();
 
                 self.ci_replace(change_from, change_to);
+            }
+
+            "POINTER_BE_JUMP" => {
+                let new_offset = self.backend.get_selected_as_big_endian();
+                self.ci_jump_to_position(new_offset);
+            }
+
+            "POINTER_LE_JUMP" => {
+                let new_offset = self.backend.get_selected_as_little_endian();
+                self.ci_jump_to_position(new_offset);
             }
 
             "JUMP_TO_REGISTER" => {
@@ -1219,9 +1230,15 @@ impl InputInterface {
     }
 
     fn ci_jump_to_position(&mut self, new_offset: usize) {
-        self.backend.set_cursor_length(1);
-        self.backend.set_cursor_offset(new_offset);
 
+        let content_length = self.backend.len();
+        if new_offset <= content_length {
+            self.backend.set_cursor_length(1);
+            self.backend.set_cursor_offset(new_offset);
+            self.frontend.raise_flag(Flag::HideFeedback);
+        } else {
+            self.backend.set_user_error_msg(&format!("Out of Bounds: {} < {}", new_offset, content_length));
+        }
         self.frontend.raise_flag(Flag::RemapActiveRows);
         self.frontend.raise_flag(Flag::CursorMoved);
         self.frontend.raise_flag(Flag::UpdateOffset);

@@ -139,6 +139,10 @@ impl BackEnd {
         output
     }
 
+    pub fn len(&self) -> usize {
+        self.active_content.len()
+    }
+
     pub fn increment_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
         match self.active_content.increment_byte(offset) {
             Ok(undo_bytes) => {
@@ -665,6 +669,24 @@ impl BackEnd {
         let length = self.cursor.get_length();
 
         self.get_chunk(offset, length)
+    }
+
+    pub fn get_selected_as_big_endian(&mut self) -> usize {
+        let mut value = 0 as usize;
+        for n in self.get_selected().iter() {
+            value *= 256;
+            value += *n as usize;
+        }
+        value
+    }
+
+    pub fn get_selected_as_little_endian(&mut self) -> usize {
+        let mut value = 0 as usize;
+        for n in self.get_selected().iter().rev() {
+            value *= 256;
+            value += *n as usize;
+        }
+        value
     }
 
     pub fn get_chunk(&self, offset: usize, length: usize) -> Vec<u8> {
