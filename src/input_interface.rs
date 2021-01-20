@@ -702,7 +702,7 @@ impl InputInterface {
             }
 
             "JUMP_TO_REGISTER" => {
-                let new_offset = max(0, self.grab_register(std::usize::MAX)) as usize;
+                let new_offset = max(0, self.grab_register(self.backend.len())) as usize;
                 self.ci_jump_to_position(new_offset);
             }
 

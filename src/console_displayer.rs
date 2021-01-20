@@ -636,6 +636,8 @@ impl FrontEnd {
 
         let x = meta_width - offset_display.len();
         self.rectmanager.resize(self.rect_offset, offset_display.len(), 1)?;
+        self.rectmanager.resize(self.rect_feedback, meta_width - offset_display.len(), 1)?;
+
         self.rectmanager.set_position(self.rect_offset, x as isize, 0)?;
         self.rectmanager.set_string(self.rect_offset, 0, 0, &offset_display)?;
 
