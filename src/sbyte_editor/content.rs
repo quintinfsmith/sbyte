@@ -3,7 +3,8 @@ use regex::bytes::Regex;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ContentError {
-    OutOfBounds(usize, usize)
+    OutOfBounds(usize, usize),
+    InvalidDigit(u8, u8)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,10 +40,11 @@ impl Content {
             None
         }
     }
-    pub fn set_byte(&mut self, offset: usize, new_byte: u8) -> Result<(), ContentError> {
+    pub fn set_byte(&mut self, offset: usize, new_byte: u8) -> Result<u8, ContentError> {
         if offset < self.len() {
+            let old_byte = self.content_array[offset];
             self.content_array[offset] = new_byte;
-            Ok(())
+            Ok(old_byte)
         } else {
             Err(ContentError::OutOfBounds(offset, self.len()))
         }
@@ -205,5 +207,35 @@ impl Content {
 
     }
 
+    pub fn replace_digit(&mut self, offset: usize, digit_value: u8, position: u8, radix: u8) -> Result<u8, ContentError> {
+        match self.get_byte(offset) {
+            Some(mut byte) => {
+                let mut steps = 256f64.log(radix as f64).ceil() as u8;
+                let mut digits = vec![];
+                for i in 0 .. steps {
+                    if i == position {
+                        digits.push(digit_value as u16);
+                    } else {
+                        digits.push((byte % radix) as u16);
+                    }
+                    byte /= radix;
+                }
+
+                let mut new_byte = 0 as u16;
+                for digit in digits.iter().rev() {
+                    new_byte *= radix as u16;
+                    new_byte += digit;
+                }
+                if new_byte > u8::MAX as u16 {
+                    Err(ContentError::InvalidDigit(digit_value, radix))
+                } else {
+                    self.set_byte(offset, new_byte as u8)
+                }
+            }
+            None => {
+                Err(ContentError::OutOfBounds(offset, self.len()))
+            }
+        }
+    }
 }
 

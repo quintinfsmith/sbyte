@@ -225,6 +225,13 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["CURSOR_LEFT", "H_LOWER"])?;
         self.send_command("ASSIGN_INPUT", &["CURSOR_RIGHT", "L_LOWER"])?;
 
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_BIN", "SUBCURSOR_LEFT", "H_LOWER"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_BIN", "SUBCURSOR_RIGHT", "L_LOWER"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_DEC", "SUBCURSOR_LEFT", "H_LOWER"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_DEC", "SUBCURSOR_RIGHT", "L_LOWER"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_HEX", "SUBCURSOR_LEFT", "H_LOWER"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_HEX", "SUBCURSOR_RIGHT", "L_LOWER"])?;
+
         self.send_command("ASSIGN_INPUT", &["CURSOR_DOWN", "ARROW_DOWN"])?;
         self.send_command("ASSIGN_INPUT", &["CURSOR_UP", "ARROW_UP"])?;
         self.send_command("ASSIGN_INPUT", &["CURSOR_LEFT", "ARROW_LEFT"])?;
@@ -249,10 +256,12 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["BACKSPACE", "BACKSPACE"])?;
         self.send_command("ASSIGN_INPUT", &["DELETE", "DELETE"])?;
 
-        self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT", "I_LOWER"])?;
-        self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT_SPECIAL", "I_UPPER"])?;
+        //self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT", "I_LOWER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT_ASCII", "I_LOWER"])?;
+        //self.send_command("ASSIGN_INPUT", &["MODE_SET_INSERT_SPECIAL", "I_UPPER"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_OVERWRITE", "O_LOWER"])?;
-        self.send_command("ASSIGN_INPUT", &["MODE_SET_OVERWRITE_SPECIAL", "O_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["MODE_SET_OVERWRITE_ASCII", "O_UPPER"])?;
+        //self.send_command("ASSIGN_INPUT", &["MODE_SET_OVERWRITE_SPECIAL", "O_UPPER"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_APPEND", "A_LOWER"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_SEARCH", "SLASH"])?;
         self.send_command("ASSIGN_INPUT", &["MODE_SET_CMD", "COLON"])?;
@@ -261,14 +270,11 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["MODE_SET_MASK_XOR", "CARET"])?;
         self.send_command("ASSIGN_INPUT", &["BITWISE_NOT", "TILDE"])?;
 
-
-        let num_words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
-        for i in num_words.iter() {
-            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", i])?;
-        }
-
-        self.send_command("ASSIGN_MODE_INPUT", &["INSERT", "MODE_SET_DEFAULT", "ESCAPE"])?;
-        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_ASCII", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_HEX", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_DEC", "MODE_SET_DEFAULT", "ESCAPE"])?;
+        self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_BIN", "MODE_SET_DEFAULT", "ESCAPE"])?;
 
         let key_map = InputInterface::build_key_map();
         let mut ascii_map = HashMap::new();
@@ -276,17 +282,40 @@ impl InputInterface {
             ascii_map.insert(value.to_string(), key.to_string());
         }
 
+        for c in "01".as_bytes().iter() {
+            let strrep = std::str::from_utf8(&[*c]).unwrap().to_string();
+            let keycode = ascii_map.get(&strrep).unwrap();
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_BIN", "OVERWRITE_DIGIT", &keycode]);
+        }
+
+        for c in "0123456789".as_bytes().iter() {
+            let strrep = std::str::from_utf8(&[*c]).unwrap().to_string();
+            let keycode = ascii_map.get(&strrep).unwrap();
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_DEC", "OVERWRITE_DIGIT", &keycode]);
+            self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode])?;
+
+            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", &keycode])?;
+        }
+
+        for c in "0123456789abcdef".as_bytes().iter() {
+            let strrep = std::str::from_utf8(&[*c]).unwrap().to_string();
+            let keycode = ascii_map.get(&strrep).unwrap();
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_HEX", "OVERWRITE_DIGIT", &keycode]);
+        }
+
         for i in 32 .. 127 {
             let strrep = std::str::from_utf8(&[i]).unwrap().to_string();
             let keycode = ascii_map.get(&strrep).unwrap();
-            self.send_command("ASSIGN_MODE_INPUT", &["INSERT", "INSERT_STRING", &keycode])?;
-            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE", "OVERWRITE_STRING", &keycode])?;
+
+            self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_ASCII", "OVERWRITE_STRING", &keycode])?;
             self.send_command("ASSIGN_MODE_INPUT", &["CMD", "INSERT_TO_CMDLINE", &keycode])?;
         }
 
         self.send_command("ASSIGN_MODE_INPUT", &["CMD", "RUN_CUSTOM_COMMAND", "LINE_FEED"])?;
         self.send_command("ASSIGN_MODE_INPUT", &["CMD", "MODE_SET_DEFAULT", "ESCAPE"])?;
         self.send_command("ASSIGN_MODE_INPUT", &["CMD", "CMDLINE_BACKSPACE", "BACKSPACE"])?;
+
         Ok(())
     }
 
@@ -666,6 +695,15 @@ impl InputInterface {
                 self.ci_cursor_right(repeat);
             }
 
+            "SUBCURSOR_LEFT" => {
+                self.ci_subcursor_left();
+            }
+
+            "SUBCURSOR_RIGHT" => {
+                self.ci_subcursor_right();
+            }
+
+
             "CURSOR_LENGTH_UP" => {
                 let repeat = self.grab_register(1);
                 self.ci_cursor_length_up(repeat)
@@ -853,11 +891,12 @@ impl InputInterface {
                 self.ci_redo(repeat);
             }
 
-            "MODE_SET_INSERT" => {
+            "MODE_SET_INSERT_ASCII" => {
                 self.clear_register();
+                self.inputter.set_context("INSERT_ASCII");
                 self.backend.set_user_msg("--INSERT--");
-                self.inputter.set_context("INSERT");
             }
+
             "MODE_SET_INSERT_SPECIAL" => {
                 match self.backend.get_commandline_mut() {
                     Some(commandline) => {
@@ -880,15 +919,28 @@ impl InputInterface {
             }
             "MODE_SET_OVERWRITE" => {
                 self.clear_register();
+                match self.backend.get_active_converter_ref() {
+                    ConverterRef::BIN => {
+                        self.inputter.set_context("OVERWRITE_BIN");
+                    }
+                    ConverterRef::HEX => {
+                        self.inputter.set_context("OVERWRITE_HEX");
+                    }
+                    ConverterRef::DEC => {
+                        self.inputter.set_context("OVERWRITE_DEC");
+                    }
+                };
                 self.backend.set_user_msg("--OVERWRITE--");
-                self.inputter.set_context("OVERWRITE");
+            }
+            "MODE_SET_OVERWRITE_ASCII" => {
+                self.clear_register();
+                self.inputter.set_context("OVERWRITE_ASCII");
+                self.backend.set_user_msg("--OVERWRITE--");
             }
 
             "MODE_SET_APPEND" => {
-                self.clear_register();
                 self.ci_cursor_right(1);
-                self.backend.set_user_msg("--INSERT--");
-                self.inputter.set_context("INSERT");
+                self.send_command("MODE_SET_INSERT", arguments);
             }
 
             "MODE_SET_DEFAULT" => {
@@ -924,6 +976,28 @@ impl InputInterface {
                 }
             }
 
+            "OVERWRITE_DIGIT" => {
+                for arg in arguments.iter() {
+                    match arg.chars().next() {
+                        Some(c) => {
+                            match self.ci_overwrite_digit(c) {
+                                Ok(_) => {}
+                                Err(SbyteError::InvalidDigit(conv)) => {
+                                    self.backend.set_user_error_msg(&format!("Invalid digit {}", c));
+                                }
+                                Err(SbyteError::InvalidRadix(radix)) => {
+                                    self.backend.set_user_error_msg(&format!("Invalid radix {}", radix));
+                                }
+                                Err(e) => {
+                                    Err(e)?;
+                                }
+                            }
+                        }
+                        None => ()
+                    }
+                }
+            }
+
             "INSERT_STRING" => {
                 let pattern = match arguments.get(0) {
                     Some(argument) => {
@@ -937,18 +1011,18 @@ impl InputInterface {
                 self.ci_insert_string(pattern, repeat)?;
             }
 
-            "INSERT_RAW" => {
-                let repeat = self.grab_register(1);
-                let pattern = match arguments.get(0) {
-                    Some(arg) => {
-                        arg.as_bytes().to_vec()
-                    }
-                    None => {
-                        vec![]
-                    }
-                };
-                self.ci_insert_bytes(&pattern, repeat)?;
-            }
+            //"INSERT_RAW" => {
+            //    let repeat = self.grab_register(1);
+            //    let pattern = match arguments.get(0) {
+            //        Some(arg) => {
+            //            arg.as_bytes().to_vec()
+            //        }
+            //        None => {
+            //            vec![]
+            //        }
+            //    };
+            //    self.ci_insert_bytes(&pattern, repeat)?;
+            //}
 
             "INSERT_TO_CMDLINE" => {
                 match arguments.get(0) {
@@ -980,18 +1054,18 @@ impl InputInterface {
 
             }
 
-            "OVERWRITE_RAW" => {
-                let repeat = self.grab_register(1);
-                let pattern = match arguments.get(0) {
-                    Some(arg) => {
-                        arg.as_bytes().to_vec()
-                    }
-                    None => {
-                        vec![]
-                    }
-                };
-                self.ci_overwrite_bytes(&pattern, repeat)?;
-            }
+            //"OVERWRITE_RAW" => {
+            //    let repeat = self.grab_register(1);
+            //    let pattern = match arguments.get(0) {
+            //        Some(arg) => {
+            //            arg.as_bytes().to_vec()
+            //        }
+            //        None => {
+            //            vec![]
+            //        }
+            //    };
+            //    self.ci_overwrite_bytes(&pattern, repeat)?;
+            //}
 
             "DECREMENT" => {
                 let repeat = max(1, self.grab_register(1));
@@ -1216,6 +1290,36 @@ impl InputInterface {
             thread::sleep(delay);
             self.__resize_hook();
         }
+    }
+
+    fn ci_subcursor_left(&mut self) -> Result<(), SbyteError> {
+        self.backend.subcursor_prev_digit();
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+        Ok(())
+    }
+    fn ci_subcursor_right(&mut self) -> Result<(), SbyteError> {
+        self.backend.subcursor_next_digit();
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+        Ok(())
+    }
+
+
+    fn ci_overwrite_digit(&mut self, digit: char) -> Result<(), SbyteError> {
+        self.backend.overwrite_digit(digit)?;
+        self.backend.subcursor_next_digit();
+
+        if self.backend.get_subcursor_offset() == 0 {
+            self.backend.cursor_next_byte();
+        }
+
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
+        Ok(())
     }
 
     fn ci_cursor_up(&mut self, repeat: usize) {

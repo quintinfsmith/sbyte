@@ -549,6 +549,7 @@ impl FrontEnd {
 
                 for (_x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
                     self.rectmanager.clear_characters(*rect_id_human)?;
+                    self.rectmanager.clear_children(*rect_id_bits)?;
                     self.rectmanager.clear_characters(*rect_id_bits)?;
                 }
 
@@ -676,10 +677,13 @@ impl FrontEnd {
         let viewport_offset = sbyte_editor.get_viewport_offset();
         let cursor_offset = sbyte_editor.get_cursor_offset();
         let cursor_length = sbyte_editor.get_cursor_length();
+        let subcursor_offset = sbyte_editor.get_subcursor_offset();
+        let suboffset_cell = subcursor_offset / (sbyte_editor.get_display_ratio() as usize - 1);
 
         // First clear previously applied
         // (They may no longer exist, but that's ok)
         for (bits, human) in self.active_cursor_cells.drain() {
+            self.rectmanager.clear_children(bits);
             self.rectmanager.unset_invert_flag(bits).ok();
             self.rectmanager.unset_invert_flag(human).ok();
         }
@@ -696,6 +700,7 @@ impl FrontEnd {
             cursor_offset + cursor_length
         };
 
+
         let mut y;
         let mut x;
         for i in start .. end {
@@ -705,7 +710,20 @@ impl FrontEnd {
                     x = (i - viewport_offset) % viewport_width;
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
+                            self.rectmanager.clear_children(*bits);
+                            if (i - cursor_offset) == suboffset_cell {
+                                let digit_cell = self.rectmanager.new_rect(*bits).ok().unwrap();
+                                let c = match self.rectmanager.get_character(*bits, subcursor_offset as isize, 0) {
+                                    Ok(_c) => { _c }
+                                    Err(e) => { 'X' }
+                                };
+                                self.rectmanager.set_character(digit_cell, 0, 0, c);
+                                self.rectmanager.set_position(digit_cell, subcursor_offset as isize, 0);
+                                self.rectmanager.set_invert_flag(digit_cell);
+                                self.rectmanager.set_underline_flag(digit_cell);
+                            }
                             self.rectmanager.set_invert_flag(*bits)?;
+
                             self.rectmanager.set_invert_flag(*human)?;
                             self.cells_to_refresh.insert((*bits, *human));
                             self.active_cursor_cells.insert((*bits, *human));

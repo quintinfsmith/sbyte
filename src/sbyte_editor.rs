@@ -45,7 +45,8 @@ pub enum SbyteError {
     ReadFail,
     InvalidCommand(String),
     ConversionFailed,
-    InvalidDigit(ConverterRef)
+    InvalidDigit(ConverterRef),
+    InvalidRadix(u8)
 }
 
 impl fmt::Display for SbyteError {
@@ -61,6 +62,14 @@ impl From<ContentError> for SbyteError {
         match err {
             ContentError::OutOfBounds(offset, length) => {
                 SbyteError::OutOfBounds(offset, length)
+            }
+            ContentError::InvalidDigit(digit, radix) => {
+                match radix {
+                    16 => SbyteError::InvalidDigit(ConverterRef::HEX),
+                    10 => SbyteError::InvalidDigit(ConverterRef::DEC),
+                    2 =>  SbyteError::InvalidDigit(ConverterRef::BIN),
+                    _ => SbyteError::InvalidRadix(radix)
+                }
             }
         }
     }
@@ -87,6 +96,7 @@ pub struct BackEnd {
     active_content: Content,
     active_file_path: Option<String>,
     cursor: Cursor,
+    subcursor: Cursor,
     active_converter: ConverterRef,
     undo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
@@ -113,6 +123,7 @@ impl BackEnd {
             active_content: Content::new(),
             active_file_path: None,
             cursor: Cursor::new(),
+            subcursor: Cursor::new(),
             active_converter: ConverterRef::HEX,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -143,7 +154,9 @@ impl BackEnd {
         output.assign_line_command("xor", "MASK_XOR");
         output.assign_line_command("not", "MASK_NOT");
 
-
+        output.set_cursor_length(1);
+        output.set_cursor_offset(0);
+        output.set_subcursor_length();
 
         output
     }
@@ -332,6 +345,7 @@ impl BackEnd {
 
     pub fn set_active_converter(&mut self, converter: ConverterRef) {
         self.active_converter = converter;
+        self.set_subcursor_length()
     }
 
     pub fn get_active_converter_ref(&self) -> ConverterRef {
@@ -644,13 +658,30 @@ impl BackEnd {
         self.remove_bytes(offset, length)
     }
 
-
     pub fn insert_bytes(&mut self, offset: usize, new_bytes: &[u8]) -> Result<(), SbyteError> {
         let adj_byte_width = new_bytes.len();
         self.active_content.insert_bytes(offset, new_bytes)?;
 
         self.push_to_undo_stack(offset, adj_byte_width, vec![]);
         Ok(())
+    }
+
+    pub fn overwrite_digit(&mut self, digit: char) -> Result<(), SbyteError> {
+        let converter = self.get_active_converter();
+        let radix = converter.radix();
+        let offset = self.get_cursor_offset() + (self.get_subcursor_offset() / self.get_subcursor_length());
+
+        let subcursor_real_position = self.subcursor.get_length() - 1 - (self.subcursor.get_offset() % self.subcursor.get_length());
+        match digit.to_digit(radix) {
+            Some(value) => {
+                let old_byte = self.active_content.replace_digit(offset, value as u8, subcursor_real_position as u8, radix as u8)?;
+                self.push_to_undo_stack(offset, 1, vec![old_byte]);
+                Ok(())
+            }
+            None => {
+                Err(SbyteError::InvalidDigit(self.get_active_converter_ref()))
+            }
+        }
     }
 
     pub fn overwrite_bytes(&mut self, position: usize, new_bytes: &[u8]) -> Result<Vec<u8>, SbyteError> {
@@ -714,6 +745,18 @@ impl BackEnd {
         }
     }
 
+    pub fn subcursor_next_digit(&mut self) {
+        let new_position = self.subcursor.get_offset() + 1;
+        self.set_subcursor_offset(new_position);
+    }
+
+    pub fn subcursor_prev_digit(&mut self) {
+        if self.subcursor.get_offset() != 0 {
+            let new_position = self.subcursor.get_offset() - 1;
+            self.set_subcursor_offset(new_position);
+        }
+    }
+
     pub fn cursor_increase_length(&mut self) {
         let new_length;
         if self.cursor.get_real_length() == -1 {
@@ -739,6 +782,7 @@ impl BackEnd {
     pub fn set_cursor_offset(&mut self, new_offset: usize) {
         let adj_offset = min(self.active_content.len(), new_offset);
         self.cursor.set_offset(adj_offset);
+        self.subcursor.set_offset(0);
         self.adjust_viewport_offset();
     }
 
@@ -752,6 +796,10 @@ impl BackEnd {
             let adj_length = min(new_length as usize, self.active_content.len() - self.cursor.get_real_offset()) as isize;
             self.cursor.set_length(adj_length);
         }
+
+        self.set_subcursor_length();
+        self.subcursor.set_offset(0);
+
         self.adjust_viewport_offset();
     }
 
@@ -771,6 +819,21 @@ impl BackEnd {
 
     pub fn get_cursor_length(&self) -> usize {
         self.cursor.get_length()
+    }
+
+    pub fn get_subcursor_offset(&self) -> usize {
+        self.subcursor.get_offset()
+    }
+
+    pub fn get_subcursor_length(&self) -> usize {
+        self.subcursor.get_length()
+    }
+
+    pub fn set_subcursor_length(&mut self) {
+        self.subcursor.set_length((self.get_display_ratio() - 1) as isize);
+    }
+    pub fn set_subcursor_offset(&mut self, new_offset: usize) {
+        self.subcursor.set_offset(new_offset % self.subcursor.get_length());
     }
 
     pub fn get_active_content(&self) -> &[u8] {

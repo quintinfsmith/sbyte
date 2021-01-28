@@ -18,6 +18,8 @@ pub trait Converter {
     fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
     fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
     fn encode_integer(&self, integer: usize) -> Vec<u8>;
+
+    fn radix(&self) -> u32;
 }
 impl dyn Converter {
     fn decode_string(&self, string: String) -> Result<Vec<u8>, ConverterError> {
@@ -133,6 +135,9 @@ impl Converter for HexConverter {
 
         Ok(output_number)
     }
+    fn radix(&self) -> u32 {
+        16
+    }
 }
 
 impl Converter for BinaryConverter {
@@ -213,6 +218,10 @@ impl Converter for BinaryConverter {
         }
 
         Ok(output_number)
+    }
+
+    fn radix(&self) -> u32 {
+        2
     }
 }
 
@@ -300,6 +309,10 @@ impl Converter for HumanConverter {
         }
 
         output
+    }
+
+    fn radix(&self) -> u32 {
+        256
     }
 }
 
@@ -400,5 +413,9 @@ impl Converter for DecConverter {
         }
 
         Ok(some_number)
+    }
+
+    fn radix(&self) -> u32 {
+        10
     }
 }
