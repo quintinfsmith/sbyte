@@ -988,6 +988,9 @@ impl InputInterface {
                                 Err(SbyteError::InvalidRadix(radix)) => {
                                     self.backend.set_user_error_msg(&format!("Invalid radix {}", radix));
                                 }
+                                Err(SbyteError::OutOfBounds(_, _)) => {
+                                    self.backend.set_user_error_msg("Nothing to overwrite");
+                                }
                                 Err(e) => {
                                     Err(e)?;
                                 }
