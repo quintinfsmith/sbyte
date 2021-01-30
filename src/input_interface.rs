@@ -980,7 +980,7 @@ impl InputInterface {
                 for arg in arguments.iter() {
                     match arg.chars().next() {
                         Some(c) => {
-                            match self.ci_overwrite_digit(c) {
+                            match self.ci_replace_digit(c) {
                                 Ok(_) => {}
                                 Err(SbyteError::InvalidDigit(conv)) => {
                                     self.backend.set_user_error_msg(&format!("Invalid digit {}", c));
@@ -1308,8 +1308,8 @@ impl InputInterface {
     }
 
 
-    fn ci_overwrite_digit(&mut self, digit: char) -> Result<(), SbyteError> {
-        self.backend.overwrite_digit(digit)?;
+    fn ci_replace_digit(&mut self, digit: char) -> Result<(), SbyteError> {
+        self.backend.replace_digit(digit)?;
         self.backend.subcursor_next_digit();
 
         if self.backend.get_subcursor_offset() == 0 {

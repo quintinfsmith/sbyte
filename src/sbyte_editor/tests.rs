@@ -437,6 +437,41 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_digit() {
+        let mut editor = BackEnd::new();
+        editor.insert_bytes(0, &[0]);
+
+        editor.set_active_converter(ConverterRef::HEX);
+        editor.replace_digit('F');
+        assert_eq!(editor.get_active_content(), &[0xF0]);
+        editor.subcursor_next_digit();
+        assert!(editor.replace_digit('Q').is_err());
+        editor.replace_digit('1');
+        assert_eq!(editor.get_active_content(), &[0xF1]);
+
+
+        editor.set_active_converter(ConverterRef::BIN);
+        editor.replace_digit('0');
+        assert_eq!(editor.get_active_content(), &[0b01110001]);
+        editor.subcursor_next_digit();
+        editor.subcursor_next_digit();
+        editor.subcursor_next_digit();
+        editor.subcursor_next_digit();
+        assert!(editor.replace_digit('2').is_err());
+        editor.replace_digit('1');
+        assert_eq!(editor.get_active_content(), &[0b01111001]);
+
+        editor.set_active_converter(ConverterRef::DEC);
+        editor.overwrite_bytes(0, &[0]);
+        editor.replace_digit('2');
+        assert_eq!(editor.get_active_content(), &[200]);
+        editor.subcursor_next_digit();
+        assert!(editor.replace_digit('6').is_err());
+        editor.replace_digit('5');
+        assert_eq!(editor.get_active_content(), &[250]);
+    }
+
+    #[test]
     fn test_parse_words() {
         let test_string = "word   one two \\\" \\  'double word' 'dub\\'two' \"b l a h\"";
         let assumption = [
@@ -469,5 +504,6 @@ mod tests {
         assert_eq!(string_to_bytes("\\b0100000010000000"), Ok(vec![64, 128]));
         assert_eq!(string_to_bytes("\\d16391"), Ok(vec![64, 7]));
     }
+
 
 }

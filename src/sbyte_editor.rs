@@ -666,7 +666,7 @@ impl BackEnd {
         Ok(())
     }
 
-    pub fn overwrite_digit(&mut self, digit: char) -> Result<(), SbyteError> {
+    pub fn replace_digit(&mut self, digit: char) -> Result<(), SbyteError> {
         let converter = self.get_active_converter();
         let radix = converter.radix();
         let offset = self.get_cursor_offset() + (self.get_subcursor_offset() / self.get_subcursor_length());
@@ -674,7 +674,7 @@ impl BackEnd {
         let subcursor_real_position = self.subcursor.get_length() - 1 - (self.subcursor.get_offset() % self.subcursor.get_length());
         match digit.to_digit(radix) {
             Some(value) => {
-                let old_byte = self.active_content.replace_digit(offset, value as u8, subcursor_real_position as u8, radix as u8)?;
+                let old_byte = self.active_content.replace_digit(offset, subcursor_real_position as u8, value as u8, radix as u8)?;
                 self.push_to_undo_stack(offset, 1, vec![old_byte]);
                 Ok(())
             }
@@ -831,6 +831,7 @@ impl BackEnd {
 
     pub fn set_subcursor_length(&mut self) {
         self.subcursor.set_length((self.get_display_ratio() - 1) as isize);
+        self.set_subcursor_offset(0);
     }
     pub fn set_subcursor_offset(&mut self, new_offset: usize) {
         self.subcursor.set_offset(new_offset % self.subcursor.get_length());

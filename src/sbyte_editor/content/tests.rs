@@ -1,6 +1,6 @@
 #[cfg (test)]
 mod tests {
-    use crate::sbyte_editor::content::{Content, BitMask};
+    use crate::sbyte_editor::content::{Content, BitMask, ContentError};
 
     #[test]
     fn test_initialize() {
@@ -220,5 +220,59 @@ mod tests {
             content.apply_mask(0, mask, BitMask::Xor);
             assert_eq!(content.as_slice(), output);
         }
+    }
+
+    #[test]
+    fn test_replace_digit() {
+        let mut content = Content::new();
+        content.insert_bytes(0, &[0x00]);
+
+
+        // Test base 16
+        content.replace_digit(0, 0, 1, 16);
+        assert_eq!(content.as_slice(), &[0x01]);
+        content.replace_digit(0, 1, 15, 16);
+        assert_eq!(content.as_slice(), &[0xF1]);
+        assert!(content.replace_digit(0, 0, 16, 16).is_err());
+
+        content.set_byte(0,0);
+
+        // Test base 2
+        content.replace_digit(0, 0, 1, 2);
+        assert_eq!(content.as_slice(), &[0b00000001]);
+        content.replace_digit(0, 1, 1, 2);
+        assert_eq!(content.as_slice(), &[0b00000011]);
+        content.replace_digit(0, 2, 1, 2);
+        assert_eq!(content.as_slice(), &[0b00000111]);
+        content.replace_digit(0, 3, 1, 2);
+        assert_eq!(content.as_slice(), &[0b00001111]);
+        content.replace_digit(0, 4, 1, 2);
+        assert_eq!(content.as_slice(), &[0b00011111]);
+        content.replace_digit(0, 5, 1, 2);
+        assert_eq!(content.as_slice(), &[0b00111111]);
+        content.replace_digit(0, 6, 1, 2);
+        assert_eq!(content.as_slice(), &[0b01111111]);
+        content.replace_digit(0, 7, 1, 2);
+        assert_eq!(content.as_slice(), &[0b11111111]);
+        assert!(content.replace_digit(0, 0, 2, 2).is_err());
+
+        // Test base 10
+        content.set_byte(0,0x00);
+        content.replace_digit(0, 0, 1, 10);
+        assert_eq!(content.as_slice(), &[1]);
+        content.replace_digit(0, 1, 9, 10);
+        assert_eq!(content.as_slice(), &[91]);
+        content.replace_digit(0, 2, 1, 10);
+        assert_eq!(content.as_slice(), &[191]);
+
+        assert!(content.replace_digit(0,2,2,10).is_err(), "Should not be able to convert to number > 255");
+
+        content.replace_digit(0, 1, 2, 10);
+        assert_eq!(content.as_slice(), &[121]);
+        assert!(content.replace_digit(0, 2,2,10).is_ok());
+        assert_eq!(content.as_slice(), &[221]);
+
+        assert_eq!(content.replace_digit(10, 0, 2, 3), Err(ContentError::OutOfBounds(10, 1)));
+
     }
 }
