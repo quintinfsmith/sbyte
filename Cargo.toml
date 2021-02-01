@@ -1,6 +1,6 @@
 [package]
 name = "sbyte"
-version = "0.2.14"
+version = "0.2.15"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"
@@ -10,7 +10,7 @@ repository = "https://github.com/quintinfsmith/sbyte.git"
 license = "GPL-3.0"
 
 [dependencies]
-wrecked = "^0.1.20"
+wrecked = "^0.1.21"
 ctrlc = "3.1.6"
 regex = "^1.4.2"
 
