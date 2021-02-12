@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use std::convert::From;
 use regex::bytes::Regex;
 
-use wrecked::RectError;
+use wrecked::WreckedError;
 
 // CommandLine struct
 pub mod command_line;
@@ -29,11 +29,11 @@ use content::{Content, ContentError, BitMask};
 #[derive(Debug, Eq, PartialEq)]
 pub enum SbyteError {
     PathNotSet,
-    SetupFailed(RectError),
-    RemapFailed(RectError),
-    RowSetFailed(RectError),
-    ApplyCursorFailed(RectError),
-    DrawFailed(RectError),
+    SetupFailed(WreckedError),
+    RemapFailed(WreckedError),
+    RowSetFailed(WreckedError),
+    ApplyCursorFailed(WreckedError),
+    DrawFailed(WreckedError),
     InvalidRegex(String),
     InvalidBinary(String),
     InvalidHexidecimal(String),

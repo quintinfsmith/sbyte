@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::cmp::max;
 use std::error::Error;
-use wrecked::{RectManager, RectColor, RectError};
+use wrecked::{RectManager, Color, WreckedError};
 
 use super::sbyte_editor::*;
 use super::sbyte_editor::converter::*;
@@ -34,10 +34,10 @@ pub struct FrontEnd {
 impl FrontEnd {
     pub fn new() -> FrontEnd {
         let mut rectmanager = RectManager::new();
-        let rect_display_wrapper = rectmanager.new_rect(wrecked::TOP).ok().unwrap();
+        let rect_display_wrapper = rectmanager.new_rect(wrecked::ROOT).ok().unwrap();
         let id_display_bits = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
         let id_display_human = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
-        let rect_meta = rectmanager.new_rect(wrecked::TOP).ok().unwrap();
+        let rect_meta = rectmanager.new_rect(wrecked::ROOT).ok().unwrap();
         let rect_feedback = rectmanager.new_rect(rect_meta).ok().unwrap();
         let rect_offset = rectmanager.new_rect(rect_meta).ok().unwrap();
 
@@ -145,7 +145,7 @@ impl FrontEnd {
                 self.display_user_offset(sbyte_editor)?;
             }
 
-            match self.rectmanager.draw() {
+            match self.rectmanager.render() {
                 Ok(_) => {}
                 Err(error) => {
                     Err(SbyteError::DrawFailed(error))?;
@@ -209,7 +209,7 @@ impl FrontEnd {
         output
     }
 
-    fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
+    fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let (width, height) = sbyte_editor.get_viewport_size();
 
         let initial_y = self.last_known_viewport_offset as isize;
@@ -373,7 +373,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    fn setup_displays(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
+    fn setup_displays(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         // Assumes that the viewport size AND the rectmanager size are correctly set at this point
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
@@ -484,7 +484,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    fn arrange_displays(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
+    fn arrange_displays(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
         let meta_height = 1;
@@ -535,7 +535,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    fn set_row_characters(&mut self, sbyte_editor: &BackEnd, absolute_y: usize) -> Result<(), RectError> {
+    fn set_row_characters(&mut self, sbyte_editor: &BackEnd, absolute_y: usize) -> Result<(), WreckedError> {
         let human_converter = HumanConverter {};
         let active_converter = sbyte_editor.get_active_converter();
         let (width, _height) = sbyte_editor.get_viewport_size();
@@ -604,7 +604,7 @@ impl FrontEnd {
     }
 
     // TODO: Change this to use usize instead of BackEnd
-    pub fn display_user_offset(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
+    pub fn display_user_offset(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let mut cursor_string = format!("{}", sbyte_editor.get_cursor_offset());
         let active_content = sbyte_editor.get_active_content();
 
@@ -645,25 +645,25 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn display_user_message(&mut self, msg: String) -> Result<(), RectError> {
+    pub fn display_user_message(&mut self, msg: String) -> Result<(), WreckedError> {
         self.clear_feedback()?;
 
         self.rectmanager.set_string(self.rect_feedback, 0, 0, &msg)?;
         self.rectmanager.set_bold_flag(self.rect_feedback)?;
-        self.rectmanager.set_fg_color(self.rect_feedback, RectColor::BRIGHTCYAN)?;
+        self.rectmanager.set_fg_color(self.rect_feedback, Color::BRIGHTCYAN)?;
 
         Ok(())
     }
 
-    pub fn display_user_error(&mut self, msg: String) -> Result<(), RectError> {
+    pub fn display_user_error(&mut self, msg: String) -> Result<(), WreckedError> {
         self.clear_feedback()?;
         self.rectmanager.set_string(self.rect_feedback, 0, 0, &msg)?;
-        self.rectmanager.set_fg_color(self.rect_feedback, RectColor::RED)?;
+        self.rectmanager.set_fg_color(self.rect_feedback, Color::RED)?;
 
         Ok(())
     }
 
-    fn clear_feedback(&mut self) -> Result<(), RectError> {
+    fn clear_feedback(&mut self) -> Result<(), WreckedError> {
         self.rectmanager.clear_characters(self.rect_feedback)?;
         self.rectmanager.clear_children(self.rect_feedback)?;
         self.rectmanager.unset_bold_flag(self.rect_feedback)?;
@@ -672,7 +672,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn apply_cursor(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
+    pub fn apply_cursor(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
         let viewport_offset = sbyte_editor.get_viewport_offset();
         let cursor_offset = sbyte_editor.get_cursor_offset();
@@ -738,7 +738,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn display_command_line(&mut self, sbyte_editor: &BackEnd) -> Result<(), RectError> {
+    pub fn display_command_line(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         match sbyte_editor.get_commandline() {
             Some(commandline) => {
                 self.clear_feedback()?;
