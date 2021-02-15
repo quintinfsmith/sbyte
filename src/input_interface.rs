@@ -1725,8 +1725,9 @@ impl InputInterface {
 
     fn ci_increment(&mut self, repeat: usize) {
         let offset = self.backend.get_cursor_offset();
+        let cursor_length = self.backend.get_cursor_length();
         for _ in 0 .. repeat {
-            match self.backend.increment_byte(offset) {
+            match self.backend.increment_byte(offset + (cursor_length - 1), cursor_length) {
                 Err(SbyteError::OutOfBounds(_, _)) => {
                     break;
                 }
@@ -1735,7 +1736,6 @@ impl InputInterface {
             }
         }
 
-        self.backend.set_cursor_length(1);
 
         let mut suboffset: usize = 0;
         let mut chunk;
@@ -1754,8 +1754,9 @@ impl InputInterface {
 
     fn ci_decrement(&mut self, repeat: usize) {
         let offset = self.backend.get_cursor_offset();
+        let cursor_length = self.backend.get_cursor_length();
         for _ in 0 .. repeat {
-            match self.backend.decrement_byte(offset) {
+            match self.backend.decrement_byte(offset + (cursor_length - 1), cursor_length) {
                 Ok(_) => {}
                 Err(SbyteError::OutOfBounds(_, _)) => {
                     break;
@@ -1763,7 +1764,6 @@ impl InputInterface {
                 Err(_) => { }
             }
         }
-        self.backend.set_cursor_length(1);
 
 
         let mut chunk;

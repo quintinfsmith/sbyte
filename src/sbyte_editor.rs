@@ -165,8 +165,8 @@ impl BackEnd {
         self.active_content.len()
     }
 
-    pub fn increment_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
-        match self.active_content.increment_byte(offset) {
+    pub fn increment_byte(&mut self, offset: usize, word_size: usize) -> Result<(), SbyteError> {
+        match self.active_content.increment_byte(offset, word_size) {
             Ok(undo_bytes) => {
                 let undo_len = undo_bytes.len();
                 let undo_offset = offset + 1 - undo_len;
@@ -179,8 +179,8 @@ impl BackEnd {
         }
     }
 
-    pub fn decrement_byte(&mut self, offset: usize) -> Result<(), SbyteError> {
-        match self.active_content.decrement_byte(offset) {
+    pub fn decrement_byte(&mut self, offset: usize, word_size: usize) -> Result<(), SbyteError> {
+        match self.active_content.decrement_byte(offset, word_size) {
             Ok(undo_bytes) => {
                 let undo_len = undo_bytes.len();
                 let undo_offset = offset + 1 - undo_len;
@@ -279,7 +279,7 @@ impl BackEnd {
 
     fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>, Instant)) -> Result<(usize, usize, Vec<u8>, Instant), SbyteError> {
         let (offset, bytes_to_remove, bytes_to_insert, timestamp) = task;
-
+        self.set_cursor_length(1);
         self.set_cursor_offset(offset);
 
         let mut opposite_bytes_to_insert = vec![];

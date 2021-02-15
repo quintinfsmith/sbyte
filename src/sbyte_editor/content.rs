@@ -63,7 +63,7 @@ impl Content {
         self.content_array.push(byte);
     }
 
-    pub fn increment_byte(&mut self, offset: usize) -> Result<Vec<u8>, ContentError> {
+    pub fn increment_byte(&mut self, offset: usize, word_size: usize) -> Result<Vec<u8>, ContentError> {
         let mut current_byte_offset = offset;
         if self.len() > current_byte_offset {
             let mut current_byte_value = self.content_array[current_byte_offset];
@@ -76,7 +76,7 @@ impl Content {
                     break;
                 } else {
                     self.content_array[current_byte_offset] = 0;
-                    if current_byte_offset > 0 {
+                    if current_byte_offset > offset - (word_size - 1) {
                         current_byte_offset -= 1;
                     } else {
                         break;
@@ -91,7 +91,7 @@ impl Content {
         }
     }
 
-    pub fn decrement_byte(&mut self, offset: usize) -> Result<Vec<u8>, ContentError> {
+    pub fn decrement_byte(&mut self, offset: usize, word_size: usize) -> Result<Vec<u8>, ContentError> {
         let mut current_byte_offset = offset;
 
         if self.content_array.len() > current_byte_offset {
@@ -105,7 +105,7 @@ impl Content {
                     break;
                 } else {
                     self.content_array[current_byte_offset] = 255;
-                    if current_byte_offset > 0 {
+                    if current_byte_offset > offset - (word_size - 1) {
                         current_byte_offset -= 1;
                     } else {
                         break;
