@@ -135,20 +135,20 @@ mod tests {
     #[test]
     fn test_increment_byte() {
         let mut editor = BackEnd::new();
-        assert!(editor.increment_byte(0).is_err(), "Didn't throw error when incrementing outside of valid range.");
+        assert!(editor.increment_byte(0, 1).is_err(), "Didn't throw error when incrementing outside of valid range.");
 
         editor.insert_bytes(0, &[0]);
-        assert!(editor.increment_byte(0).is_ok(), "Failed to increment byte");
+        assert!(editor.increment_byte(0, 1).is_ok(), "Failed to increment byte");
 
     }
 
     #[test]
     fn test_decrement_byte() {
         let mut editor = BackEnd::new();
-        assert!(editor.decrement_byte(0).is_err(), "Didn't throw error when decrementing outside of valid range.");
+        assert!(editor.decrement_byte(0, 1).is_err(), "Didn't throw error when decrementing outside of valid range.");
 
         editor.insert_bytes(0, &[1]);
-        assert!(editor.decrement_byte(0).is_ok(), "Failed to decrement byte");
+        assert!(editor.decrement_byte(0, 1).is_ok(), "Failed to decrement byte");
 
         let task = editor.undo_stack.last();
         assert!(task.is_some());

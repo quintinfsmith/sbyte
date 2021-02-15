@@ -125,28 +125,28 @@ mod tests {
     fn test_increment_byte() {
         let mut content = Content::new();
         content.push(0);
-        content.increment_byte(0);
+        content.increment_byte(0, 1);
         assert_eq!(content.get_byte(0), Some(1));
         content.push(255);
-        assert_eq!(content.increment_byte(1), Ok(vec![1, 255]));
+        assert_eq!(content.increment_byte(1, 2), Ok(vec![1, 255]));
         assert_eq!(content.get_byte(0), Some(2));
         assert_eq!(content.get_byte(1), Some(0));
 
-        assert!(content.increment_byte(3).is_err());
+        assert!(content.increment_byte(3, 1).is_err());
     }
 
     #[test]
     fn test_decrement_byte() {
         let mut content = Content::new();
         content.push(255);
-        content.decrement_byte(0);
+        content.decrement_byte(0, 1);
         assert_eq!(content.get_byte(0), Some(254));
         content.push(0);
-        assert_eq!(content.decrement_byte(1), Ok(vec![254, 0]));
+        assert_eq!(content.decrement_byte(1, 2), Ok(vec![254, 0]));
         assert_eq!(content.get_byte(0), Some(253));
         assert_eq!(content.get_byte(1), Some(255));
 
-        assert!(content.decrement_byte(3).is_err());
+        assert!(content.decrement_byte(3, 1).is_err());
     }
 
     #[test]
