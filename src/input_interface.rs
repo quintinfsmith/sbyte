@@ -776,7 +776,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("xor ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -786,7 +786,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("or ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -796,7 +796,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("and ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -893,7 +893,7 @@ impl InputInterface {
 
             "MODE_SET_INSERT_ASCII" => {
                 self.clear_register();
-                self.inputter.set_context("INSERT_ASCII");
+                self.set_context("INSERT_ASCII");
                 self.backend.set_user_msg("--INSERT--");
             }
 
@@ -902,7 +902,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("insert ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -912,7 +912,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("overwrite ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -921,20 +921,20 @@ impl InputInterface {
                 self.clear_register();
                 match self.backend.get_active_converter_ref() {
                     ConverterRef::BIN => {
-                        self.inputter.set_context("OVERWRITE_BIN");
+                        self.set_context("OVERWRITE_BIN");
                     }
                     ConverterRef::HEX => {
-                        self.inputter.set_context("OVERWRITE_HEX");
+                        self.set_context("OVERWRITE_HEX");
                     }
                     ConverterRef::DEC => {
-                        self.inputter.set_context("OVERWRITE_DEC");
+                        self.set_context("OVERWRITE_DEC");
                     }
                 };
                 self.backend.set_user_msg("--OVERWRITE--");
             }
             "MODE_SET_OVERWRITE_ASCII" => {
                 self.clear_register();
-                self.inputter.set_context("OVERWRITE_ASCII");
+                self.set_context("OVERWRITE_ASCII");
                 self.backend.set_user_msg("--OVERWRITE--");
             }
 
@@ -950,7 +950,7 @@ impl InputInterface {
                 }
                 self.frontend.raise_flag(Flag::UpdateOffset);
                 self.frontend.raise_flag(Flag::CursorMoved);
-                self.inputter.set_context("DEFAULT");
+                self.set_context("DEFAULT");
 
             }
 
@@ -959,7 +959,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.clear_register();
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -970,7 +970,7 @@ impl InputInterface {
                     Some(commandline) => {
                         commandline.set_register("find ");
                         self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.inputter.set_context("CMD");
+                        self.set_context("CMD");
                     }
                     None => ()
                 }
@@ -1096,7 +1096,7 @@ impl InputInterface {
                 if !self.user_feedback_ready() {
                     self.frontend.raise_flag(Flag::HideFeedback);
                 }
-                self.inputter.set_context("DEFAULT");
+                self.set_context("DEFAULT");
             }
 
             "KILL" => {
@@ -1315,7 +1315,8 @@ impl InputInterface {
         self.backend.replace_digit(digit)?;
         self.backend.subcursor_next_digit();
 
-        if self.backend.get_subcursor_offset() == 0 {
+        if self.backend.get_subcursor_offset() == 0
+        && self.backend.get_cursor_length() == 1 {
             self.backend.cursor_next_byte();
         }
 
@@ -1865,5 +1866,11 @@ impl InputInterface {
 
     fn user_feedback_ready(&mut self) -> bool {
         self.backend.get_user_msg().is_some() || self.backend.get_user_error_msg().is_some()
+    }
+
+    fn set_context(&mut self, new_context: &str) {
+        self.backend.set_subcursor_offset(0);
+        self.inputter.set_context(new_context);
+        self.frontend.set_input_context(new_context);
     }
 }

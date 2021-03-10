@@ -833,8 +833,10 @@ impl BackEnd {
         self.subcursor.set_length((self.get_display_ratio() - 1) as isize);
         self.set_subcursor_offset(0);
     }
+
     pub fn set_subcursor_offset(&mut self, new_offset: usize) {
-        self.subcursor.set_offset(new_offset % self.subcursor.get_length());
+        let modlength = self.subcursor.get_length() * self.cursor.get_length();
+        self.subcursor.set_offset(new_offset % modlength);
     }
 
     pub fn get_active_content(&self) -> &[u8] {

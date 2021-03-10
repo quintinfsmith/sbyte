@@ -28,7 +28,8 @@ pub struct FrontEnd {
     last_known_viewport_offset: usize,
 
     row_dict: HashMap<usize, (usize, usize)>,
-    cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>
+    cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
+    input_context: String // things may be displayed differently based on context
 }
 
 impl FrontEnd {
@@ -57,13 +58,20 @@ impl FrontEnd {
             cell_dict: HashMap::new(),
             display_flags: HashMap::new(),
             display_flag_timeouts: HashMap::new(),
-            last_known_viewport_offset: 9999
+            last_known_viewport_offset: 9999,
+
+            input_context: "DEFAULT".to_string()
         };
 
         frontend.raise_flag(Flag::SetupDisplays);
         frontend.raise_flag(Flag::RemapActiveRows);
 
         frontend
+    }
+
+    pub fn set_input_context(&mut self, new_context: &str) {
+        self.input_context = new_context.to_string();
+        self.raise_flag(Flag::CursorMoved);
     }
 
     pub fn tick(&mut self, sbyte_editor: &BackEnd) -> Result<(), Box::<dyn Error>> {
@@ -677,8 +685,6 @@ impl FrontEnd {
         let viewport_offset = sbyte_editor.get_viewport_offset();
         let cursor_offset = sbyte_editor.get_cursor_offset();
         let cursor_length = sbyte_editor.get_cursor_length();
-        let subcursor_offset = sbyte_editor.get_subcursor_offset();
-        let suboffset_cell = subcursor_offset / (sbyte_editor.get_display_ratio() as usize - 1);
 
         // First clear previously applied
         // (They may no longer exist, but that's ok)
@@ -711,19 +717,7 @@ impl FrontEnd {
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
                             self.rectmanager.clear_children(*bits);
-                            if (i - cursor_offset) == suboffset_cell {
-                                let digit_cell = self.rectmanager.new_rect(*bits).ok().unwrap();
-                                let c = match self.rectmanager.get_character(*bits, subcursor_offset as isize, 0) {
-                                    Ok(_c) => { _c }
-                                    Err(e) => { 'X' }
-                                };
-                                self.rectmanager.set_character(digit_cell, 0, 0, c);
-                                self.rectmanager.set_position(digit_cell, subcursor_offset as isize, 0);
-                                self.rectmanager.set_invert_flag(digit_cell);
-                                self.rectmanager.set_underline_flag(digit_cell);
-                            }
                             self.rectmanager.set_invert_flag(*bits)?;
-
                             self.rectmanager.set_invert_flag(*human)?;
                             self.cells_to_refresh.insert((*bits, *human));
                             self.active_cursor_cells.insert((*bits, *human));
@@ -734,6 +728,45 @@ impl FrontEnd {
                 None => ()
             }
         }
+
+
+        match self.input_context.as_str() {
+            "OVERWRITE_ASCII" | "OVERWRITE_HEX" | "OVERWRITE_BIN" | "OVERWRITE_DEC" => {
+                let subcursor_length = sbyte_editor.get_subcursor_length();
+                let subcursor_offset = sbyte_editor.get_subcursor_offset();
+                let suboffset_cell = cursor_offset + (subcursor_offset / subcursor_length);
+
+                y = (suboffset_cell - viewport_offset) / viewport_width;
+                x = (suboffset_cell - viewport_offset) % viewport_width;
+                match self.cell_dict.get(&y) {
+                    Some(cellhash) => {
+                        match cellhash.get(&x) {
+                            Some((bits, human)) => {
+                                match self.rectmanager.new_rect(*bits) {
+                                    Ok(digit_cell) => {
+                                        let digit_pos = (subcursor_offset % subcursor_length) as isize;
+                                        let c = match self.rectmanager.get_character(*bits, digit_pos, 0) {
+                                            Ok(_c) => { _c }
+                                            Err(e) => { 'X' }
+                                        };
+
+                                        self.rectmanager.set_character(digit_cell, 0, 0, c);
+                                        self.rectmanager.set_position(digit_cell, digit_pos, 0);
+                                        self.rectmanager.set_invert_flag(digit_cell);
+                                        self.rectmanager.set_underline_flag(digit_cell);
+                                    }
+                                    Err(_) => ()
+                                }
+                            }
+                            None => ()
+                        }
+                    }
+                    None => ()
+                }
+            }
+            _ => {}
+        }
+
 
         Ok(())
     }
