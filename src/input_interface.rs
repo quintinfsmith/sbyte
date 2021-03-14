@@ -243,6 +243,8 @@ impl InputInterface {
         self.send_command("ASSIGN_INPUT", &["CURSOR_LENGTH_RIGHT", "L_UPPER"])?;
 
         self.send_command("ASSIGN_INPUT", &["JUMP_TO_REGISTER", "G_UPPER"])?;
+        self.send_command("ASSIGN_INPUT", &["JUMP_TO_NEXT_HIGHLIGHTED", "GREATERTHAN"])?;
+        self.send_command("ASSIGN_INPUT", &["JUMP_TO_PREVIOUS_HIGHLIGHTED", "LESSTHAN"])?;
         self.send_command("ASSIGN_INPUT", &["POINTER_BE_JUMP", "R_UPPER"])?;
         self.send_command("ASSIGN_INPUT", &["POINTER_LE_JUMP", "T_UPPER"])?;
         self.send_command("ASSIGN_INPUT", &["DELETE", "X_LOWER"])?;
@@ -731,6 +733,26 @@ impl InputInterface {
                 self.ci_replace(change_from, change_to);
             }
 
+            "JUMP_TO_PREVIOUS_HIGHLIGHTED" => {
+                let n = self.grab_register(0);
+                let selection = self.backend.get_selected();
+                let mut string_rep = "".to_string();
+                for ord in selection.iter() {
+                    string_rep = format!("{}\\x{:X}{:X}", string_rep, ord >> 4, ord & 0x0F);
+                }
+                self.ci_jump_to_previous(Some(&string_rep), n);
+            }
+
+            "JUMP_TO_NEXT_HIGHLIGHTED" => {
+                let n = self.grab_register(0);
+                let selection = self.backend.get_selected();
+                let mut string_rep = "".to_string();
+                for ord in selection.iter() {
+                    string_rep = format!("{}\\x{:X}{:X}", string_rep, ord >> 4, ord & 0x0F);
+                }
+                self.ci_jump_to_next(Some(&string_rep), n);
+            }
+
             "POINTER_BE_JUMP" => {
                 let new_offset = self.backend.get_selected_as_big_endian();
                 self.ci_jump_to_position(new_offset);
@@ -754,6 +776,18 @@ impl InputInterface {
                     }
                     None => {
                         self.ci_jump_to_next(None, n);
+                    }
+                }
+            }
+
+            "JUMP_TO_PREVIOUS" => {
+                let n = self.grab_register(0);
+                match arguments.get(0) {
+                    Some(pattern) => {
+                        self.ci_jump_to_previous(Some(pattern), n);
+                    }
+                    None => {
+                        self.ci_jump_to_previous(None, n);
                     }
                 }
             }
@@ -1516,6 +1550,57 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::UpdateOffset);
 
 
+    }
+
+    fn ci_jump_to_previous(&mut self, argument: Option<&str>, repeat: usize) {
+        let current_offset = self.backend.get_cursor_offset();
+
+        let option_pattern: Option<String> = match argument {
+            Some(pattern) => { // argument was given, use that
+                Some(pattern.to_string())
+            }
+            None => { // No argument was given, check history
+                match self.backend.get_search_history().last() {
+                    Some(byte_pattern) => {
+                        Some(byte_pattern.clone())
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+        };
+
+        match option_pattern {
+            Some(string_rep) => {
+                self.backend.add_search_history(string_rep.clone());
+                match self.backend.find_nth_before(&string_rep, current_offset, repeat) {
+                    Ok(result) => {
+                        match result {
+                            Some(new_offset) => {
+                                self.backend.set_cursor_length((new_offset.1 - new_offset.0) as isize);
+                                self.backend.set_cursor_offset(new_offset.0);
+                                self.backend.set_user_msg(&format!("Found \"{}\" at byte {}", string_rep, new_offset.0))
+                            }
+                            None => {
+                                self.backend.set_user_error_msg(&format!("Pattern \"{}\" not found", string_rep));
+                            }
+                        }
+                    }
+                    Err(_e) => {
+                        self.backend.set_user_error_msg(&format!("Pattern \"{}\" is Invalid", string_rep));
+                    }
+                }
+            }
+            None => {
+                self.backend.set_user_error_msg("Need a pattern to search");
+            }
+        }
+
+
+        self.frontend.raise_flag(Flag::RemapActiveRows);
+        self.frontend.raise_flag(Flag::CursorMoved);
+        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_jump_to_next(&mut self, argument: Option<&str>, repeat: usize) {

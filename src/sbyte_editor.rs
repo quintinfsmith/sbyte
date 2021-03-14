@@ -639,8 +639,35 @@ impl BackEnd {
         }
     }
 
+    pub fn find_nth_before(&self, pattern: &str, offset: usize, n: usize) -> Result<Option<(usize, usize)>, SbyteError> {
+        //TODO: This could definitely be sped up.
+        let matches = self.find_all(pattern)?;
+
+        if matches.len() > 0 {
+            let mut match_index = matches.len() - 1;
+
+            for (i, (x, _)) in matches.iter().enumerate() {
+                if *x >= offset {
+                    break;
+                } else {
+                    match_index = i;
+                }
+            }
+
+            match_index = (match_index + n) % matches.len();
+
+            Ok(Some(matches[match_index]))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn find_after(&self, pattern: &str, offset: usize) -> Result<Option<(usize, usize)>, SbyteError> {
         self.find_nth_after(pattern, offset, 0)
+    }
+
+    pub fn find_before(&self, pattern: &str, offset: usize) -> Result<Option<(usize, usize)>, SbyteError> {
+        self.find_nth_before(pattern, offset, 0)
     }
 
 
