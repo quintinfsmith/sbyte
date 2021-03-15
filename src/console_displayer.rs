@@ -24,6 +24,7 @@ pub struct FrontEnd {
     rect_meta: usize,
     rect_offset: usize,
     rect_feedback: usize,
+    rect_scrollbar: usize,
 
     last_known_viewport_offset: usize,
 
@@ -41,6 +42,7 @@ impl FrontEnd {
         let rect_meta = rectmanager.new_rect(wrecked::ROOT).ok().unwrap();
         let rect_feedback = rectmanager.new_rect(rect_meta).ok().unwrap();
         let rect_offset = rectmanager.new_rect(rect_meta).ok().unwrap();
+        let rect_scrollbar = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
 
         let mut frontend = FrontEnd {
             rectmanager,
@@ -53,6 +55,7 @@ impl FrontEnd {
             rect_meta,
             rect_feedback,
             rect_offset,
+            rect_scrollbar,
             rects_display: (id_display_bits, id_display_human),
             row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
@@ -527,18 +530,17 @@ impl FrontEnd {
         let bits_display_width = vwidth * display_ratio as usize;
         let remaining_space = full_width - bits_display_width - human_display_width;
 
-
         let bits_display_x = remaining_space / 2;
+        let human_display_x = (remaining_space / 2) + bits_display_width;
 
         self.rectmanager.resize(bits_id, bits_display_width, display_height)?;
         self.rectmanager.set_position(bits_id, bits_display_x as isize, 0)?;
 
-        // TODO: Fill in a separator
-
-        let human_display_x = (remaining_space / 2) + bits_display_width;
-
         self.rectmanager.resize(human_id, human_display_width, display_height)?;
         self.rectmanager.set_position(human_id, human_display_x as isize, 0)?;
+
+        self.rectmanager.resize(self.rect_scrollbar, 1, display_height);
+        self.rectmanager.set_position(self.rect_scrollbar, (human_display_x + human_display_width) as isize, 0);
 
         Ok(())
     }
@@ -615,6 +617,7 @@ impl FrontEnd {
     pub fn display_user_offset(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let mut cursor_string = format!("{}", sbyte_editor.get_cursor_offset());
         let active_content = sbyte_editor.get_active_content();
+        let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
 
         if active_content.len() > 0 {
             let digit_count = (active_content.len() as f64).log10().ceil() as usize;
@@ -642,6 +645,23 @@ impl FrontEnd {
             };
 
         let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
+
+
+        // Do Scrollbar
+        if denominator > (viewport_width * viewport_height) {
+            self.rectmanager.clear_children(self.rect_scrollbar);
+            let handle = self.rectmanager.new_rect(self.rect_scrollbar).ok().unwrap();
+            let scrollbar_height = self.rectmanager.get_rect_height(self.rect_scrollbar);
+            let handle_height = max(1, ((viewport_width * viewport_height) * scrollbar_height) / denominator);
+            self.rectmanager.set_bg_color(handle, wrecked::Color::BRIGHTBLACK);
+            self.rectmanager.set_fg_color(handle, wrecked::Color::BLACK);
+            self.rectmanager.resize(handle, 1, handle_height);
+            for y in 0 .. handle_height as isize {
+                self.rectmanager.set_character(handle, 0, y, '|');
+            }
+            self.rectmanager.set_position(handle, 0, ((sbyte_editor.get_cursor_offset() * (scrollbar_height - handle_height)) / denominator) as isize);
+        }
+        ///////////////
 
         let x = meta_width - offset_display.len();
         self.rectmanager.resize(self.rect_offset, offset_display.len(), 1)?;

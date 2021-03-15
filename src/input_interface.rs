@@ -1301,7 +1301,7 @@ impl InputInterface {
         let display_ratio = self.backend.get_display_ratio() as f64;
         let r: f64 = 1f64 / display_ratio;
         let a: f64 = 1f64 - (1f64 / (r + 1f64));
-        let mut base_width = ((screensize.0 as f64) * a) as usize;
+        let mut base_width = ((screensize.0 as f64 - 1f64) * a) as usize;
         match self.get_locked_viewport_width() {
             Some(locked_width) => {
                 base_width = min(base_width, locked_width);
