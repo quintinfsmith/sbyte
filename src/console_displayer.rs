@@ -539,8 +539,12 @@ impl FrontEnd {
         self.rectmanager.resize(human_id, human_display_width, display_height)?;
         self.rectmanager.set_position(human_id, human_display_x as isize, 0)?;
 
+        self.rectmanager.set_fg_color(self.rect_scrollbar, wrecked::Color::BRIGHTBLACK);
         self.rectmanager.resize(self.rect_scrollbar, 1, display_height);
         self.rectmanager.set_position(self.rect_scrollbar, (human_display_x + human_display_width) as isize, 0);
+        for y in 0 .. display_height as isize {
+            self.rectmanager.set_character(self.rect_scrollbar, 0, y, '\u{250B}');
+        }
 
         Ok(())
     }
@@ -652,14 +656,14 @@ impl FrontEnd {
             self.rectmanager.clear_children(self.rect_scrollbar);
             let handle = self.rectmanager.new_rect(self.rect_scrollbar).ok().unwrap();
             let scrollbar_height = self.rectmanager.get_rect_height(self.rect_scrollbar);
-            let handle_height = max(1, ((viewport_width * viewport_height) * scrollbar_height) / denominator);
+
+            let handle_height = max(1, (viewport_height * scrollbar_height) / (denominator / viewport_width));
             self.rectmanager.set_bg_color(handle, wrecked::Color::BRIGHTBLACK);
             self.rectmanager.set_fg_color(handle, wrecked::Color::BLACK);
             self.rectmanager.resize(handle, 1, handle_height);
-            for y in 0 .. handle_height as isize {
-                self.rectmanager.set_character(handle, 0, y, '|');
-            }
-            self.rectmanager.set_position(handle, 0, ((sbyte_editor.get_cursor_offset() * (scrollbar_height - handle_height)) / denominator) as isize);
+
+            let handle_y = (sbyte_editor.get_viewport_offset() * (scrollbar_height - handle_height)) / (denominator - (viewport_width * viewport_height));
+            self.rectmanager.set_position(handle, 0, handle_y as isize);
         }
         ///////////////
 
