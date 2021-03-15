@@ -844,8 +844,16 @@ impl BackEnd {
         self.cursor.get_offset()
     }
 
+    pub fn get_cursor_real_offset(&self) -> usize {
+        self.cursor.get_real_offset()
+    }
+
     pub fn get_cursor_length(&self) -> usize {
         self.cursor.get_length()
+    }
+
+    pub fn get_cursor_real_length(&self) -> isize {
+        self.cursor.get_real_length()
     }
 
     pub fn get_subcursor_offset(&self) -> usize {

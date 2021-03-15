@@ -1296,10 +1296,11 @@ impl InputInterface {
     }
 
     fn resize_backend_viewport(&mut self) {
-        let cursor_offset = self.backend.get_cursor_offset();
-        let cursor_length = self.backend.get_cursor_length();
+        let cursor_offset = self.backend.get_cursor_real_offset();
+        let cursor_length = self.backend.get_cursor_real_length();
 
         self.backend.set_viewport_offset(0);
+        self.backend.set_cursor_length(1);
         self.backend.set_cursor_offset(0);
 
         let screensize = self.frontend.size();
@@ -1318,7 +1319,7 @@ impl InputInterface {
 
         self.backend.set_viewport_size(base_width, height);
         self.backend.set_cursor_offset(cursor_offset);
-        self.backend.set_cursor_length(cursor_length as isize);
+        self.backend.set_cursor_length(cursor_length);
     }
 
     fn __resize_hook(&mut self) {
