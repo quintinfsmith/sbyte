@@ -337,6 +337,7 @@ impl InputInterface {
 
     fn clear_register(&mut self) {
         self.register = None;
+        self.frontend.raise_flag(Flag::HideFeedback);
     }
 
     fn append_to_register(&mut self, new_digit: usize) {
@@ -350,6 +351,7 @@ impl InputInterface {
                 Some(new_digit)
             }
         };
+        self.backend.set_user_msg(&format!("[{}]", self.register.unwrap()));
     }
 
     pub fn spawn_input_daemon(&mut self) -> std::thread::JoinHandle<()> {
@@ -1294,6 +1296,9 @@ impl InputInterface {
     }
 
     fn resize_backend_viewport(&mut self) {
+        let cursor_offset = self.backend.get_cursor_offset();
+        let cursor_length = self.backend.get_cursor_length();
+
         self.backend.set_viewport_offset(0);
         self.backend.set_cursor_offset(0);
 
@@ -1312,6 +1317,8 @@ impl InputInterface {
         let height = self.frontend.get_viewport_height();
 
         self.backend.set_viewport_size(base_width, height);
+        self.backend.set_cursor_offset(cursor_offset);
+        self.backend.set_cursor_length(cursor_length as isize);
     }
 
     fn __resize_hook(&mut self) {
