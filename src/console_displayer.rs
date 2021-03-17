@@ -221,6 +221,8 @@ impl FrontEnd {
     }
 
     fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+        self.active_cursor_cells.drain();
+
         let (width, height) = sbyte_editor.get_viewport_size();
 
         let initial_y = self.last_known_viewport_offset as isize;
@@ -235,6 +237,7 @@ impl FrontEnd {
         }
 
         let force_rerow = self.check_flag(Flag::ForceRerow);
+
         if diff > 0 || force_rerow {
             if diff < height && !force_rerow {
                 // Don't rerender rendered rows. just shuffle them around
@@ -704,6 +707,17 @@ impl FrontEnd {
         Ok(())
     }
 
+    pub fn _unapply_cursor(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+        // (They may no longer exist, but that's ok)
+        for (bits, human) in self.active_cursor_cells.drain() {
+            self.rectmanager.clear_children(bits);
+            self.rectmanager.unset_invert_flag(bits).ok();
+            self.rectmanager.unset_invert_flag(human).ok();
+        }
+
+        Ok(())
+    }
+
     pub fn apply_cursor(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
         let viewport_offset = sbyte_editor.get_viewport_offset();
@@ -711,12 +725,7 @@ impl FrontEnd {
         let cursor_length = sbyte_editor.get_cursor_length();
 
         // First clear previously applied
-        // (They may no longer exist, but that's ok)
-        for (bits, human) in self.active_cursor_cells.drain() {
-            self.rectmanager.clear_children(bits);
-            self.rectmanager.unset_invert_flag(bits).ok();
-            self.rectmanager.unset_invert_flag(human).ok();
-        }
+        self._unapply_cursor(sbyte_editor);
 
         let start = if cursor_offset < viewport_offset {
             viewport_offset
@@ -752,7 +761,6 @@ impl FrontEnd {
                 None => ()
             }
         }
-
 
         match self.input_context.as_str() {
             "OVERWRITE_ASCII" | "OVERWRITE_HEX" | "OVERWRITE_BIN" | "OVERWRITE_DEC" => {
