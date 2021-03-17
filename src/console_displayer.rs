@@ -221,7 +221,6 @@ impl FrontEnd {
     }
 
     fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
-        self.active_cursor_cells.drain();
 
         let (width, height) = sbyte_editor.get_viewport_size();
 
@@ -492,6 +491,7 @@ impl FrontEnd {
             }
         }
 
+        self.active_cursor_cells.drain();
         self.raise_flag(Flag::ForceRerow);
         self.raise_flag(Flag::CursorMoved);
 
