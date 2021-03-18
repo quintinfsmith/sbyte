@@ -653,6 +653,7 @@ impl FrontEnd {
 
         // Do Scrollbar
         if denominator > (viewport_width * viewport_height) {
+            self.rectmanager.enable(self.rect_scrollbar);
             self.rectmanager.clear_children(self.rect_scrollbar);
             let handle = self.rectmanager.new_rect(self.rect_scrollbar).ok().unwrap();
             let scrollbar_height = self.rectmanager.get_rect_height(self.rect_scrollbar);
@@ -664,6 +665,8 @@ impl FrontEnd {
 
             let handle_y = (sbyte_editor.get_viewport_offset() * (scrollbar_height - handle_height)) / (denominator - (viewport_width * viewport_height));
             self.rectmanager.set_position(handle, 0, handle_y as isize);
+        } else {
+            self.rectmanager.disable(self.rect_scrollbar);
         }
         ///////////////
 
