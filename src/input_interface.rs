@@ -1327,11 +1327,11 @@ impl InputInterface {
 
         self.frontend.raise_flag(Flag::SetupDisplays);
         self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::ForceRerow);
     }
+
     fn auto_resize(&mut self) {
         if self.frontend.auto_resize() {
-            let delay = time::Duration::from_nanos(1_000_000_000);
+            let delay = time::Duration::from_nanos(1_000);
             thread::sleep(delay);
             self.__resize_hook();
         }
@@ -1405,7 +1405,6 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::RemapActiveRows);
         self.frontend.raise_flag(Flag::UpdateOffset);
         self.frontend.raise_flag(Flag::CursorMoved);
-
     }
 
     fn ci_cursor_right(&mut self, repeat: usize) {
@@ -1529,6 +1528,7 @@ impl InputInterface {
 
         Ok(())
     }
+
     fn ci_apply_and_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_and_mask(mask)?;
         self.frontend.raise_flag(Flag::RemapActiveRows);
@@ -1556,8 +1556,6 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::RemapActiveRows);
         self.frontend.raise_flag(Flag::CursorMoved);
         self.frontend.raise_flag(Flag::UpdateOffset);
-
-
     }
 
     fn ci_jump_to_previous(&mut self, argument: Option<&str>, repeat: usize) {
@@ -1661,7 +1659,6 @@ impl InputInterface {
         self.frontend.raise_flag(Flag::CursorMoved);
         self.frontend.raise_flag(Flag::UpdateOffset);
     }
-
 
     fn ci_delete(&mut self, repeat: usize) {
         let offset = self.backend.get_cursor_offset();
