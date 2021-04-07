@@ -620,7 +620,6 @@ impl FrontEnd {
         Ok(())
     }
 
-    // TODO: Change this to use usize instead of BackEnd
     pub fn display_user_offset(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
         let mut cursor_string = format!("{}", sbyte_editor.get_cursor_offset());
         let active_content = sbyte_editor.get_active_content();
@@ -644,15 +643,12 @@ impl FrontEnd {
         };
 
         let cursor_len = sbyte_editor.get_cursor_length();
-        let offset_display = if cursor_len == 1 {
-                format!("Offset: {} / {}", cursor_string, denominator)
-            } else {
-                format!("Offset: {} ({}) / {}", cursor_string, cursor_len, denominator)
-
-            };
-
-        let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
-
+        let offset_display;
+        if cursor_len == 1 {
+            offset_display = format!("Offset: {} / {}", cursor_string, denominator)
+        } else {
+            offset_display = format!("Offset: {} ({}) / {}", cursor_string, cursor_len, denominator)
+        };
 
         // Do Scrollbar
         if denominator > (viewport_width * viewport_height) {
@@ -673,6 +669,7 @@ impl FrontEnd {
         }
         ///////////////
 
+        let meta_width = self.rectmanager.get_rect_width(self.rect_meta);
         let x = meta_width - offset_display.len();
         self.rectmanager.resize(self.rect_offset, offset_display.len(), 1)?;
         self.rectmanager.resize(self.rect_feedback, meta_width - offset_display.len(), 1)?;
