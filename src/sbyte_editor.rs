@@ -12,7 +12,6 @@ use wrecked::WreckedError;
 
 // CommandLine struct
 pub mod command_line;
-pub mod flag;
 pub mod viewport;
 pub mod cursor;
 pub mod converter;
@@ -731,7 +730,7 @@ impl BackEnd {
         self.overwrite_bytes(position, new_bytes)
     }
 
-    pub fn get_selected(&mut self) -> Vec<u8> {
+    pub fn get_selected(&self) -> Vec<u8> {
         let offset = self.cursor.get_offset();
         let length = self.cursor.get_length();
 
@@ -937,6 +936,7 @@ impl BackEnd {
     pub fn get_viewport_size(&self) -> (usize, usize) {
         (self.viewport.get_width(), self.viewport.get_height())
     }
+
     pub fn get_viewport_offset(&self) -> usize {
         self.viewport.get_offset()
     }
@@ -1049,6 +1049,18 @@ impl BackEnd {
             mask.push(0xFF);
         }
         self.apply_mask(BitMask::Xor, &mask)
+    }
+
+    pub fn get_cmd_register(&self) -> Option<String> {
+        match self.get_commandline() {
+            Some(commandline) => {
+                let cmd = &commandline.get_register();
+                Some(cmd.to_string())
+            }
+            None => {
+                None
+            }
+        }
     }
 }
 
