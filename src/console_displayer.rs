@@ -5,11 +5,13 @@ use wrecked::{RectManager, Color, WreckedError};
 
 use super::sbyte_editor::*;
 use super::sbyte_editor::converter::*;
+use super::sbyte_editor::flag::Flag;
 
 
 pub struct FrontEnd {
     rectmanager: RectManager,
-    flag_force_rerow: bool,
+    display_flags: HashMap<Flag, (usize, bool)>,
+    display_flag_timeouts: HashMap<Flag, usize>,
 
     active_row_map: HashMap<usize, bool>,
 
@@ -28,18 +30,7 @@ pub struct FrontEnd {
 
     row_dict: HashMap<usize, (usize, usize)>,
     cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
-    input_context: String, // things may be displayed differently based on context,
-
-
-    rendered_cursor_offset: Option<usize>,
-    rendered_cursor_length: Option<usize>,
-    rendered_viewport_offset: Option<usize>,
-    rendered_viewport_size: Option<(usize, usize)>,
-    rendered_context: Option<String>,
-    rendered_cmd_line: Option<String>,
-    rendered_subcursor: Option<usize>,
-    rendered_cursor_value: Option<Vec<u8>>,
-    rendered_feedback: Option<String>
+    input_context: String // things may be displayed differently based on context
 }
 
 impl FrontEnd {
@@ -55,7 +46,6 @@ impl FrontEnd {
 
         let mut frontend = FrontEnd {
             rectmanager,
-            flag_force_rerow: false,
             active_row_map: HashMap::new(),
             cells_to_refresh: HashSet::new(),
             rows_to_refresh: Vec::new(),
@@ -69,122 +59,101 @@ impl FrontEnd {
             rects_display: (id_display_bits, id_display_human),
             row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
+            display_flags: HashMap::new(),
+            display_flag_timeouts: HashMap::new(),
             last_known_viewport_offset: 9999,
 
-            input_context: "DEFAULT".to_string(),
-
-            rendered_cursor_offset: None,
-            rendered_cursor_length: None,
-            rendered_viewport_offset: None,
-            rendered_viewport_size: None,
-            rendered_context: None,
-            rendered_cmd_line: None,
-            rendered_subcursor: None,
-            rendered_cursor_value: None,
-            rendered_feedback: None
+            input_context: "DEFAULT".to_string()
         };
+
+        frontend.raise_flag(Flag::SetupDisplays);
+        frontend.raise_flag(Flag::RemapActiveRows);
 
         frontend
     }
 
     pub fn set_input_context(&mut self, new_context: &str) {
         self.input_context = new_context.to_string();
-        if new_context == "DEFAULT" {
-            self.clear_feedback();
-        }
+        self.raise_flag(Flag::CursorMoved);
     }
 
     pub fn tick(&mut self, sbyte_editor: &BackEnd) -> Result<(), Box::<dyn Error>> {
         if !sbyte_editor.is_loading() {
-            let current_cursor_offset = sbyte_editor.get_cursor_offset();
-            let current_viewport_offset = sbyte_editor.get_viewport_offset();
-            let current_viewport_size = sbyte_editor.get_viewport_size();
-            let current_cmd_register = sbyte_editor.get_cmd_register();
-            let current_cursor_length = sbyte_editor.get_cursor_length();
-            let current_subcursor = sbyte_editor.get_subcursor_offset();
-            let current_cursor_value = sbyte_editor.get_selected();
 
+            if self.check_flag(Flag::HideFeedback) {
+                self.clear_feedback()?;
+            }
 
-            let changed_subcursor = self.rendered_subcursor != Some(current_subcursor);
-            let changed_cursor_length = self.rendered_cursor_length != Some(current_cursor_length);
-            let changed_viewport_offset = Some(current_viewport_offset) != self.rendered_viewport_offset;
-            let changed_cursor = Some(current_cursor_offset) != self.rendered_cursor_offset;
-            let changed_context = Some(self.input_context.clone()) != self.rendered_context;
-            let changed_viewport_size = Some(current_viewport_size) != self.rendered_viewport_size;
-            let changed_cmd_register = current_cmd_register != self.rendered_cmd_line;
-            let changed_cursor_value = Some(current_cursor_value.clone()) != self.rendered_cursor_value;
-
-            let changed_anything = changed_subcursor || changed_cursor_length || changed_viewport_offset || changed_cursor || changed_context || changed_viewport_size || changed_cursor_value;
-
-            if changed_viewport_size {
+            if self.check_flag(Flag::SetupDisplays) {
                 match self.setup_displays(sbyte_editor) {
                     Ok(_) => {}
                     Err(error) => {
                         Err(SbyteError::SetupFailed(error))?
                     }
                 }
-
-                self.rendered_viewport_size = Some(current_viewport_size);
             }
 
-            if changed_viewport_offset || changed_viewport_size || changed_cursor_value {
+            if self.check_flag(Flag::RemapActiveRows) {
                 match self.remap_active_rows(sbyte_editor) {
                     Ok(_) => {}
                     Err(error) => {
                         Err(SbyteError::RemapFailed(error))?
                     }
                 }
-                self.rendered_viewport_offset = Some(current_viewport_offset);
             }
 
-            let rows = self.rows_to_refresh.clone();
-            self.rows_to_refresh.drain(..);
-            for y in rows.iter() {
-                match self.set_row_characters(sbyte_editor, *y) {
-                    Ok(_) => {}
-                    Err(error) => {
-                        Err(SbyteError::RowSetFailed(error))?
+            let len = self.rows_to_refresh.len();
+            if len > 0 {
+                let mut in_timeout = Vec::new();
+                let mut y;
+                while self.rows_to_refresh.len() > 0 {
+                    y = self.rows_to_refresh.pop().unwrap();
+                    if self.check_flag(Flag::UpdateRow(y)) {
+                        match self.set_row_characters(sbyte_editor, y) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                Err(SbyteError::RowSetFailed(error))?
+                            }
+                        }
+                    } else {
+                        in_timeout.push(y);
                     }
                 }
+                self.rows_to_refresh = in_timeout;
             }
 
-            if changed_cursor || changed_viewport_offset || changed_viewport_size || changed_cursor_length || changed_subcursor || changed_cursor_value {
+
+            if self.check_flag(Flag::CursorMoved) {
                 match self.apply_cursor(sbyte_editor) {
                     Ok(_) => {}
                     Err(error) => {
                         Err(SbyteError::ApplyCursorFailed(error))?
                     }
                 }
-                self.display_user_offset(sbyte_editor)?;
-
-                self.rendered_cursor_offset = Some(current_cursor_offset);
-                self.rendered_cursor_length = Some(current_cursor_length);
-                self.rendered_cursor_value = Some(current_cursor_value);
             }
 
 
-            let mut msg_set = false;
             match sbyte_editor.get_user_error_msg() {
                 Some(msg) => {
                     self.display_user_error(msg.clone())?;
-                    msg_set = true;
                 }
                 None => {
-                    if self.input_context == "CMD" && changed_cmd_register {
+                    if self.check_flag(Flag::DisplayCMDLine) {
                         self.display_command_line(sbyte_editor)?;
-                        self.rendered_cmd_line = current_cmd_register;
-                        msg_set = true;
                     } else {
                         match sbyte_editor.get_user_msg() {
                             Some(msg) => {
                                 self.display_user_message(msg.clone())?;
-                                msg_set = true;
                             }
                             None => {
                             }
                         }
                     }
                 }
+            }
+
+            if self.check_flag(Flag::UpdateOffset) {
+                self.display_user_offset(sbyte_editor)?;
             }
 
             match self.rectmanager.render() {
@@ -202,11 +171,57 @@ impl FrontEnd {
         self.rectmanager.auto_resize()
     }
 
-    pub fn flag_row_update(&mut self, y: usize) {
-        self.rows_to_refresh.push(y)
+    pub fn raise_flag(&mut self, key: Flag) {
+        match key {
+            Flag::UpdateRow(some_y) => {
+                self.rows_to_refresh.push(some_y)
+            }
+            _ => ()
+        }
+
+        self.display_flags.entry(key)
+            .and_modify(|e| *e = (e.0, true))
+            .or_insert((0, true));
+    }
+
+    //fn lower_flag(&mut self, key: Flag) {
+    //    self.display_flags.entry(key)
+    //        .and_modify(|e| *e = (e.0, false))
+    //        .or_insert((0, false));
+    //}
+
+    fn check_flag(&mut self, key: Flag) -> bool {
+        let mut output = false;
+        match self.display_flags.get_mut(&key) {
+            Some((countdown, flagged)) => {
+                if *countdown > 0 {
+                    *countdown -= 1;
+                } else {
+                    output = *flagged;
+                }
+            }
+            None => ()
+        }
+
+        if output {
+            let mut new_timeout = 0;
+            match self.display_flag_timeouts.get(&key) {
+                Some(timeout) => {
+                    new_timeout = *timeout;
+                }
+                None => { }
+            }
+
+            self.display_flags.entry(key)
+                .and_modify(|e| *e = (new_timeout, false))
+                .or_insert((new_timeout, false));
+        }
+
+        output
     }
 
     fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+
         let (width, height) = sbyte_editor.get_viewport_size();
 
         let initial_y = self.last_known_viewport_offset as isize;
@@ -220,7 +235,7 @@ impl FrontEnd {
             diff = (initial_y - new_y) as usize;
         }
 
-        let force_rerow = self.flag_force_rerow;
+        let force_rerow = self.check_flag(Flag::ForceRerow);
 
         if diff > 0 || force_rerow {
             if diff < height && !force_rerow {
@@ -358,10 +373,15 @@ impl FrontEnd {
             let active_rows = self.active_row_map.clone();
             for (y, is_rendered) in active_rows.iter() {
                 if !is_rendered {
-                    self.flag_row_update(*y + (new_y as usize));
+                    self.raise_flag(Flag::UpdateRow(*y + (new_y as usize)));
                 }
             }
+
+            self.raise_flag(Flag::UpdateOffset);
         }
+
+        self.raise_flag(Flag::ForceRerow);
+        self.raise_flag(Flag::CursorMoved);
 
         Ok(())
     }
@@ -472,7 +492,8 @@ impl FrontEnd {
         }
 
         self.active_cursor_cells.drain();
-        self.flag_force_rerow = true;
+        self.raise_flag(Flag::ForceRerow);
+        self.raise_flag(Flag::CursorMoved);
 
         Ok(())
     }
@@ -662,7 +683,6 @@ impl FrontEnd {
     pub fn display_user_message(&mut self, msg: String) -> Result<(), WreckedError> {
         self.clear_feedback()?;
 
-        self.rendered_feedback = Some(msg.clone());
         self.rectmanager.set_string(self.rect_feedback, 0, 0, &msg)?;
         self.rectmanager.set_bold_flag(self.rect_feedback)?;
         self.rectmanager.set_fg_color(self.rect_feedback, Color::BRIGHTCYAN)?;
@@ -672,7 +692,6 @@ impl FrontEnd {
 
     pub fn display_user_error(&mut self, msg: String) -> Result<(), WreckedError> {
         self.clear_feedback()?;
-        self.rendered_feedback = Some(msg.clone());
         self.rectmanager.set_string(self.rect_feedback, 0, 0, &msg)?;
         self.rectmanager.set_fg_color(self.rect_feedback, Color::RED)?;
 
@@ -684,7 +703,7 @@ impl FrontEnd {
         self.rectmanager.clear_children(self.rect_feedback)?;
         self.rectmanager.unset_bold_flag(self.rect_feedback)?;
         self.rectmanager.unset_fg_color(self.rect_feedback)?;
-        self.rendered_feedback = None;
+
         Ok(())
     }
 
