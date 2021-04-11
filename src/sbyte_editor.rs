@@ -151,7 +151,7 @@ impl BackEnd {
         output.assign_line_command("or", "MASK_OR");
         output.assign_line_command("nor", "MASK_NOR");
         output.assign_line_command("xor", "MASK_XOR");
-        output.assign_line_command("not", "BITWISE_NOT");
+        output.assign_line_command("not", "MASK_NOT");
 
         output.set_cursor_length(1);
         output.set_cursor_offset(0);
