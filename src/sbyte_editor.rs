@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io::{Write, Read};
@@ -12,7 +12,6 @@ use wrecked::WreckedError;
 
 // CommandLine struct
 pub mod command_line;
-pub mod flag;
 pub mod viewport;
 pub mod cursor;
 pub mod converter;
@@ -108,7 +107,9 @@ pub struct BackEnd {
     // VisualEditor
     viewport: ViewPort,
 
-    search_history: Vec<String>
+    search_history: Vec<String>,
+    change_flags: HashMap<String, bool>,
+    changed_offsets: HashSet<(usize, bool)>
 }
 
 impl BackEnd {
@@ -133,7 +134,9 @@ impl BackEnd {
             line_commands: HashMap::new(),
             commandline: CommandLine::new(),
 
-            search_history: Vec::new()
+            search_history: Vec::new(),
+            change_flags: HashMap::new(),
+            changed_offsets: HashSet::new()
         };
 
         output.assign_line_command("q", "QUIT");
@@ -294,6 +297,8 @@ impl BackEnd {
             self.active_content.insert_bytes(offset, &bytes_to_insert)?;
         }
 
+        self.changed_offsets.insert((offset, opposite_bytes_to_remove != opposite_bytes_to_insert.len()));
+
         Ok((offset, opposite_bytes_to_remove, opposite_bytes_to_insert, timestamp))
     }
 
@@ -338,9 +343,12 @@ impl BackEnd {
             None => ()
         }
 
+        self.changed_offsets.insert((offset, bytes_to_remove != bytes_to_insert.len()));
+
         if !was_merged {
             self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert, Instant::now()));
         }
+
     }
 
     pub fn set_active_converter(&mut self, converter: ConverterRef) {
@@ -931,7 +939,8 @@ impl BackEnd {
             }
         }
 
-        self.viewport.set_offset(adj_viewport_offset);
+        self.set_viewport_offset(adj_viewport_offset);
+        self.flag_change("CURSOR");
     }
 
     pub fn get_viewport_size(&self) -> (usize, usize) {
@@ -943,13 +952,80 @@ impl BackEnd {
 
     pub fn set_viewport_offset(&mut self, new_offset: usize) {
         self.viewport.set_offset(new_offset);
+        self.flag_change("VIEWPORT_OFFSET");
     }
 
     pub fn set_viewport_size(&mut self, width: usize, height: usize) {
         self.viewport.set_size(width, height);
         // Align the viewport with the new size to maintain sanity
         let old_offset = self.viewport.get_offset();
-        self.viewport.set_offset((old_offset / width) * width);
+        self.set_viewport_offset((old_offset / width) * width);
+        self.flag_change("VIEWPORT_SIZE");
+    }
+
+    pub fn fetch_changed_offsets(&mut self) -> HashSet<(usize, bool)> {
+        self.changed_offsets.drain().collect()
+    }
+
+    pub fn fetch_commandline_register(&mut self) -> Option<String> {
+        let output = match self.get_commandline_mut() {
+            Some(commandline) => {
+                commandline.fetch_register()
+            }
+            None => {
+                None
+            }
+        };
+        self.flag_change("CMDLINE");
+
+        output
+    }
+
+    pub fn clear_commandline_register(&mut self) {
+        match self.get_commandline_mut() {
+            Some(commandline) => {
+                commandline.clear_register();
+            }
+            None => { }
+        }
+        self.flag_change("CMDLINE");
+    }
+
+    pub fn set_commandline_register(&mut self, new_register_string: &str) {
+        match self.get_commandline_mut() {
+            Some(commandline) => {
+                commandline.set_register(new_register_string);
+            }
+            None => { }
+        }
+        self.flag_change("CMDLINE");
+    }
+
+    pub fn append_to_commandline(&mut self, string: &str) {
+        match self.get_commandline_mut() {
+            Some(commandline) => {
+                commandline.insert_to_register(string);
+                for i in 0 .. string.len() {
+                    commandline.move_cursor_right();
+                }
+            }
+            None => { }
+        }
+        self.flag_change("CMDLINE");
+    }
+
+    pub fn pop_from_commandline(&mut self) -> Option<char> {
+        let output = match self.get_commandline_mut() {
+            Some(commandline) => {
+                commandline.backspace()
+            }
+            None => {
+                None
+            }
+        };
+        self.flag_change("CMDLINE");
+
+        output
     }
 
     pub fn get_commandline(&self) -> Option<&CommandLine> {
@@ -1050,6 +1126,33 @@ impl BackEnd {
         }
         self.apply_mask(BitMask::Xor, &mask)
     }
+
+
+    fn flag_change(&mut self, flag: &str) {
+        self.change_flags.entry(flag.to_string())
+            .and_modify(|e| { *e = true })
+            .or_insert(true);
+    }
+
+    pub fn has_changed(&mut self, flag: &str) -> bool {
+        let output = match self.change_flags.get(&flag.to_string()) {
+            Some(did_change) => {
+                *did_change
+            }
+            None => {
+                false
+            }
+        };
+
+        if output {
+            self.change_flags.entry(flag.to_string())
+                .and_modify(|e| { *e = false })
+                .or_insert(false);
+        }
+
+        output
+    }
+
 }
 
 /// Takes strings input within the program and parses the words.

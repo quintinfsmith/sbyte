@@ -34,13 +34,15 @@ impl CommandLine {
         self.register = format!("{}{}{}", pair.0, chunk, pair.1).to_string();
     }
 
-    pub fn remove_from_register(&mut self) {
-        let mut tmp_register: Vec<u8> = self.register.bytes().collect();
-        tmp_register.remove(self.cursor_offset);
-        self.register = std::str::from_utf8(tmp_register.as_slice()).unwrap().to_string();
+    pub fn remove_from_register(&mut self) -> Option<char> {
+        if self.cursor_offset >= self.register.len() {
+            None
+        } else {
+            Some(self.register.remove(self.cursor_offset))
+        }
     }
 
-    pub fn apply_register(&mut self) -> Option<String> {
+    pub fn fetch_register(&mut self) -> Option<String> {
         let output = self.register.clone();
         self.history.push(self.register.clone());
         self.register = "".to_string();
@@ -63,11 +65,13 @@ impl CommandLine {
         self.get_command(index)
     }
 
-    pub fn backspace(&mut self) {
+    pub fn backspace(&mut self) -> Option<char> {
         if self.cursor_offset != 0 {
             let new_offset = self.cursor_offset - 1;
             self.set_cursor_offset(new_offset);
-            self.remove_from_register();
+            self.remove_from_register()
+        } else {
+            None
         }
     }
 

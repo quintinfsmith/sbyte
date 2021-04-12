@@ -7,7 +7,6 @@ use std::sync::{Mutex, Arc};
 //TODO Move string_to_integer
 use super::sbyte_editor::{BackEnd, SbyteError, string_to_integer, string_to_bytes};
 use super::sbyte_editor::converter::*;
-use super::sbyte_editor::flag::Flag;
 use super::console_displayer::FrontEnd;
 
 use std::{time, thread};
@@ -311,7 +310,7 @@ impl InputInterface {
 
             self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode])?;
             self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_ASCII", "OVERWRITE_STRING", &keycode])?;
-            self.send_command("ASSIGN_MODE_INPUT", &["CMD", "INSERT_TO_CMDLINE", &keycode])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["CMD", "APPEND_TO_CMDLINE", &keycode])?;
         }
 
         self.send_command("ASSIGN_MODE_INPUT", &["CMD", "RUN_CUSTOM_COMMAND", "LINE_FEED"])?;
@@ -337,7 +336,6 @@ impl InputInterface {
 
     fn clear_register(&mut self) {
         self.register = None;
-        self.frontend.raise_flag(Flag::HideFeedback);
     }
 
     fn append_to_register(&mut self, new_digit: usize) {
@@ -419,7 +417,7 @@ impl InputInterface {
         let mut command_pair: Option<(String, Vec<String>)>;
         self.running = true;
         while self.running {
-            match self.frontend.tick(&self.backend) {
+            match self.frontend.tick(&mut self.backend) {
                 Ok(_) => {
                     self.backend.unset_user_error_msg();
                     self.backend.unset_user_msg();
@@ -707,7 +705,6 @@ impl InputInterface {
                 self.ci_subcursor_right();
             }
 
-
             "CURSOR_LENGTH_UP" => {
                 let repeat = self.grab_register(1);
                 self.ci_cursor_length_up(repeat)
@@ -795,47 +792,20 @@ impl InputInterface {
             }
 
             "CMDLINE_BACKSPACE" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        if commandline.is_empty() {
-                            self.frontend.raise_flag(Flag::UpdateOffset);
-                        } else {
-                            commandline.backspace();
-                            self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        }
-                    }
-                    None => ()
-                }
+                self.backend.pop_from_commandline();
             }
+
             "MODE_SET_MASK_XOR" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.set_register("xor ");
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.set_commandline_register("xor ");
+                self.set_context("CMD");
             }
             "MODE_SET_MASK_OR" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.set_register("or ");
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.set_commandline_register("or ");
+                self.set_context("CMD");
             }
             "MODE_SET_MASK_AND" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.set_register("and ");
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.set_commandline_register("and ");
+                self.set_context("CMD");
             }
             "BITWISE_NOT" => {
                 self.ci_bitwise_not()?;
@@ -934,25 +904,15 @@ impl InputInterface {
             }
 
             "MODE_SET_INSERT_SPECIAL" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.set_register("insert ");
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.set_commandline_register("insert ");
+                self.set_context("CMD");
             }
+
             "MODE_SET_OVERWRITE_SPECIAL" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.set_register("overwrite ");
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.set_commandline_register("overwrite ");
+                self.set_context("CMD");
             }
+
             "MODE_SET_OVERWRITE" => {
                 self.clear_register();
                 match self.backend.get_active_converter_ref() {
@@ -968,6 +928,7 @@ impl InputInterface {
                 };
                 self.backend.set_user_msg("--OVERWRITE--");
             }
+
             "MODE_SET_OVERWRITE_ASCII" => {
                 self.clear_register();
                 self.set_context("OVERWRITE_ASCII");
@@ -981,35 +942,18 @@ impl InputInterface {
 
             "MODE_SET_DEFAULT" => {
                 self.clear_register();
-                if ! self.user_feedback_ready() {
-                    self.frontend.raise_flag(Flag::HideFeedback);
-                }
-                self.frontend.raise_flag(Flag::UpdateOffset);
-                self.frontend.raise_flag(Flag::CursorMoved);
                 self.set_context("DEFAULT");
 
             }
 
             "MODE_SET_CMD" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.clear_register();
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.clear_commandline_register();
+                self.set_context("CMD");
             }
 
             "MODE_SET_SEARCH" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        commandline.set_register("find ");
-                        self.frontend.raise_flag(Flag::DisplayCMDLine);
-                        self.set_context("CMD");
-                    }
-                    None => ()
-                }
+                self.backend.set_commandline_register("find ");
+                self.set_context("CMD");
             }
 
             "OVERWRITE_DIGIT" => {
@@ -1063,17 +1007,10 @@ impl InputInterface {
             //    self.ci_insert_bytes(&pattern, repeat)?;
             //}
 
-            "INSERT_TO_CMDLINE" => {
+            "APPEND_TO_CMDLINE" => {
                 match arguments.get(0) {
                     Some(argument) => {
-                        match self.backend.get_commandline_mut() {
-                            Some(commandline) => {
-                                commandline.insert_to_register(argument);
-                                commandline.move_cursor_right();
-                                self.frontend.raise_flag(Flag::DisplayCMDLine);
-                            }
-                            None => ()
-                        }
+                        self.backend.append_to_commandline(argument);
                     }
                     None => ()
                 }
@@ -1117,20 +1054,11 @@ impl InputInterface {
             }
 
             "RUN_CUSTOM_COMMAND" => {
-                match self.backend.get_commandline_mut() {
-                    Some(commandline) => {
-                        match commandline.apply_register() {
-                            Some(new_command) => {
-                                self.query(&new_command)?;
-                            }
-                            None => {
-                            }
-                        };
+                match self.backend.fetch_commandline_register() {
+                    Some(new_command) => {
+                        self.query(&new_command)?;
                     }
                     None => ()
-                }
-                if !self.user_feedback_ready() {
-                    self.frontend.raise_flag(Flag::HideFeedback);
                 }
                 self.set_context("DEFAULT");
             }
@@ -1325,8 +1253,6 @@ impl InputInterface {
     fn __resize_hook(&mut self) {
         self.resize_backend_viewport();
 
-        self.frontend.raise_flag(Flag::SetupDisplays);
-        self.frontend.raise_flag(Flag::RemapActiveRows);
     }
 
     fn auto_resize(&mut self) {
@@ -1339,16 +1265,10 @@ impl InputInterface {
 
     fn ci_subcursor_left(&mut self) -> Result<(), SbyteError> {
         self.backend.subcursor_prev_digit();
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
         Ok(())
     }
     fn ci_subcursor_right(&mut self) -> Result<(), SbyteError> {
         self.backend.subcursor_next_digit();
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
         Ok(())
     }
 
@@ -1362,9 +1282,6 @@ impl InputInterface {
             self.backend.cursor_next_byte();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
         Ok(())
     }
 
@@ -1376,9 +1293,6 @@ impl InputInterface {
             self.backend.cursor_prev_line();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::UpdateOffset);
-        self.frontend.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_cursor_down(&mut self, repeat: usize) {
@@ -1389,9 +1303,6 @@ impl InputInterface {
             self.backend.cursor_next_line();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::UpdateOffset);
-        self.frontend.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_cursor_left(&mut self, repeat: usize) {
@@ -1402,9 +1313,6 @@ impl InputInterface {
             self.backend.cursor_prev_byte();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::UpdateOffset);
-        self.frontend.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_cursor_right(&mut self, repeat: usize) {
@@ -1417,9 +1325,6 @@ impl InputInterface {
             self.backend.cursor_next_byte();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_up(&mut self, repeat: usize) {
@@ -1427,9 +1332,6 @@ impl InputInterface {
             self.backend.cursor_decrease_length_by_line();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_down(&mut self, repeat: usize) {
@@ -1437,9 +1339,6 @@ impl InputInterface {
             self.backend.cursor_increase_length_by_line();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_left(&mut self, repeat: usize) {
@@ -1447,9 +1346,6 @@ impl InputInterface {
             self.backend.cursor_decrease_length();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_cursor_length_right(&mut self, repeat: usize) {
@@ -1457,16 +1353,12 @@ impl InputInterface {
             self.backend.cursor_increase_length();
         }
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_yank(&mut self) {
         self.backend.copy_selection();
         self.backend.set_cursor_length(1);
 
-        self.frontend.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_jump_to_position(&mut self, new_offset: usize) {
@@ -1475,65 +1367,43 @@ impl InputInterface {
         if new_offset <= content_length {
             self.backend.set_cursor_length(1);
             self.backend.set_cursor_offset(new_offset);
-            self.frontend.raise_flag(Flag::HideFeedback);
         } else {
             self.backend.set_user_error_msg(&format!("Out of Bounds: {} < {}", new_offset, content_length));
         }
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_bitwise_not(&mut self) -> Result<(), SbyteError> {
         self.backend.bitwise_not()?;
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
 
         Ok(())
     }
 
     fn ci_apply_nand_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_nand_mask(mask)?;
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
 
         Ok(())
     }
 
     fn ci_apply_nor_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_nor_mask(mask)?;
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
 
         Ok(())
     }
 
     fn ci_apply_xor_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_xor_mask(mask)?;
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
 
         Ok(())
     }
 
     fn ci_apply_or_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_or_mask(mask)?;
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
 
         Ok(())
     }
 
     fn ci_apply_and_mask(&mut self, mask: &[u8]) -> Result<(), SbyteError> {
         self.backend.apply_and_mask(mask)?;
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
 
         Ok(())
     }
@@ -1553,9 +1423,6 @@ impl InputInterface {
                 // TODO
             }
         }
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_jump_to_previous(&mut self, argument: Option<&str>, repeat: usize) {
@@ -1604,9 +1471,6 @@ impl InputInterface {
         }
 
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_jump_to_next(&mut self, argument: Option<&str>, repeat: usize) {
@@ -1655,9 +1519,6 @@ impl InputInterface {
         }
 
 
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_delete(&mut self, repeat: usize) {
@@ -1669,11 +1530,6 @@ impl InputInterface {
         }
         self.backend.copy_to_clipboard(removed_bytes);
         self.backend.set_cursor_length(1);
-
-
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
-        self.flag_row_update_by_offset(offset);
     }
 
     fn ci_backspace(&mut self, repeat: usize) {
@@ -1717,20 +1573,6 @@ impl InputInterface {
         }
 
 
-        let viewport_offset = self.backend.get_viewport_offset();
-        if viewport_offset == original_viewport_offset {
-            let (width, height) = self.backend.get_viewport_size();
-            let start = viewport_offset / width;
-            let end = height + start;
-
-            for y in start .. end {
-                self.frontend.raise_flag(Flag::UpdateRow(y));
-            }
-        }
-
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_redo(&mut self, repeat: usize) {
@@ -1747,20 +1589,6 @@ impl InputInterface {
             }
         }
 
-        let viewport_offset = self.backend.get_viewport_offset();
-        if viewport_offset == original_viewport_offset {
-            let (width, height) = self.backend.get_viewport_size();
-            let start = viewport_offset / width;
-            let end = height + start;
-
-            for y in start .. end {
-                self.frontend.raise_flag(Flag::UpdateRow(y));
-            }
-        }
-
-        self.frontend.raise_flag(Flag::RemapActiveRows);
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.frontend.raise_flag(Flag::UpdateOffset);
     }
 
     fn ci_insert_string(&mut self, argument: &str, repeat: usize) -> Result<(), SbyteError> {
@@ -1783,8 +1611,6 @@ impl InputInterface {
 
         self.ci_cursor_right(bytes.len() * repeat);
 
-        self.flag_row_update_by_offset(offset);
-        self.frontend.raise_flag(Flag::UpdateOffset);
         Ok(())
     }
 
@@ -1808,9 +1634,6 @@ impl InputInterface {
         }
         self.backend.set_cursor_length(1);
 
-
-        self.frontend.raise_flag(Flag::CursorMoved);
-        self.flag_row_update_by_range(offset..offset);
         Ok(())
     }
 
@@ -1839,8 +1662,6 @@ impl InputInterface {
             }
         }
 
-        self.flag_row_update_by_range(offset - suboffset .. offset);
-        self.frontend.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_decrement(&mut self, repeat: usize) {
@@ -1867,9 +1688,6 @@ impl InputInterface {
                 break;
             }
         }
-
-        self.flag_row_update_by_range(offset - suboffset .. offset);
-        self.frontend.raise_flag(Flag::CursorMoved);
     }
 
     fn ci_save(&mut self, path: Option<&str>) {
@@ -1933,25 +1751,6 @@ impl InputInterface {
 
     fn lock_viewport_width(&mut self, new_width: usize) {
         self.locked_viewport_width = Some(new_width);
-    }
-
-    fn flag_row_update_by_range(&mut self, range: std::ops::Range<usize>) {
-        let (viewport_width, _) = self.backend.get_viewport_size();
-        let first_active_row = range.start / viewport_width;
-        let last_active_row = range.end / viewport_width;
-
-        for y in first_active_row .. max(last_active_row + 1, first_active_row + 1) {
-            self.frontend.raise_flag(Flag::UpdateRow(y));
-        }
-    }
-
-    fn flag_row_update_by_offset(&mut self, offset: usize) {
-        let (viewport_width, viewport_height) = self.backend.get_viewport_size();
-        let first_active_row = offset / viewport_width;
-
-        for y in first_active_row .. first_active_row + viewport_height {
-            self.frontend.raise_flag(Flag::UpdateRow(y));
-        }
     }
 
     fn user_feedback_ready(&mut self) -> bool {

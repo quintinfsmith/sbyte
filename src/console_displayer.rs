@@ -5,18 +5,15 @@ use wrecked::{RectManager, Color, WreckedError};
 
 use super::sbyte_editor::*;
 use super::sbyte_editor::converter::*;
-use super::sbyte_editor::flag::Flag;
 
 
 pub struct FrontEnd {
     rectmanager: RectManager,
-    display_flags: HashMap<Flag, (usize, bool)>,
-    display_flag_timeouts: HashMap<Flag, usize>,
 
     active_row_map: HashMap<usize, bool>,
 
     cells_to_refresh: HashSet<(usize, usize)>, // rect ids, rather than coords
-    rows_to_refresh: Vec<usize>, // absolute row numbers
+    rows_to_refresh: HashSet<usize>, // absolute row numbers
     active_cursor_cells: HashSet<(usize, usize)>, //rect ids of cells highlighted by cursor
 
     rect_display_wrapper: usize,
@@ -30,7 +27,8 @@ pub struct FrontEnd {
 
     row_dict: HashMap<usize, (usize, usize)>,
     cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
-    input_context: String // things may be displayed differently based on context
+    input_context: String, // things may be displayed differently based on context
+    rerow_flag: bool
 }
 
 impl FrontEnd {
@@ -48,7 +46,7 @@ impl FrontEnd {
             rectmanager,
             active_row_map: HashMap::new(),
             cells_to_refresh: HashSet::new(),
-            rows_to_refresh: Vec::new(),
+            rows_to_refresh: HashSet::new(),
             active_cursor_cells: HashSet::new(),
 
             rect_display_wrapper,
@@ -59,32 +57,32 @@ impl FrontEnd {
             rects_display: (id_display_bits, id_display_human),
             row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
-            display_flags: HashMap::new(),
-            display_flag_timeouts: HashMap::new(),
             last_known_viewport_offset: 9999,
 
-            input_context: "DEFAULT".to_string()
+            input_context: "DEFAULT".to_string(),
+            rerow_flag: false
         };
 
-        frontend.raise_flag(Flag::SetupDisplays);
-        frontend.raise_flag(Flag::RemapActiveRows);
 
         frontend
     }
 
-    pub fn set_input_context(&mut self, new_context: &str) {
-        self.input_context = new_context.to_string();
-        self.raise_flag(Flag::CursorMoved);
+    pub fn force_rerow(&mut self) {
+        self.rerow_flag = true;
     }
 
-    pub fn tick(&mut self, sbyte_editor: &BackEnd) -> Result<(), Box::<dyn Error>> {
+    pub fn set_input_context(&mut self, new_context: &str) {
+        self.input_context = new_context.to_string();
+    }
+
+    pub fn tick(&mut self, sbyte_editor: &mut BackEnd) -> Result<(), Box::<dyn Error>> {
         if !sbyte_editor.is_loading() {
+            let changed_viewport_size = sbyte_editor.has_changed("VIEWPORT_SIZE");
+            let changed_viewport_offset = sbyte_editor.has_changed("VIEWPORT_OFFSET");
+            let changed_cursor = sbyte_editor.has_changed("CURSOR");
+            let changed_cmdline = sbyte_editor.has_changed("CMDLINE");
 
-            if self.check_flag(Flag::HideFeedback) {
-                self.clear_feedback()?;
-            }
-
-            if self.check_flag(Flag::SetupDisplays) {
+            if changed_viewport_size {
                 match self.setup_displays(sbyte_editor) {
                     Ok(_) => {}
                     Err(error) => {
@@ -93,7 +91,7 @@ impl FrontEnd {
                 }
             }
 
-            if self.check_flag(Flag::RemapActiveRows) {
+            if changed_viewport_size || changed_viewport_offset {
                 match self.remap_active_rows(sbyte_editor) {
                     Ok(_) => {}
                     Err(error) => {
@@ -102,28 +100,36 @@ impl FrontEnd {
                 }
             }
 
-            let len = self.rows_to_refresh.len();
-            if len > 0 {
-                let mut in_timeout = Vec::new();
-                let mut y;
-                while self.rows_to_refresh.len() > 0 {
-                    y = self.rows_to_refresh.pop().unwrap();
-                    if self.check_flag(Flag::UpdateRow(y)) {
-                        match self.set_row_characters(sbyte_editor, y) {
-                            Ok(_) => {}
-                            Err(error) => {
-                                Err(SbyteError::RowSetFailed(error))?
-                            }
+            let changed_offsets = sbyte_editor.fetch_changed_offsets();
+            if !changed_offsets.is_empty() {
+                let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
+                let viewport_bottom = (sbyte_editor.get_viewport_offset() / viewport_width) + viewport_height;
+                for (i, rippled) in changed_offsets.iter() {
+                    let start_row = i / viewport_width;
+                    if *rippled && viewport_bottom >= start_row {
+                        for y in start_row .. viewport_bottom + 1 {
+                            self.rows_to_refresh.insert(y);
                         }
                     } else {
-                        in_timeout.push(y);
+                        self.rows_to_refresh.insert(start_row);
                     }
                 }
-                self.rows_to_refresh = in_timeout;
+            }
+
+            if !self.rows_to_refresh.is_empty() {
+                let tmp_rows_to_refresh: Vec<usize> = self.rows_to_refresh.drain().collect();
+                for y in tmp_rows_to_refresh.iter() {
+                    match self.set_row_characters(sbyte_editor, *y) {
+                        Ok(_) => {}
+                        Err(error) => {
+                            Err(SbyteError::RowSetFailed(error))?
+                        }
+                    }
+                }
             }
 
 
-            if self.check_flag(Flag::CursorMoved) {
+            if changed_cursor || changed_viewport_size || changed_viewport_offset {
                 match self.apply_cursor(sbyte_editor) {
                     Ok(_) => {}
                     Err(error) => {
@@ -133,28 +139,34 @@ impl FrontEnd {
             }
 
 
+            if changed_cmdline {
+                self.display_command_line(sbyte_editor)?;
+            }
+
             match sbyte_editor.get_user_error_msg() {
                 Some(msg) => {
                     self.display_user_error(msg.clone())?;
                 }
                 None => {
-                    if self.check_flag(Flag::DisplayCMDLine) {
-                        self.display_command_line(sbyte_editor)?;
-                    } else {
-                        match sbyte_editor.get_user_msg() {
-                            Some(msg) => {
-                                self.display_user_message(msg.clone())?;
-                            }
-                            None => {
+                    match sbyte_editor.get_user_msg() {
+                        Some(msg) => {
+                            self.display_user_message(msg.clone())?;
+                        }
+                        None => {
+                            if !changed_cmdline && changed_cursor {
+                                self.clear_feedback()?;
                             }
                         }
                     }
                 }
             }
 
-            if self.check_flag(Flag::UpdateOffset) {
+            if changed_cursor {
                 self.display_user_offset(sbyte_editor)?;
+
             }
+
+
 
             match self.rectmanager.render() {
                 Ok(_) => {}
@@ -169,55 +181,6 @@ impl FrontEnd {
 
     pub fn auto_resize(&mut self) -> bool {
         self.rectmanager.auto_resize()
-    }
-
-    pub fn raise_flag(&mut self, key: Flag) {
-        match key {
-            Flag::UpdateRow(some_y) => {
-                self.rows_to_refresh.push(some_y)
-            }
-            _ => ()
-        }
-
-        self.display_flags.entry(key)
-            .and_modify(|e| *e = (e.0, true))
-            .or_insert((0, true));
-    }
-
-    //fn lower_flag(&mut self, key: Flag) {
-    //    self.display_flags.entry(key)
-    //        .and_modify(|e| *e = (e.0, false))
-    //        .or_insert((0, false));
-    //}
-
-    fn check_flag(&mut self, key: Flag) -> bool {
-        let mut output = false;
-        match self.display_flags.get_mut(&key) {
-            Some((countdown, flagged)) => {
-                if *countdown > 0 {
-                    *countdown -= 1;
-                } else {
-                    output = *flagged;
-                }
-            }
-            None => ()
-        }
-
-        if output {
-            let mut new_timeout = 0;
-            match self.display_flag_timeouts.get(&key) {
-                Some(timeout) => {
-                    new_timeout = *timeout;
-                }
-                None => { }
-            }
-
-            self.display_flags.entry(key)
-                .and_modify(|e| *e = (new_timeout, false))
-                .or_insert((new_timeout, false));
-        }
-
-        output
     }
 
     fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
@@ -235,7 +198,8 @@ impl FrontEnd {
             diff = (initial_y - new_y) as usize;
         }
 
-        let force_rerow = self.check_flag(Flag::ForceRerow);
+        let force_rerow = self.rerow_flag;
+        self.rerow_flag = false;
 
         if diff > 0 || force_rerow {
             if diff < height && !force_rerow {
@@ -373,15 +337,11 @@ impl FrontEnd {
             let active_rows = self.active_row_map.clone();
             for (y, is_rendered) in active_rows.iter() {
                 if !is_rendered {
-                    self.raise_flag(Flag::UpdateRow(*y + (new_y as usize)));
+                    self.rows_to_refresh.insert(*y + (new_y as usize));
                 }
             }
 
-            self.raise_flag(Flag::UpdateOffset);
         }
-
-        self.raise_flag(Flag::ForceRerow);
-        self.raise_flag(Flag::CursorMoved);
 
         Ok(())
     }
@@ -492,8 +452,7 @@ impl FrontEnd {
         }
 
         self.active_cursor_cells.drain();
-        self.raise_flag(Flag::ForceRerow);
-        self.raise_flag(Flag::CursorMoved);
+        self.force_rerow();
 
         Ok(())
     }
