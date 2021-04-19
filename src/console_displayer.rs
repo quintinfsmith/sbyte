@@ -6,29 +6,32 @@ use wrecked::{RectManager, Color, WreckedError};
 use super::sbyte_editor::*;
 use super::sbyte_editor::converter::*;
 
+use usize as RectId;
 
 pub struct FrontEnd {
     rectmanager: RectManager,
 
     active_row_map: HashMap<usize, bool>,
 
-    cells_to_refresh: HashSet<(usize, usize)>, // rect ids, rather than coords
+    cells_to_refresh: HashSet<(RectId, RectId)>, // rect ids, rather than coords
     rows_to_refresh: HashSet<usize>, // absolute row numbers
-    active_cursor_cells: HashSet<(usize, usize)>, //rect ids of cells highlighted by cursor
+    active_cursor_cells: HashSet<(RectId, RectId)>, //rect ids of cells highlighted by cursor
 
-    rect_display_wrapper: usize,
-    rects_display: (usize, usize),
-    rect_meta: usize,
-    rect_offset: usize,
-    rect_feedback: usize,
-    rect_scrollbar: usize,
+    rect_display_wrapper: RectId,
+    rects_display: (RectId, RectId),
+    rect_meta: RectId,
+    rect_offset: RectId,
+    rect_feedback: RectId,
+    rect_scrollbar: RectId,
 
     last_known_viewport_offset: usize,
 
-    row_dict: HashMap<usize, (usize, usize)>,
-    cell_dict: HashMap<usize, HashMap<usize, (usize, usize)>>,
+    row_dict: HashMap<usize, (RectId, RectId)>,
+    cell_dict: HashMap<usize, HashMap<usize, (RectId, RectId)>>,
     input_context: String, // things may be displayed differently based on context
-    rerow_flag: bool
+    rerow_flag: bool,
+
+    rect_help_window: RectId
 }
 
 impl FrontEnd {
@@ -41,6 +44,7 @@ impl FrontEnd {
         let rect_feedback = rectmanager.new_rect(rect_meta).ok().unwrap();
         let rect_offset = rectmanager.new_rect(rect_meta).ok().unwrap();
         let rect_scrollbar = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
+        let rect_help_window = rectmanager.new_rect(wrecked::ROOT).ok().unwrap();
 
         let mut frontend = FrontEnd {
             rectmanager,
@@ -54,6 +58,7 @@ impl FrontEnd {
             rect_feedback,
             rect_offset,
             rect_scrollbar,
+            rect_help_window,
             rects_display: (id_display_bits, id_display_human),
             row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
@@ -61,6 +66,7 @@ impl FrontEnd {
 
             input_context: "DEFAULT".to_string(),
             rerow_flag: false
+
         };
 
 
@@ -384,10 +390,10 @@ impl FrontEnd {
             width_bits = display_ratio;
         }
 
-        let mut _bits_row_id;
-        let mut _bits_cell_id;
-        let mut _human_row_id;
-        let mut _human_cell_id;
+        let mut _bits_row_id: RectId;
+        let mut _bits_cell_id: RectId;
+        let mut _human_row_id: RectId;
+        let mut _human_cell_id: RectId;
         let mut _cells_hashmap;
         for y in 0..viewport_height {
             self.active_row_map.entry(y)
