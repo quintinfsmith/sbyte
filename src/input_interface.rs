@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 pub struct Inputter {
     input_managers: HashMap<String, InputNode>,
     input_buffer: Vec<u8>,
-    context: String
+    context: String,
+    killed: bool
 }
 
 impl Inputter {
@@ -24,19 +25,24 @@ impl Inputter {
         Inputter {
             input_managers: HashMap::new(),
             input_buffer: Vec::new(),
-            context: "DEFAULT".to_string()
+            context: "DEFAULT".to_string(),
+            killed: false
         }
+    }
+
+    fn kill(&mut self) {
+        self.killed = true;
     }
 
     pub fn check_buffer(&mut self) -> Option<(String, String)> {
         let mut output = None;
 
-        let input_buffer = self.input_buffer.clone();
         match self.input_managers.get_mut(&self.context) {
             Some(root_node) => {
-                let cmd = root_node.fetch_command(input_buffer);
+                let cmd = root_node.fetch_command(&self.input_buffer);
                 match cmd {
                     Some(funcref) => {
+                        // FIXME. input_buffer doesn't need to contain utf8, don't expect it to.
                         match std::str::from_utf8(&self.input_buffer) {
                             Ok(string) => {
                                 output = Some((funcref, string.to_string()));
@@ -52,7 +58,6 @@ impl Inputter {
             None => ()
         }
         self.input_buffer.drain(..);
-
         output
     }
 
@@ -68,6 +73,10 @@ impl Inputter {
 
     pub fn input(&mut self, byte: u8) {
         self.input_buffer.push(byte)
+    }
+
+    pub fn is_alive(&self) -> bool {
+        ! self.killed
     }
 }
 
@@ -101,7 +110,7 @@ impl InputNode {
         }
     }
 
-    fn fetch_command(&mut self, input_pattern: Vec<u8>) -> Option<String> {
+    fn fetch_command(&mut self, input_pattern: &Vec<u8>) -> Option<String> {
         let mut found_command: bool = false;
         let mut output = None;
         match &self.hook {
@@ -120,7 +129,7 @@ impl InputNode {
                 let next_byte = tmp_pattern.remove(0);
                 output = match self.next_nodes.get_mut(&next_byte) {
                     Some(node) => {
-                        node.fetch_command(tmp_pattern)
+                        node.fetch_command(&tmp_pattern)
                     }
                     None => {
                         None
@@ -133,63 +142,13 @@ impl InputNode {
     }
 }
 
-pub struct InputPipe {
-    input_buffer: Vec<u8>,
-    killed: bool,
-    modified: Option<Instant>
-}
-impl InputPipe {
-    fn new() -> InputPipe {
-        InputPipe {
-            input_buffer: Vec::new(),
-            killed: false,
-            modified: None
-        }
-    }
-
-    fn push(&mut self, item: u8) {
-        self.input_buffer.push(item);
-        self.modified = Some(Instant::now());
-    }
-
-    fn kill(&mut self) {
-        self.killed = true;
-    }
-
-    fn is_alive(&self) -> bool {
-        !self.killed
-    }
-
-    fn has_waited(&self, duration: Duration) -> bool {
-        match self.modified {
-            Some(t) => {
-                t.elapsed() > duration
-            }
-            None => {
-                false
-            }
-        }
-
-    }
-
-    fn get_buffer(&mut self) -> Vec<u8> {
-        self.modified = None;
-        let output = self.input_buffer.clone();
-        self.input_buffer.drain(..);
-        output
-    }
-}
-
-
 
 pub struct InputInterface {
     backend: BackEnd,
     frontend: FrontEnd,
-    inputter: Inputter,
+    inputter: Arc<Mutex<Inputter>>,
 
     locked_viewport_width: Option<usize>,
-
-    input_pipe: Arc<Mutex<InputPipe>>,
 
     register: Option<usize>,
 
@@ -200,10 +159,9 @@ pub struct InputInterface {
 impl InputInterface {
     pub fn new(backend: BackEnd, frontend: FrontEnd) -> InputInterface {
         let mut interface = InputInterface {
-            input_pipe: Arc::new(Mutex::new(InputPipe::new())),
             locked_viewport_width: None,
             running: false,
-            inputter: InputInterface::new_inputter(),
+            inputter: Arc::new(Mutex::new(InputInterface::new_inputter())),
             register: None,
 
             backend,
@@ -353,7 +311,7 @@ impl InputInterface {
     }
 
     pub fn spawn_input_daemon(&mut self) -> std::thread::JoinHandle<()> {
-        let input_pipe = self.input_pipe.clone();
+        let inputter = self.inputter.clone();
         thread::spawn(move || {
             /////////////////////////////////
             // Rectmanager puts stdout in non-canonical mode,
@@ -368,12 +326,12 @@ impl InputInterface {
             while ! killed {
                 buffer = [0;1];
                 reader.read_exact(&mut buffer).unwrap();
-                match input_pipe.try_lock() {
+                match inputter.try_lock() {
                     Ok(ref mut mutex) => {
                         killed = !mutex.is_alive();
                         if ! killed {
                             for byte in buffer.iter() {
-                                &mutex.push(*byte);
+                                &mutex.input(*byte);
                             }
                         }
                     }
@@ -384,7 +342,7 @@ impl InputInterface {
     }
 
     pub fn spawn_ctrl_c_daemon(&mut self) {
-        let signal_mutex = self.input_pipe.clone();
+        let signal_mutex = self.inputter.clone();
         // Catch the Ctrl+C Signal
         ctrlc::set_handler(move || {
             let mut ok = false;
@@ -412,7 +370,6 @@ impl InputInterface {
         let fps = 59.97;
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
-        let input_delay = time::Duration::from_nanos(50);
 
         let mut command_pair: Option<(String, Vec<String>)>;
         self.running = true;
@@ -429,26 +386,20 @@ impl InputInterface {
             }
 
             command_pair = None;
-            match self.input_pipe.try_lock() {
+            match self.inputter.try_lock() {
                 Ok(ref mut mutex) => {
                     // Kill the main loop is the input loop dies
                     if ! mutex.is_alive() {
                         self.running = false;
                     }
 
-                    if mutex.has_waited(input_delay) {
-                        for byte in mutex.get_buffer() {
-                            self.inputter.input(byte);
+                    match mutex.check_buffer() {
+                        Some((funcref, input_sequence)) => {
+                            command_pair = Some((funcref, vec![input_sequence]));
                         }
-
-                        match self.inputter.check_buffer() {
-                            Some((funcref, input_sequence)) => {
-                                command_pair = Some((funcref, vec![input_sequence]));
-                            }
-                            None => ()
-                        }
-
+                        None => ()
                     }
+
                 }
                 Err(_e) => ()
             }
@@ -471,7 +422,7 @@ impl InputInterface {
         }
 
         // Kill input thread
-        match self.input_pipe.try_lock() {
+        match self.inputter.try_lock() {
             Ok(ref mut mutex) => {
                 mutex.kill();
             }
@@ -674,7 +625,12 @@ impl InputInterface {
                     }
                 };
 
-                self.inputter.assign_mode_command(mode_key, &new_input_string, &new_funcref);
+                match self.inputter.try_lock() {
+                    Ok(ref mut mutex) => {
+                        mutex.assign_mode_command(mode_key, &new_input_string, &new_funcref);
+                    }
+                    Err(_e) => ()
+                }
             }
 
             "CURSOR_UP" => {
@@ -1156,6 +1112,20 @@ impl InputInterface {
 
             "CLEAR_REGISTER" => {
                 self.clear_register()
+            }
+
+            "RELOAD" => {
+                let path = match self.backend.get_active_file_path() {
+                    Some(_path) => {
+                        Ok(_path.clone())
+                    }
+                    None => {
+                        Err(SbyteError::PathNotSet)
+                    }
+                }?;
+
+                self.backend.load_file(&path);
+                self.resize_backend_viewport();
             }
 
             _ => {
@@ -1759,7 +1729,12 @@ impl InputInterface {
 
     fn set_context(&mut self, new_context: &str) {
         self.backend.set_subcursor_offset(0);
-        self.inputter.set_context(new_context);
+        match self.inputter.try_lock() {
+            Ok(ref mut mutex) => {
+                mutex.set_context(new_context);
+            }
+            Err(_e) => ()
+        }
         self.frontend.set_input_context(new_context);
     }
 }
