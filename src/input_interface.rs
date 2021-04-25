@@ -4,6 +4,8 @@ use std::io;
 use std::io::{Write, Read};
 use std::sync::{Mutex, Arc};
 
+pub mod tests;
+
 //TODO Move string_to_integer
 use super::sbyte_editor::{BackEnd, SbyteError, string_to_integer, string_to_bytes};
 use super::sbyte_editor::converter::*;
@@ -13,135 +15,190 @@ use std::{time, thread};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+pub struct InputNode {
+    node_map: HashMap<u8, usize>,
+    hook: Option<(String, Vec<String>)>
+}
+
+impl InputNode {
+    pub fn new() -> InputNode {
+        InputNode {
+            node_map: HashMap::new(),
+            hook: None
+        }
+    }
+
+    pub fn get_next(&self, byte: u8) -> Option<usize> {
+        match self.node_map.get(&byte) {
+            Some(index) => {
+                Some(*index)
+            }
+            None => {
+                None
+            }
+        }
+    }
+
+    pub fn set_hook(&mut self, hook: &str, args: &[&str]) {
+        let mut argsvec = Vec::new();
+        for arg in args.iter() {
+            argsvec.push(arg.to_string());
+        }
+
+        self.hook = Some((hook.to_string(), argsvec));
+    }
+
+    pub fn get_hook(&self) -> Option<(String, Vec<String>)> {
+        match &self.hook {
+            Some((funcref, argsvec)) => {
+                Some((funcref.clone(), argsvec.clone()))
+            }
+            None => {
+                None
+            }
+        }
+    }
+
+    pub fn link_byte(&mut self, byte: u8, node_id: usize) {
+        self.node_map.insert(byte, node_id);
+    }
+}
+
 pub struct Inputter {
-    input_managers: HashMap<String, InputNode>,
-    input_buffer: Vec<u8>,
     context: String,
-    killed: bool
+    killed: bool,
+    input_nodes: Vec<InputNode>,
+    active_node: usize,
+    mode_roots: HashMap<String, usize>,
 }
 
 impl Inputter {
     pub fn new() -> Inputter {
-        Inputter {
-            input_managers: HashMap::new(),
-            input_buffer: Vec::new(),
-            context: "DEFAULT".to_string(),
-            killed: false
-        }
+        let mut output = Inputter {
+            context: "".to_string(),
+            killed: false,
+            input_nodes: Vec::new(),
+            active_node: 0,
+            mode_roots: HashMap::new(),
+        };
+        output.set_context("DEFAULT");
+
+        output
     }
 
     fn kill(&mut self) {
         self.killed = true;
     }
 
-    pub fn check_buffer(&mut self) -> Option<(String, String)> {
-        let mut output = None;
+    fn get_context_root(&mut self) -> usize {
+        let context = self.context.to_string();
+        self.get_mode_root(&context)
+    }
 
-        match self.input_managers.get_mut(&self.context) {
-            Some(root_node) => {
-                let cmd = root_node.fetch_command(&self.input_buffer);
-                match cmd {
-                    Some(funcref) => {
-                        // FIXME. input_buffer doesn't need to contain utf8, don't expect it to.
-                        match std::str::from_utf8(&self.input_buffer) {
-                            Ok(string) => {
-                                output = Some((funcref, string.to_string()));
-                            }
-                            Err(_e) => {
-                                output = Some((funcref, "".to_string()));
-                            }
+    fn get_mode_root(&mut self, mode: &str) -> usize {
+        if ! self.mode_roots.contains_key(mode) {
+            self.mode_roots.insert(mode.to_string(), self.input_nodes.len());
+            self.input_nodes.push(InputNode::new());
+        }
+        *self.mode_roots.get(mode).unwrap()
+    }
+
+    pub fn go_to_next(&mut self, next_byte: u8) {
+        let next = match self.input_nodes.get(self.active_node) {
+            Some(input_node) => {
+                input_node.get_next(next_byte)
+            }
+            None => {
+                None
+            }
+        };
+
+        match next {
+            Some(node_id) => {
+                self.active_node = node_id;
+            }
+            None => {
+                self.active_node = self.get_context_root();
+            }
+        }
+    }
+
+    pub fn fetch_hook(&mut self) -> Option<(String, Vec<String>)> {
+        let hook_result = match self.input_nodes.get(self.active_node) {
+            Some(node) => {
+                node.get_hook()
+            }
+            None => {
+                None
+            }
+        };
+
+        match hook_result {
+            Some(hook) => {
+                self.active_node = self.get_context_root();
+                Some(hook)
+            }
+            None => {
+                None
+            }
+        }
+    }
+
+    pub fn assign_mode_command(&mut self, mode: &str, command_vec: &[u8], hook: &str, args: &[&str]) {
+        //let command_vec = command_string.to_string().as_bytes().to_vec();
+        let mut current_node_index = self.get_mode_root(mode);
+
+        for byte in command_vec.iter() {
+            let mut flag_new_node = false;
+
+            match self.input_nodes.get(current_node_index) {
+                Some(node) => {
+                    match node.get_next(*byte) {
+                        Some(index) => {
+                            current_node_index = index;
+                        }
+                        None => {
+                            flag_new_node = true;
                         }
                     }
-                    None => ()
                 }
+                None => ()
+            }
+
+            if flag_new_node {
+                let new_id = self.input_nodes.len();
+                match self.input_nodes.get_mut(current_node_index) {
+                    Some(node) => {
+                        node.link_byte(*byte, new_id);
+                    }
+                    None => {
+                        // Unreachable?
+                    }
+                }
+
+                current_node_index = new_id;
+                self.input_nodes.push(InputNode::new());
+            }
+
+        }
+
+        match self.input_nodes.get_mut(current_node_index) {
+            Some(node) => {
+                node.set_hook(hook, args);
             }
             None => ()
         }
-        self.input_buffer.drain(..);
-        output
-    }
-
-    pub fn assign_mode_command(&mut self, mode: &str, command_string: &str, hook: &str) {
-        let command_vec = command_string.to_string().as_bytes().to_vec();
-        let mode_node = self.input_managers.entry(mode.to_string()).or_insert(InputNode::new());
-        mode_node.assign_command(command_vec, hook);
     }
 
     pub fn set_context(&mut self, new_context: &str) {
         self.context = new_context.to_string();
-    }
-
-    pub fn input(&mut self, byte: u8) {
-        self.input_buffer.push(byte)
+        self.active_node = self.get_mode_root(new_context);
     }
 
     pub fn is_alive(&self) -> bool {
         ! self.killed
     }
 }
-
-struct InputNode {
-    next_nodes: HashMap<u8, InputNode>,
-    hook: Option<String>
-}
-
-impl InputNode {
-    fn new() -> InputNode {
-        InputNode {
-            next_nodes: HashMap::new(),
-            hook: None
-        }
-    }
-
-    fn assign_command(&mut self, new_pattern: Vec<u8>, hook: &str) {
-        let mut tmp_pattern = Vec::new();
-        for byte in new_pattern.iter() {
-            tmp_pattern.push(*byte);
-        }
-
-        if tmp_pattern.len() > 0 {
-            let next_byte = tmp_pattern.remove(0);
-
-            let next_node = self.next_nodes.entry(next_byte).or_insert(InputNode::new());
-            next_node.assign_command(tmp_pattern, hook);
-
-        } else {
-            self.hook = Some(hook.to_string());
-        }
-    }
-
-    fn fetch_command(&mut self, input_pattern: &Vec<u8>) -> Option<String> {
-        let mut found_command: bool = false;
-        let mut output = None;
-        match &self.hook {
-            Some(hook) => {
-                if input_pattern.len() == 0 {
-                    found_command = true;
-                    output = Some(hook.to_string())
-                }
-            }
-            None => { }
-        }
-
-        if ! found_command {
-            let mut tmp_pattern = input_pattern.clone();
-            if tmp_pattern.len() > 0 {
-                let next_byte = tmp_pattern.remove(0);
-                output = match self.next_nodes.get_mut(&next_byte) {
-                    Some(node) => {
-                        node.fetch_command(&tmp_pattern)
-                    }
-                    None => {
-                        None
-                    }
-                }
-            }
-        }
-
-        output
-    }
-}
-
 
 pub struct InputInterface {
     backend: BackEnd,
@@ -154,7 +211,6 @@ pub struct InputInterface {
 
     running: bool
 }
-
 
 impl InputInterface {
     pub fn new(backend: BackEnd, frontend: FrontEnd) -> InputInterface {
@@ -244,31 +300,31 @@ impl InputInterface {
         for c in "01".as_bytes().iter() {
             let strrep = std::str::from_utf8(&[*c]).unwrap().to_string();
             let keycode = ascii_map.get(&strrep).unwrap();
-            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_BIN", "OVERWRITE_DIGIT", &keycode]);
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_BIN", "OVERWRITE_DIGIT", &keycode, &strrep]);
         }
 
         for c in "0123456789".as_bytes().iter() {
             let strrep = std::str::from_utf8(&[*c]).unwrap().to_string();
             let keycode = ascii_map.get(&strrep).unwrap();
-            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_DEC", "OVERWRITE_DIGIT", &keycode]);
-            self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_DEC", "OVERWRITE_DIGIT", &keycode, &strrep]);
+            self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode, &strrep])?;
 
-            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", &keycode])?;
+            self.send_command("ASSIGN_INPUT", &["APPEND_TO_REGISTER", &keycode, &strrep])?;
         }
 
         for c in "0123456789abcdef".as_bytes().iter() {
             let strrep = std::str::from_utf8(&[*c]).unwrap().to_string();
             let keycode = ascii_map.get(&strrep).unwrap();
-            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_HEX", "OVERWRITE_DIGIT", &keycode]);
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_HEX", "OVERWRITE_DIGIT", &keycode, &strrep]);
         }
 
         for i in 32 .. 127 {
             let strrep = std::str::from_utf8(&[i]).unwrap().to_string();
             let keycode = ascii_map.get(&strrep).unwrap();
 
-            self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode])?;
-            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_ASCII", "OVERWRITE_STRING", &keycode])?;
-            self.send_command("ASSIGN_MODE_INPUT", &["CMD", "APPEND_TO_CMDLINE", &keycode])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["INSERT_ASCII", "INSERT_STRING", &keycode, &strrep])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["OVERWRITE_ASCII", "OVERWRITE_STRING", &keycode, &strrep])?;
+            self.send_command("ASSIGN_MODE_INPUT", &["CMD", "APPEND_TO_CMDLINE", &keycode, &strrep])?;
         }
 
         self.send_command("ASSIGN_MODE_INPUT", &["CMD", "RUN_CUSTOM_COMMAND", "LINE_FEED"])?;
@@ -318,24 +374,28 @@ impl InputInterface {
             // so stdin will be char-by-char
             let stdout = io::stdout();
             let mut reader = io::stdin();
-            let mut buffer: [u8; 1];
+            let mut buffer: [u8; 1] = [0;1];
             stdout.lock().flush().unwrap();
             ////////////////////////////////
 
             let mut killed: bool = false;
+            let mut retry_lock: bool = false;
             while ! killed {
-                buffer = [0;1];
-                reader.read_exact(&mut buffer).unwrap();
+                if ! retry_lock {
+                    reader.read_exact(&mut buffer).unwrap();
+                }
+
                 match inputter.try_lock() {
                     Ok(ref mut mutex) => {
                         killed = !mutex.is_alive();
                         if ! killed {
-                            for byte in buffer.iter() {
-                                &mutex.input(*byte);
-                            }
+                            &mutex.go_to_next(buffer[0]);
                         }
+                        retry_lock = false;
                     }
-                    Err(_e) => ()
+                    Err(_e) => {
+                        retry_lock = true;
+                    }
                 }
             }
         })
@@ -359,7 +419,8 @@ impl InputInterface {
     }
 
     pub fn new_inputter() -> Inputter {
-        Inputter::new()
+        let mut output = Inputter::new();
+        output
     }
 
     pub fn main(&mut self) -> Result<(), SbyteError> {
@@ -371,7 +432,6 @@ impl InputInterface {
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
 
-        let mut command_pair: Option<(String, Vec<String>)>;
         self.running = true;
         while self.running {
             match self.frontend.tick(&mut self.backend) {
@@ -385,7 +445,7 @@ impl InputInterface {
                 }
             }
 
-            command_pair = None;
+            let mut funcpair = None;
             match self.inputter.try_lock() {
                 Ok(ref mut mutex) => {
                     // Kill the main loop is the input loop dies
@@ -393,25 +453,18 @@ impl InputInterface {
                         self.running = false;
                     }
 
-                    match mutex.check_buffer() {
-                        Some((funcref, input_sequence)) => {
-                            command_pair = Some((funcref, vec![input_sequence]));
-                        }
-                        None => ()
-                    }
-
+                    funcpair = mutex.fetch_hook();
                 }
                 Err(_e) => ()
             }
 
-            match command_pair {
-                Some((funcref, input_sequence)) => {
-                    let mut adj_seq: Vec<&str> = Vec::new();
-                    for item in input_sequence.iter() {
-                        adj_seq.push(item);
+            match funcpair {
+                Some((funcref, args)) => {
+                    let mut str_args = Vec::new();
+                    for arg in args.iter() {
+                        str_args.push(arg.as_str());
                     }
-
-                    self.send_command(&funcref, adj_seq.as_slice())?;
+                    self.send_command(&funcref, str_args.as_slice())?;
                 }
                 None => {
                     thread::sleep(delay);
@@ -576,6 +629,7 @@ impl InputInterface {
 
         key_map
     }
+
     fn send_command(&mut self, funcref: &str, arguments: &[&str]) -> Result<(), SbyteError> {
         match funcref {
             "ASSIGN_INPUT" => {
@@ -606,14 +660,16 @@ impl InputInterface {
                     }
                 };
 
-                let new_input_string: String = match arguments.get(2) {
+                let new_input_string: Vec<u8> = match arguments.get(2) {
                     Some(_new_inputs) => {
                         let key_map = InputInterface::build_key_map();
-                        let mut output = "".to_string();
+                        let mut output = Vec::new();
                         for word in _new_inputs.split(",") {
                             match key_map.get(word) {
                                 Some(seq) => {
-                                    output += &seq.to_string();
+                                    for byte in seq.as_bytes().to_vec().iter() {
+                                        output.push(*byte);
+                                    }
                                 }
                                 None => () // TODO: ERROR
                             }
@@ -621,13 +677,13 @@ impl InputInterface {
                         output
                     }
                     None => {
-                        "".to_string()
+                        Vec::new()
                     }
                 };
 
                 match self.inputter.try_lock() {
                     Ok(ref mut mutex) => {
-                        mutex.assign_mode_command(mode_key, &new_input_string, &new_funcref);
+                        mutex.assign_mode_command(mode_key, &new_input_string, &new_funcref, &arguments[3..]);
                     }
                     Err(_e) => ()
                 }
@@ -1172,9 +1228,9 @@ impl InputInterface {
     fn query(&mut self, query: &str) -> Result<(), SbyteError> {
         let result = match self.backend.try_command(query) {
             Ok((funcref, args)) => {
-                let mut str_args: Vec<&str> = vec![];
+                let mut str_args = Vec::new();
                 for arg in args.iter() {
-                    str_args.push(&arg);
+                    str_args.push(arg.as_str());
                 }
                 self.send_command(&funcref, str_args.as_slice())
             }

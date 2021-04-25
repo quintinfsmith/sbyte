@@ -505,5 +505,4 @@ mod tests {
         assert_eq!(string_to_bytes("\\d16391"), Ok(vec![64, 7]));
     }
 
-
 }
