@@ -70,6 +70,7 @@ pub struct Inputter {
     input_nodes: Vec<InputNode>,
     active_node: usize,
     mode_roots: HashMap<String, usize>,
+    input_buffer: Vec<u8>
 }
 
 impl Inputter {
@@ -80,6 +81,7 @@ impl Inputter {
             input_nodes: Vec::new(),
             active_node: 0,
             mode_roots: HashMap::new(),
+            input_buffer: Vec::new()
         };
         output.set_context("DEFAULT");
 
@@ -103,27 +105,69 @@ impl Inputter {
         *self.mode_roots.get(mode).unwrap()
     }
 
-    pub fn go_to_next(&mut self, next_byte: u8) {
-        let next = match self.input_nodes.get(self.active_node) {
-            Some(input_node) => {
-                input_node.get_next(next_byte)
+    pub fn input(&mut self, next_byte: u8) {
+        self.input_buffer.push(next_byte);
+    }
+
+    fn path_continues(&mut self) -> bool {
+        let mut output = false;
+
+        if self.input_buffer.len() > 0 {
+            let test_byte = self.input_buffer[0];
+            match self.input_nodes.get(self.active_node) {
+                Some(node) => {
+                    match node.get_next(test_byte) {
+                        Some(next_id) => {
+                            output = true;
+                        }
+                        None => { }
+                    }
+                }
+                None => { }
+            }
+        }
+
+        output
+    }
+
+    /// Checks if the active node has a command hook AND that the input buffer won't continue
+    fn hook_ready(&mut self) -> bool {
+        let mut hook_result =match self.input_nodes.get(self.active_node) {
+            Some(node) => {
+                node.get_hook()
             }
             None => {
                 None
             }
         };
 
-        match next {
-            Some(node_id) => {
-                self.active_node = node_id;
-            }
-            None => {
-                self.active_node = self.get_context_root();
-            }
-        }
+        hook_result.is_some() && !self.path_continues()
     }
 
     pub fn fetch_hook(&mut self) -> Option<(String, Vec<String>)> {
+        // Read in the input_buffer
+        while self.input_buffer.len() > 0 && !self.hook_ready() {
+            let working_byte = self.input_buffer.remove(0);
+            let next = match self.input_nodes.get(self.active_node) {
+                Some(input_node) => {
+                    input_node.get_next(working_byte)
+                }
+                None => {
+                    None
+                }
+            };
+
+            match next {
+                Some(node_id) => {
+                    self.active_node = node_id;
+                }
+                None => {
+                    self.active_node = self.get_context_root();
+                }
+            }
+        }
+
+        // Then find the hook
         let hook_result = match self.input_nodes.get(self.active_node) {
             Some(node) => {
                 node.get_hook()
@@ -389,7 +433,7 @@ impl InputInterface {
                     Ok(ref mut mutex) => {
                         killed = !mutex.is_alive();
                         if ! killed {
-                            &mutex.go_to_next(buffer[0]);
+                            &mutex.input(buffer[0]);
                         }
                         retry_lock = false;
                     }
@@ -428,7 +472,7 @@ impl InputInterface {
         self.auto_resize();
         let mut _input_daemon = self.spawn_input_daemon();
 
-        let fps = 59.97;
+        let fps = 30.0;
         let nano_seconds = ((1f64 / fps) * 1_000_000_000f64) as u64;
         let delay = time::Duration::from_nanos(nano_seconds);
 
