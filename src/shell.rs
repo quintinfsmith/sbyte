@@ -61,7 +61,7 @@ impl Shell {
         output.map_command("APPEND_TO_REGISTER", hook_push_to_register);
         output.map_command("INCREMENT", hook_increment);
         output.map_command("DECREMENT", hook_decrement);
-        output.map_command("OVERWRITE_DIGIT", hook_replace_digit);
+        output.map_command("OVERWRITE_DIGIT", hook_overwrite_digit);
         output.map_command("INSERT_STRING", hook_insert_string);
         output.map_command("OVERWRITE_STRING", hook_overwrite_string);
         output.map_command("BITWISE_NOT", hook_bitwise_not);
@@ -460,7 +460,7 @@ fn hook_replace_pattern(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_replace_digit(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_overwrite_digit(shell: &mut Shell, args: &[&str]) -> R {
     for arg in args.iter() {
         for c in arg.chars() {
             shell.get_backend_mut().replace_digit(c)?;
