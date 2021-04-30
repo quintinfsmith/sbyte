@@ -7,7 +7,6 @@ pub mod input_interface;
 pub mod console_displayer;
 pub mod shell;
 
-use editor::*;
 use input_interface::InputInterface;
 use console_displayer::FrontEnd;
 use shell::Shell;
