@@ -5,6 +5,7 @@ use std::error::Error;
 pub mod sbyte_editor;
 pub mod input_interface;
 pub mod console_displayer;
+pub mod shell;
 
 use sbyte_editor::*;
 use input_interface::InputInterface;

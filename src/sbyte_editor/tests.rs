@@ -355,26 +355,27 @@ mod tests {
         assert!(editor.get_user_error_msg().is_none());
     }
 
-    #[test]
-    fn test_try_command() {
-        let mut editor = BackEnd::new();
-        let mut result = editor.try_command("badcmd");
-        match result {
-            Ok(_) => {
-                assert!(false);
-            }
-            Err(e) => {
-                assert_eq!(e, SbyteError::InvalidCommand("badcmd".to_string()));
-            }
-        }
+    // TODO: Move these tests
+    //#[test]
+    //fn test_try_command() {
+    //    let mut editor = BackEnd::new();
+    //    let mut result = editor.try_command("badcmd");
+    //    match result {
+    //        Ok(_) => {
+    //            assert!(false);
+    //        }
+    //        Err(e) => {
+    //            assert_eq!(e, SbyteError::InvalidCommand("badcmd".to_string()));
+    //        }
+    //    }
 
-        editor.assign_line_command("testcmd", "TEST");
-        result = editor.try_command("testcmd arg1 arg2");
-        assert_eq!(result, Ok(("TEST".to_string(), vec!["arg1".to_string(), "arg2".to_string()])));
+    //    editor.assign_line_command("testcmd", "TEST");
+    //    result = editor.try_command("testcmd arg1 arg2");
+    //    assert_eq!(result, Ok(("TEST".to_string(), vec!["arg1".to_string(), "arg2".to_string()])));
 
-        result = editor.try_command("");
-        assert_eq!(result, Err(SbyteError::NoCommandGiven));
-    }
+    //    result = editor.try_command("");
+    //    assert_eq!(result, Err(SbyteError::NoCommandGiven));
+    //}
 
     #[test]
     fn test_replace() {

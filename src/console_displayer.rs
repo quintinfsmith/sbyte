@@ -3,6 +3,7 @@ use std::cmp::max;
 use std::error::Error;
 use wrecked::{RectManager, Color, WreckedError};
 
+use super::shell::Shell;
 use super::sbyte_editor::*;
 use super::sbyte_editor::converter::*;
 
@@ -31,7 +32,10 @@ pub struct FrontEnd {
     input_context: String, // things may be displayed differently based on context
     rerow_flag: bool,
 
-    rect_help_window: RectId
+    rendered_buffer: Option<String>,
+
+    rect_help_window: RectId,
+    flag_context_changed: bool
 }
 
 impl FrontEnd {
@@ -65,8 +69,10 @@ impl FrontEnd {
             last_known_viewport_offset: 9999,
 
             input_context: "DEFAULT".to_string(),
-            rerow_flag: false
+            rerow_flag: false,
+            rendered_buffer: None,
 
+            flag_context_changed: false
         };
 
 
@@ -78,15 +84,16 @@ impl FrontEnd {
     }
 
     pub fn set_input_context(&mut self, new_context: &str) {
+        self.flag_context_changed = true;
         self.input_context = new_context.to_string();
     }
 
-    pub fn tick(&mut self, sbyte_editor: &mut BackEnd) -> Result<(), Box::<dyn Error>> {
+    pub fn tick(&mut self, shell: &mut Shell) -> Result<(), Box::<dyn Error>> {
+        let sbyte_editor = shell.get_backend_mut();
         if !sbyte_editor.is_loading() {
             let changed_viewport_size = sbyte_editor.has_changed("VIEWPORT_SIZE");
             let changed_viewport_offset = sbyte_editor.has_changed("VIEWPORT_OFFSET");
             let changed_cursor = sbyte_editor.has_changed("CURSOR");
-            let changed_cmdline = sbyte_editor.has_changed("CMDLINE");
 
             if changed_viewport_size {
                 match self.setup_displays(sbyte_editor) {
@@ -144,34 +151,34 @@ impl FrontEnd {
                 }
             }
 
-
-            if changed_cmdline {
-                self.display_command_line(sbyte_editor)?;
-            }
-
-            match sbyte_editor.get_user_error_msg() {
-                Some(msg) => {
-                    self.display_user_error(msg.clone())?;
-                }
-                None => {
-                    match sbyte_editor.get_user_msg() {
-                        Some(msg) => {
-                            self.display_user_message(msg.clone())?;
-                        }
-                        None => {
-                            if !changed_cmdline && changed_cursor {
-                                self.clear_feedback()?;
-                            }
-                        }
-                    }
-                }
-            }
-
             if changed_cursor {
                 self.display_user_offset(sbyte_editor)?;
-
             }
 
+
+            let mut feedback_or_error = false;
+            match shell.fetch_feedback() {
+                Some(msg) => {
+                    self.display_user_message(msg.clone())?;
+                    feedback_or_error = true;
+                }
+                None => { }
+            }
+
+            match shell.fetch_error() {
+                Some(msg) => {
+                    self.display_user_error(msg.clone())?;
+                    feedback_or_error = true;
+                }
+                None => { }
+            }
+
+
+            if !feedback_or_error && (changed_cursor || self.flag_context_changed) {
+                self.clear_feedback()?;
+            }
+
+            self.display_command_line(shell);
 
 
             match self.rectmanager.render() {
@@ -180,6 +187,8 @@ impl FrontEnd {
                     Err(SbyteError::DrawFailed(error))?;
                 }
             }
+
+            self.flag_context_changed = false;
         }
 
         Ok(())
@@ -768,30 +777,24 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn display_command_line(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
-        match sbyte_editor.get_commandline() {
-            Some(commandline) => {
-                self.clear_feedback()?;
+    pub fn display_command_line(&mut self, shell: &Shell) -> Result<(), WreckedError> {
+        if self.rendered_buffer != shell.buffer_get() {
+            match shell.buffer_get() {
+                Some(buffer) => {
+                    self.clear_feedback()?;
 
+                    let cursor_x = buffer.len() + 1;
+                    let cursor_id = self.rectmanager.new_rect(self.rect_feedback).ok().unwrap();
 
-                let cmd = &commandline.get_register();
-                // +1, because of the ":" at the start
-                let cursor_x = commandline.get_cursor_offset() + 1;
-                let cursor_id = self.rectmanager.new_rect(self.rect_feedback).ok().unwrap();
+                    self.rectmanager.resize(cursor_id, 1, 1)?;
+                    self.rectmanager.set_position(cursor_id, cursor_x as isize, 0)?;
+                    self.rectmanager.set_invert_flag(cursor_id)?;
 
-                self.rectmanager.resize(cursor_id, 1, 1)?;
-                self.rectmanager.set_position(cursor_id, cursor_x as isize, 0)?;
-                self.rectmanager.set_invert_flag(cursor_id)?;
-
-                if cursor_x < cmd.len() {
-                    let chr: String = cmd.chars().skip(cursor_x).take(1).collect();
-                    self.rectmanager.set_string(cursor_id, 0, 0, &chr)?;
+                    self.rectmanager.set_string(self.rect_feedback, 0, 0, &vec![":", &buffer].join(""))?;
                 }
-
-                self.rectmanager.set_string(self.rect_feedback, 0, 0, &vec![":", cmd].join(""))?;
+                None => { }
             }
-            None => {
-            }
+            self.rendered_buffer = shell.buffer_get();
         }
 
         Ok(())

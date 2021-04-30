@@ -10,8 +10,6 @@ use regex::bytes::Regex;
 
 use wrecked::WreckedError;
 
-// CommandLine struct
-pub mod command_line;
 pub mod viewport;
 pub mod cursor;
 pub mod converter;
@@ -21,7 +19,6 @@ pub mod content;
 use converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError, DecConverter};
 use viewport::ViewPort;
 use cursor::Cursor;
-use command_line::CommandLine;
 use content::{Content, ContentError, BitMask};
 
 
@@ -42,10 +39,13 @@ pub enum SbyteError {
     EmptyStack,
     NoCommandGiven,
     ReadFail,
+    // TODO: Move InvalidCommand
     InvalidCommand(String),
     ConversionFailed,
     InvalidDigit(ConverterRef),
-    InvalidRadix(u8)
+    InvalidRadix(u8),
+    BufferEmpty,
+    KillSignal
 }
 
 impl fmt::Display for SbyteError {
@@ -100,10 +100,6 @@ pub struct BackEnd {
     undo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
 
-    // Commandable
-    commandline: CommandLine,
-    line_commands: HashMap<String, String>,
-
     // VisualEditor
     viewport: ViewPort,
 
@@ -131,31 +127,11 @@ impl BackEnd {
 
             viewport: ViewPort::new(1, 1),
 
-            line_commands: HashMap::new(),
-            commandline: CommandLine::new(),
 
             search_history: Vec::new(),
             change_flags: HashMap::new(),
             changed_offsets: HashSet::new()
         };
-
-        output.assign_line_command("q", "QUIT");
-        output.assign_line_command("w", "SAVE");
-        output.assign_line_command("wq", "SAVEQUIT");
-        output.assign_line_command("find", "JUMP_TO_NEXT");
-        output.assign_line_command("fr", "REPLACE_ALL");
-        output.assign_line_command("insert", "INSERT_STRING");
-        output.assign_line_command("overwrite", "OVERWRITE");
-        output.assign_line_command("setcmd", "ASSIGN_INPUT");
-        output.assign_line_command("lw", "SET_WIDTH");
-        output.assign_line_command("reg", "SET_REGISTER");
-
-        output.assign_line_command("and", "MASK_AND");
-        output.assign_line_command("nand", "MASK_NAND");
-        output.assign_line_command("or", "MASK_OR");
-        output.assign_line_command("nor", "MASK_NOR");
-        output.assign_line_command("xor", "MASK_XOR");
-        output.assign_line_command("not", "BITWISE_NOT");
 
         output.set_cursor_length(1);
         output.set_cursor_offset(0);
@@ -374,6 +350,21 @@ impl BackEnd {
         }
     }
 
+    pub fn toggle_converter(&mut self) {
+        let new_converter = match self.get_active_converter_ref() {
+            ConverterRef::BIN => {
+                ConverterRef::HEX
+            }
+            ConverterRef::HEX => {
+                ConverterRef::DEC
+            }
+            ConverterRef::DEC => {
+                ConverterRef::BIN
+            }
+        };
+        self.set_active_converter(new_converter);
+    }
+
     pub fn replace(&mut self, search_for: &str, replace_with: &[u8]) -> Result<Vec<usize>, SbyteError> {
         let mut matches = self.find_all(&search_for)?;
         // replace in reverse order
@@ -404,7 +395,7 @@ impl BackEnd {
         }
     }
 
-    pub fn get_clipboard(&mut self) -> Vec<u8> {
+    pub fn get_clipboard(&self) -> Vec<u8> {
         self.clipboard.clone()
     }
 
@@ -814,11 +805,15 @@ impl BackEnd {
         self.set_cursor_length(new_length);
     }
 
-    pub fn set_cursor_offset(&mut self, new_offset: usize) {
-        let adj_offset = min(self.active_content.len(), new_offset);
-        self.cursor.set_offset(adj_offset);
-        self.subcursor.set_offset(0);
-        self.adjust_viewport_offset();
+    pub fn set_cursor_offset(&mut self, new_offset: usize) -> Result<(), SbyteError> {
+        if new_offset <= self.active_content.len() {
+            self.cursor.set_offset(new_offset);
+            self.subcursor.set_offset(0);
+            self.adjust_viewport_offset();
+            Ok(())
+        } else {
+            Err(SbyteError::OutOfBounds(new_offset, self.active_content.len()))
+        }
     }
 
     pub fn set_cursor_length(&mut self, new_length: isize) {
@@ -950,6 +945,11 @@ impl BackEnd {
         self.viewport.get_offset()
     }
 
+    pub fn set_viewport_width(&mut self, new_width: usize) {
+        let height = self.viewport.get_height();
+        self.set_viewport_size(new_width, height);
+    }
+
     pub fn set_viewport_offset(&mut self, new_offset: usize) {
         self.viewport.set_offset(new_offset);
         self.flag_change("VIEWPORT_OFFSET");
@@ -967,107 +967,12 @@ impl BackEnd {
         self.changed_offsets.drain().collect()
     }
 
-    pub fn fetch_commandline_register(&mut self) -> Option<String> {
-        let output = match self.get_commandline_mut() {
-            Some(commandline) => {
-                commandline.fetch_register()
-            }
-            None => {
-                None
-            }
-        };
-        self.flag_change("CMDLINE");
-
-        output
-    }
-
-    pub fn clear_commandline_register(&mut self) {
-        match self.get_commandline_mut() {
-            Some(commandline) => {
-                commandline.clear_register();
-            }
-            None => { }
-        }
-        self.flag_change("CMDLINE");
-    }
-
-    pub fn set_commandline_register(&mut self, new_register_string: &str) {
-        match self.get_commandline_mut() {
-            Some(commandline) => {
-                commandline.set_register(new_register_string);
-            }
-            None => { }
-        }
-        self.flag_change("CMDLINE");
-    }
-
-    pub fn append_to_commandline(&mut self, string: &str) {
-        match self.get_commandline_mut() {
-            Some(commandline) => {
-                commandline.insert_to_register(string);
-                for i in 0 .. string.len() {
-                    commandline.move_cursor_right();
-                }
-            }
-            None => { }
-        }
-        self.flag_change("CMDLINE");
-    }
-
-    pub fn pop_from_commandline(&mut self) -> Option<char> {
-        let output = match self.get_commandline_mut() {
-            Some(commandline) => {
-                commandline.backspace()
-            }
-            None => {
-                None
-            }
-        };
-        self.flag_change("CMDLINE");
-
-        output
-    }
-
-    pub fn get_commandline(&self) -> Option<&CommandLine> {
-        Some(&self.commandline)
-    }
-    pub fn get_commandline_mut(&mut self) -> Option<&mut CommandLine> {
-        Some(&mut self.commandline)
-    }
-
     pub fn get_active_file_path(&self) -> Option<&String> {
         self.active_file_path.as_ref()
     }
 
     pub fn get_search_history(&self) -> Vec<String> {
         self.search_history.clone()
-    }
-
-    pub fn try_command(&mut self, query: &str) -> Result<(String, Vec<String>), SbyteError> {
-        let mut words = parse_words(query);
-        if words.len() > 0 {
-            let cmd = words.remove(0);
-            let mut arguments: Vec<String> = vec![];
-
-            for word in words.iter() {
-                arguments.push(word.clone());
-            }
-
-            match self.line_commands.get(&cmd) {
-                Some(_funcref) => {
-                    Ok((_funcref.to_string(), arguments.clone()))
-                }
-                None => {
-                    Err(SbyteError::InvalidCommand(query.to_string()))
-                }
-            }
-        } else {
-            Err(SbyteError::NoCommandGiven)
-        }
-    }
-
-    fn assign_line_command(&mut self, command_string: &str, function: &str) {
-        self.line_commands.insert(command_string.to_string(), function.to_string());
     }
 
     pub fn unset_user_msg(&mut self) {
