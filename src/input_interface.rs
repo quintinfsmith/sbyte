@@ -33,15 +33,15 @@ pub struct InputInterface {
 }
 
 impl InputInterface {
-    pub fn new(editor: Editor, frontend: FrontEnd) -> InputInterface {
+    pub fn new(shell: Shell, frontend: FrontEnd) -> InputInterface {
         let mut interface = InputInterface {
             locked_viewport_width: None,
             running: false,
             inputter: Arc::new(Mutex::new(InputInterface::new_inputter())),
             register: None,
 
-            shell: Shell::new(editor),
             key_map: InputInterface::build_key_map(),
+            shell,
             frontend
         };
 

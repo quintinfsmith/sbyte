@@ -16,9 +16,9 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(editor: Editor) -> Shell {
+    pub fn new() -> Shell {
         let mut output = Shell {
-            editor,
+            editor: Editor::new(),
             hook_map: HashMap::new(),
             alias_map: HashMap::new(),
             query_buffer: None,
