@@ -448,6 +448,7 @@ fn hook_replace_pattern(shell: &mut Shell, args: &[&str]) -> R {
                     }
                     Err(e) => {
                         shell.log_error(&format!("{:?}", e));
+                        Err(e)?;
                     }
                 }
             }

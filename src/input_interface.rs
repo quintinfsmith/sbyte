@@ -221,6 +221,9 @@ impl InputInterface {
         let delay = time::Duration::from_nanos(nano_seconds);
 
         self.running = true;
+
+        let mut result = Ok(());
+
         while self.running {
             match self.frontend.tick(&mut self.shell) {
                 Ok(_) => {
@@ -258,7 +261,9 @@ impl InputInterface {
                             self.running = false;
                         }
                         Err(e) => {
-                            Err(e)?;
+                            result = Err(e);
+                            self.running = false;
+                            break;
                         }
                     }
                 }
@@ -278,9 +283,14 @@ impl InputInterface {
             Err(_e) => {}
         }
 
-        self.frontend.kill()?;
+        match self.frontend.kill() {
+            Ok(()) => { }
+            Err(e) => {
+                result = Err(e);
+            }
+        }
 
-        Ok(())
+        result
     }
 
     pub fn build_key_map() -> HashMap<&'static str, Vec<u8>> {

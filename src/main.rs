@@ -40,9 +40,9 @@ fn result_catcher() -> Result<(), Box<dyn Error>> {
 
 fn main() {
     match result_catcher() {
-            Ok(_) => {}
-            Err(error) => {
-                println!("Fatal error {}", error);
-            }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("Fatal error {}", error);
+        }
     }
 }
