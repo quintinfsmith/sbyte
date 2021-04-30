@@ -84,7 +84,7 @@ impl From<ConverterError> for SbyteError {
     }
 }
 
-pub struct BackEnd {
+pub struct Editor {
     user_msg: Option<String>,
     user_error_msg: Option<String>,
 
@@ -108,9 +108,9 @@ pub struct BackEnd {
     changed_offsets: HashSet<(usize, bool)>
 }
 
-impl BackEnd {
-    pub fn new() -> BackEnd {
-        let mut output = BackEnd {
+impl Editor {
+    pub fn new() -> Editor {
+        let mut output = Editor {
             flag_loading: false,
 
             user_msg: None,

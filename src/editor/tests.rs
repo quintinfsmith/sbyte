@@ -1,17 +1,17 @@
 #[cfg (test)]
 mod tests {
-    use crate::sbyte_editor::{BackEnd, ConverterRef, HexConverter, BinaryConverter, DecConverter, SbyteError, parse_words, string_to_integer, string_to_bytes};
+    use crate::editor::{Editor, ConverterRef, HexConverter, BinaryConverter, DecConverter, SbyteError, parse_words, string_to_integer, string_to_bytes};
     use std::{time, thread};
 
     #[test]
     fn test_initializes_empty() {
-        let editor = BackEnd::new();
+        let editor = Editor::new();
         assert_eq!(editor.active_content.as_slice(), []);
     }
 
     #[test]
     fn test_load_file() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.load_file("src/testfiles/00").expect("Couldn't open file");
         assert_eq!(editor.active_content.as_slice(), "TESTFILECONTENTS".as_bytes());
         assert_eq!(editor.get_chunk(0, 4).as_slice(), "TEST".as_bytes());
@@ -21,7 +21,7 @@ mod tests {
 
     #[test]
     fn test_insert_bytes() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
 
         editor.insert_bytes(0, &[65]);
         assert_eq!(editor.active_content.as_slice(), [65]);
@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn test_overwrite_bytes() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
 
         editor.overwrite_bytes(0, &[65]);
         assert_eq!(editor.active_content.as_slice(), [65]);
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_remove_bytes() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.insert_bytes(0, &[65]);
 
         assert_eq!(editor.remove_bytes(0, 1), &[65]);
@@ -66,7 +66,7 @@ mod tests {
     }
     #[test]
     fn test_remove_bytes_at_cursor() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.insert_bytes(0, &[65]);
         editor.set_cursor_offset(0);
         assert_eq!(editor.remove_bytes_at_cursor(), &[65]);
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn test_yanking() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
 
         editor.insert_bytes(0, &[65, 66, 67, 68]);
 
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_find() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.insert_bytes(0, &[65, 66, 0, 0, 65, 65, 66, 60, 0x30]);
         assert_eq!(
             editor.find_all("AB").ok(),
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_increment_byte() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         assert!(editor.increment_byte(0, 1).is_err(), "Didn't throw error when incrementing outside of valid range.");
 
         editor.insert_bytes(0, &[0]);
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_decrement_byte() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         assert!(editor.decrement_byte(0, 1).is_err(), "Didn't throw error when decrementing outside of valid range.");
 
         editor.insert_bytes(0, &[1]);
@@ -159,20 +159,20 @@ mod tests {
 
     #[test]
     fn test_set_user_msg() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_user_msg("Test MSG");
         assert_eq!(editor.get_user_msg(), Some(&"Test MSG".to_string()));
     }
     #[test]
     fn test_set_user_error_msg() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_user_error_msg("Test MSG");
         assert_eq!(editor.get_user_error_msg(), Some(&"Test MSG".to_string()));
     }
 
     #[test]
     fn test_undo() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         assert!(editor.undo().is_err(), "Didn't raise error when trying to undo from an empty stack");
 
         editor.insert_bytes(0, &[0]);
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_redo() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
 
         editor.insert_bytes(0, &[0]);
         assert!(editor.redo().is_err(), "Didn't raise error when trying to redo from an (presumably) empty stack");
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_set_active_converter() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_active_converter(ConverterRef::HEX);
         assert_eq!(editor.get_active_converter_ref(), ConverterRef::HEX);
         editor.set_active_converter(ConverterRef::BIN);
@@ -234,21 +234,21 @@ mod tests {
 
     #[test]
     fn test_viewport_size() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_viewport_size(20,20);
         assert_eq!(editor.get_viewport_size(), (20, 20));
     }
 
     #[test]
     fn test_viewport_offset() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_viewport_offset(10);
         assert_eq!(editor.get_viewport_offset(), 10);
     }
 
     #[test]
     fn test_active_file_path() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         assert_eq!(editor.get_active_file_path(), None);
 
         editor.active_file_path = Some("testpath".to_string());
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_cursor_movement() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_viewport_size(3,10);
         editor.insert_bytes(0, &[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
         editor.set_cursor_offset(1);
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_get_display_ratio() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.set_active_converter(ConverterRef::HEX);
         assert_eq!(editor.get_display_ratio(), 3);
 
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_user_feedback() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         let test_msg = "Test MSG";
         let test_error = "Test Error MSG";
         assert!(editor.get_user_msg().is_none());
@@ -358,7 +358,7 @@ mod tests {
     // TODO: Move these tests
     //#[test]
     //fn test_try_command() {
-    //    let mut editor = BackEnd::new();
+    //    let mut editor = Editor::new();
     //    let mut result = editor.try_command("badcmd");
     //    match result {
     //        Ok(_) => {
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_replace() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         let slice = [0,4,2,0];
         editor.insert_bytes(0, &slice);
 
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_masking() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         // Check individual functions once, more in depth tests are in content/tests.rs
         editor.insert_bytes(0, &[0x56, 0x56, 0x56, 0x56, 0x56]);
         editor.apply_or_mask(&[0x65]); //0x77
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_bitwise_not() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.insert_bytes(0, &[0xAA, 0x55, 0xFF, 0x00, 0xCC, 0x33]);
         editor.set_cursor_length(6);
         editor.bitwise_not();
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_replace_digit() {
-        let mut editor = BackEnd::new();
+        let mut editor = Editor::new();
         editor.insert_bytes(0, &[0]);
 
         editor.set_active_converter(ConverterRef::HEX);

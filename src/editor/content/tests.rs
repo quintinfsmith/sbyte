@@ -1,6 +1,6 @@
 #[cfg (test)]
 mod tests {
-    use crate::sbyte_editor::content::{Content, BitMask, ContentError};
+    use crate::editor::content::{Content, BitMask, ContentError};
 
     #[test]
     fn test_initialize() {

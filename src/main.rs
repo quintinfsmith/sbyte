@@ -2,29 +2,29 @@ use std::env;
 use std::path::Path;
 use std::error::Error;
 
-pub mod sbyte_editor;
+pub mod editor;
 pub mod input_interface;
 pub mod console_displayer;
 pub mod shell;
 
-use sbyte_editor::*;
+use editor::*;
 use input_interface::InputInterface;
 use console_displayer::FrontEnd;
 
 fn result_catcher() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
 
-    let mut backend = BackEnd::new();
+    let mut editor = Editor::new();
     match args.get(1) {
         Some(path) => {
-            backend.load_file(path)?;
+            editor.load_file(path)?;
         }
         None => { }
     }
 
     let frontend = FrontEnd::new();
 
-    let mut input_interface = InputInterface::new(backend, frontend);
+    let mut input_interface = InputInterface::new(editor, frontend);
 
     // commands like setcmd run in custom_rc will overwrite whatever was set in the default
     let custom_rc_path = &format!("{}/.sbyterc", env::var("HOME").ok().unwrap());

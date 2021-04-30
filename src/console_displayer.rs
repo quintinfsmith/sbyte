@@ -4,8 +4,8 @@ use std::error::Error;
 use wrecked::{RectManager, Color, WreckedError};
 
 use super::shell::Shell;
-use super::sbyte_editor::*;
-use super::sbyte_editor::converter::*;
+use super::editor::*;
+use super::editor::converter::*;
 
 use usize as RectId;
 
@@ -89,14 +89,14 @@ impl FrontEnd {
     }
 
     pub fn tick(&mut self, shell: &mut Shell) -> Result<(), Box::<dyn Error>> {
-        let sbyte_editor = shell.get_backend_mut();
-        if !sbyte_editor.is_loading() {
-            let changed_viewport_size = sbyte_editor.has_changed("VIEWPORT_SIZE");
-            let changed_viewport_offset = sbyte_editor.has_changed("VIEWPORT_OFFSET");
-            let changed_cursor = sbyte_editor.has_changed("CURSOR");
+        let editor = shell.get_editor_mut();
+        if !editor.is_loading() {
+            let changed_viewport_size = editor.has_changed("VIEWPORT_SIZE");
+            let changed_viewport_offset = editor.has_changed("VIEWPORT_OFFSET");
+            let changed_cursor = editor.has_changed("CURSOR");
 
             if changed_viewport_size {
-                match self.setup_displays(sbyte_editor) {
+                match self.setup_displays(editor) {
                     Ok(_) => {}
                     Err(error) => {
                         Err(SbyteError::SetupFailed(error))?
@@ -105,7 +105,7 @@ impl FrontEnd {
             }
 
             if changed_viewport_size || changed_viewport_offset {
-                match self.remap_active_rows(sbyte_editor) {
+                match self.remap_active_rows(editor) {
                     Ok(_) => {}
                     Err(error) => {
                         Err(SbyteError::RemapFailed(error))?
@@ -113,10 +113,10 @@ impl FrontEnd {
                 }
             }
 
-            let changed_offsets = sbyte_editor.fetch_changed_offsets();
+            let changed_offsets = editor.fetch_changed_offsets();
             if !changed_offsets.is_empty() {
-                let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
-                let viewport_bottom = (sbyte_editor.get_viewport_offset() / viewport_width) + viewport_height;
+                let (viewport_width, viewport_height) = editor.get_viewport_size();
+                let viewport_bottom = (editor.get_viewport_offset() / viewport_width) + viewport_height;
                 for (i, rippled) in changed_offsets.iter() {
                     let start_row = i / viewport_width;
                     if *rippled && viewport_bottom >= start_row {
@@ -132,7 +132,7 @@ impl FrontEnd {
             if !self.rows_to_refresh.is_empty() {
                 let tmp_rows_to_refresh: Vec<usize> = self.rows_to_refresh.drain().collect();
                 for y in tmp_rows_to_refresh.iter() {
-                    match self.set_row_characters(sbyte_editor, *y) {
+                    match self.set_row_characters(editor, *y) {
                         Ok(_) => {}
                         Err(error) => {
                             Err(SbyteError::RowSetFailed(error))?
@@ -143,7 +143,7 @@ impl FrontEnd {
 
 
             if changed_cursor || changed_viewport_size || changed_viewport_offset {
-                match self.apply_cursor(sbyte_editor) {
+                match self.apply_cursor(editor) {
                     Ok(_) => {}
                     Err(error) => {
                         Err(SbyteError::ApplyCursorFailed(error))?
@@ -152,7 +152,7 @@ impl FrontEnd {
             }
 
             if changed_cursor {
-                self.display_user_offset(sbyte_editor)?;
+                self.display_user_offset(editor)?;
             }
 
 
@@ -198,12 +198,12 @@ impl FrontEnd {
         self.rectmanager.auto_resize()
     }
 
-    fn remap_active_rows(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+    fn remap_active_rows(&mut self, editor: &Editor) -> Result<(), WreckedError> {
 
-        let (width, height) = sbyte_editor.get_viewport_size();
+        let (width, height) = editor.get_viewport_size();
 
         let initial_y = self.last_known_viewport_offset as isize;
-        let new_y = (sbyte_editor.get_viewport_offset() / width) as isize;
+        let new_y = (editor.get_viewport_offset() / width) as isize;
         self.last_known_viewport_offset = new_y as usize;
 
         let diff: usize;
@@ -361,12 +361,12 @@ impl FrontEnd {
         Ok(())
     }
 
-    fn setup_displays(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+    fn setup_displays(&mut self, editor: &Editor) -> Result<(), WreckedError> {
         // Assumes that the viewport size AND the rectmanager size are correctly set at this point
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
 
-        let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
+        let (viewport_width, viewport_height) = editor.get_viewport_size();
 
         self.rectmanager.resize(self.rect_meta, full_width, 1)?;
         self.rectmanager.resize(
@@ -386,12 +386,12 @@ impl FrontEnd {
         self.rectmanager.clear_children(bits_display)?;
         self.rectmanager.clear_children(human_display)?;
 
-        self.arrange_displays(sbyte_editor)?;
+        self.arrange_displays(editor)?;
 
         self.cell_dict.drain();
         self.row_dict.drain();
 
-        let display_ratio = sbyte_editor.get_display_ratio() as usize;
+        let display_ratio = editor.get_display_ratio() as usize;
         let width_bits;
         if display_ratio != 1 {
             width_bits = max(1, display_ratio - 1);
@@ -472,7 +472,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    fn arrange_displays(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+    fn arrange_displays(&mut self, editor: &Editor) -> Result<(), WreckedError> {
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
         let meta_height = 1;
@@ -499,8 +499,8 @@ impl FrontEnd {
             0
         )?;
 
-        let display_ratio = sbyte_editor.get_display_ratio();
-        let (vwidth, _vheight) = sbyte_editor.get_viewport_size();
+        let display_ratio = editor.get_display_ratio();
+        let (vwidth, _vheight) = editor.get_viewport_size();
 
         let (bits_id, human_id) = self.rects_display;
         let human_display_width = vwidth;
@@ -526,14 +526,14 @@ impl FrontEnd {
         Ok(())
     }
 
-    fn set_row_characters(&mut self, sbyte_editor: &BackEnd, absolute_y: usize) -> Result<(), WreckedError> {
+    fn set_row_characters(&mut self, editor: &Editor, absolute_y: usize) -> Result<(), WreckedError> {
         let human_converter = HumanConverter {};
-        let active_converter = sbyte_editor.get_active_converter();
-        let (width, _height) = sbyte_editor.get_viewport_size();
+        let active_converter = editor.get_active_converter();
+        let (width, _height) = editor.get_viewport_size();
         let offset = width * absolute_y;
 
-        let chunk = sbyte_editor.get_chunk(offset, width);
-        let relative_y = absolute_y - (sbyte_editor.get_viewport_offset() / width);
+        let chunk = editor.get_chunk(offset, width);
+        let relative_y = absolute_y - (editor.get_viewport_offset() / width);
 
         match self.cell_dict.get_mut(&relative_y) {
             Some(cellhash) => {
@@ -594,10 +594,10 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn display_user_offset(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
-        let mut cursor_string = format!("{}", sbyte_editor.get_cursor_offset());
-        let active_content = sbyte_editor.get_active_content();
-        let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
+    pub fn display_user_offset(&mut self, editor: &Editor) -> Result<(), WreckedError> {
+        let mut cursor_string = format!("{}", editor.get_cursor_offset());
+        let active_content = editor.get_active_content();
+        let (viewport_width, viewport_height) = editor.get_viewport_size();
 
         if active_content.len() > 0 {
             let digit_count = (active_content.len() as f64).log10().ceil() as usize;
@@ -616,7 +616,7 @@ impl FrontEnd {
             active_content.len() - 1
         };
 
-        let cursor_len = sbyte_editor.get_cursor_length();
+        let cursor_len = editor.get_cursor_length();
         let offset_display;
         if cursor_len == 1 {
             offset_display = format!("Offset: {} / {}", cursor_string, denominator)
@@ -636,7 +636,7 @@ impl FrontEnd {
             self.rectmanager.set_fg_color(handle, wrecked::Color::BLACK);
             self.rectmanager.resize(handle, 1, handle_height);
 
-            let handle_y = (sbyte_editor.get_viewport_offset() * (scrollbar_height - handle_height)) / (denominator - (viewport_width * viewport_height));
+            let handle_y = (editor.get_viewport_offset() * (scrollbar_height - handle_height)) / (denominator - (viewport_width * viewport_height));
             self.rectmanager.set_position(handle, 0, handle_y as isize);
         } else {
             self.rectmanager.disable(self.rect_scrollbar);
@@ -681,7 +681,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn _unapply_cursor(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
+    pub fn _unapply_cursor(&mut self, editor: &Editor) -> Result<(), WreckedError> {
         // (They may no longer exist, but that's ok)
         for (bits, human) in self.active_cursor_cells.drain() {
             self.rectmanager.clear_children(bits);
@@ -692,14 +692,14 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn apply_cursor(&mut self, sbyte_editor: &BackEnd) -> Result<(), WreckedError> {
-        let (viewport_width, viewport_height) = sbyte_editor.get_viewport_size();
-        let viewport_offset = sbyte_editor.get_viewport_offset();
-        let cursor_offset = sbyte_editor.get_cursor_offset();
-        let cursor_length = sbyte_editor.get_cursor_length();
+    pub fn apply_cursor(&mut self, editor: &Editor) -> Result<(), WreckedError> {
+        let (viewport_width, viewport_height) = editor.get_viewport_size();
+        let viewport_offset = editor.get_viewport_offset();
+        let cursor_offset = editor.get_cursor_offset();
+        let cursor_length = editor.get_cursor_length();
 
         // First clear previously applied
-        self._unapply_cursor(sbyte_editor);
+        self._unapply_cursor(editor);
 
         let start = if cursor_offset < viewport_offset {
             viewport_offset
@@ -738,8 +738,8 @@ impl FrontEnd {
 
         match self.input_context.as_str() {
             "OVERWRITE_ASCII" | "OVERWRITE_HEX" | "OVERWRITE_BIN" | "OVERWRITE_DEC" => {
-                let subcursor_length = sbyte_editor.get_subcursor_length();
-                let subcursor_offset = sbyte_editor.get_subcursor_offset();
+                let subcursor_length = editor.get_subcursor_length();
+                let subcursor_offset = editor.get_subcursor_offset();
                 let suboffset_cell = cursor_offset + (subcursor_offset / subcursor_length);
 
                 y = (suboffset_cell - viewport_offset) / viewport_width;

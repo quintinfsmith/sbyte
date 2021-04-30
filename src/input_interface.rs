@@ -9,8 +9,8 @@ pub mod inputter;
 
 //TODO Move string_to_integer
 use super::shell::{Shell, parse_words};
-use super::sbyte_editor::{BackEnd, SbyteError, string_to_integer, string_to_bytes};
-use super::sbyte_editor::converter::*;
+use super::editor::{Editor, SbyteError, string_to_integer, string_to_bytes};
+use super::editor::converter::*;
 use super::console_displayer::FrontEnd;
 use inputter::Inputter;
 
@@ -33,20 +33,20 @@ pub struct InputInterface {
 }
 
 impl InputInterface {
-    pub fn new(backend: BackEnd, frontend: FrontEnd) -> InputInterface {
+    pub fn new(editor: Editor, frontend: FrontEnd) -> InputInterface {
         let mut interface = InputInterface {
             locked_viewport_width: None,
             running: false,
             inputter: Arc::new(Mutex::new(InputInterface::new_inputter())),
             register: None,
 
-            shell: Shell::new(backend),
+            shell: Shell::new(editor),
             key_map: InputInterface::build_key_map(),
             frontend
         };
 
         interface.setup_default_controls().ok().unwrap();
-        interface.resize_backend_viewport();
+        interface.resize_editor_viewport();
 
         interface
     }
@@ -227,12 +227,12 @@ impl InputInterface {
         while self.running {
             match self.frontend.tick(&mut self.shell) {
                 Ok(_) => {
-                    //self.backend.unset_user_error_msg();
-                    //self.backend.unset_user_msg();
+                    //self.editor.unset_user_error_msg();
+                    //self.editor.unset_user_msg();
                 }
                 Err(boxed_error) => {
                     // To help debug ...
-                    //self.backend.set_user_error_msg(&format!("{:?}", boxed_error));
+                    //self.editor.set_user_error_msg(&format!("{:?}", boxed_error));
                 }
             }
 
@@ -453,7 +453,7 @@ impl InputInterface {
 
             "MODE_SET_INSERT_ASCII" => {
                 self.set_context("INSERT_ASCII");
-                //self.backend.set_user_msg("--INSERT--");
+                //self.editor.set_user_msg("--INSERT--");
             }
 
             "MODE_SET_INSERT_SPECIAL" => {
@@ -467,7 +467,7 @@ impl InputInterface {
             }
 
             "MODE_SET_OVERWRITE" => {
-                match self.shell.get_backend().get_active_converter_ref() {
+                match self.shell.get_editor().get_active_converter_ref() {
                     ConverterRef::BIN => {
                         self.set_context("OVERWRITE_BIN");
                     }
@@ -478,12 +478,12 @@ impl InputInterface {
                         self.set_context("OVERWRITE_DEC");
                     }
                 };
-                //self.backend.set_user_msg("--OVERWRITE--");
+                //self.editor.set_user_msg("--OVERWRITE--");
             }
 
             "MODE_SET_OVERWRITE_ASCII" => {
                 self.set_context("OVERWRITE_ASCII");
-                //self.backend.set_user_msg("--OVERWRITE--");
+                //self.editor.set_user_msg("--OVERWRITE--");
             }
 
             "MODE_SET_APPEND" => {
@@ -603,15 +603,15 @@ impl InputInterface {
 
 
     //        "MODE_SET_MASK_XOR" => {
-    //            //self.backend.set_commandline_register("xor ");
+    //            //self.editor.set_commandline_register("xor ");
     //            self.set_context("CMD");
     //        }
     //        "MODE_SET_MASK_OR" => {
-    //            //self.backend.set_commandline_register("or ");
+    //            //self.editor.set_commandline_register("or ");
     //            self.set_context("CMD");
     //        }
     //        "MODE_SET_MASK_AND" => {
-    //            //self.backend.set_commandline_register("and ");
+    //            //self.editor.set_commandline_register("and ");
     //            self.set_context("CMD");
     //        }
 
@@ -627,7 +627,7 @@ impl InputInterface {
 
 
     //        "RELOAD" => {
-    //            let path = match //self.backend.get_active_file_path() {
+    //            let path = match //self.editor.get_active_file_path() {
     //                Some(_path) => {
     //                    Ok(_path.clone())
     //                }
@@ -636,8 +636,8 @@ impl InputInterface {
     //                }
     //            }?;
 
-    //            //self.backend.load_file(&path);
-    //            self.resize_backend_viewport();
+    //            //self.editor.load_file(&path);
+    //            self.resize_editor_viewport();
     //        }
 
     //        _ => {
@@ -695,20 +695,20 @@ impl InputInterface {
         Ok(())
     }
 
-    fn resize_backend_viewport(&mut self) {
+    fn resize_editor_viewport(&mut self) {
         //TODO, Clean this mess up
-        let cursor_offset = self.shell.get_backend().get_cursor_real_offset();
-        let cursor_length = self.shell.get_backend().get_cursor_real_length();
+        let cursor_offset = self.shell.get_editor().get_cursor_real_offset();
+        let cursor_length = self.shell.get_editor().get_cursor_real_length();
 
         {
-            let backend = self.shell.get_backend_mut();
-            backend.set_viewport_offset(0);
-            backend.set_cursor_length(1);
-            backend.set_cursor_offset(0);
+            let editor = self.shell.get_editor_mut();
+            editor.set_viewport_offset(0);
+            editor.set_cursor_length(1);
+            editor.set_cursor_offset(0);
         }
 
         let screensize = self.frontend.size();
-        let display_ratio = self.shell.get_backend().get_display_ratio() as f64;
+        let display_ratio = self.shell.get_editor().get_display_ratio() as f64;
         let r: f64 = 1f64 / display_ratio;
         let a: f64 = 1f64 - (1f64 / (r + 1f64));
         let mut base_width = ((screensize.0 as f64 - 1f64) * a) as usize;
@@ -722,15 +722,15 @@ impl InputInterface {
         let height = self.frontend.get_viewport_height();
 
         {
-            let backend = self.shell.get_backend_mut();
-            backend.set_viewport_size(base_width, height);
-            backend.set_cursor_offset(cursor_offset);
-            backend.set_cursor_length(cursor_length);
+            let editor = self.shell.get_editor_mut();
+            editor.set_viewport_size(base_width, height);
+            editor.set_cursor_offset(cursor_offset);
+            editor.set_cursor_length(cursor_length);
         }
     }
 
     fn __resize_hook(&mut self) {
-        self.resize_backend_viewport();
+        self.resize_editor_viewport();
 
     }
 
