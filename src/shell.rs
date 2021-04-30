@@ -74,6 +74,7 @@ impl Shell {
         output.map_command("APPEND_TO_COMMANDLINE", hook_push_to_buffer);
         output.map_command("CMDLINE_BACKSPACE", hook_pop_from_buffer);
         output.map_command("RUN_CUSTOM_COMMAND", hook_query);
+        output.map_command("REPLACE_ALL", hook_replace_pattern);
 
         output.map_command("ALIAS", hook_set_alias);
 
@@ -94,6 +95,7 @@ impl Shell {
         output.map_alias("nor", "MASK_NOR");
         output.map_alias("xor", "MASK_XOR");
         output.map_alias("not", "BITWISE_NOT");
+        output.map_alias("rep", "REPLACE_ALL");
 
        // output.map_command("", );
 
@@ -434,8 +436,25 @@ fn hook_subcursor_right(shell: &mut Shell, args: &[&str]) -> R {
 
 fn hook_replace_pattern(shell: &mut Shell, args: &[&str]) -> R {
     if args.len() >= 2 {
-        let replacer = args[1].as_bytes();
-        shell.get_backend_mut().replace(args[0], &replacer)?;
+        match string_to_bytes(args[1]) {
+            Ok(replacer) => {
+                match shell.get_backend_mut().replace(args[0], &replacer) {
+                    Ok(indeces) => {
+                        if indeces.len() == 0 {
+                            shell.log_error(&format!("Pattern \"{}\" not found", args[0]));
+                        } else {
+                            shell.log_feedback(&format!("Replaced {} instances", indeces.len()));
+                        }
+                    }
+                    Err(e) => {
+                        shell.log_error(&format!("{:?}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                shell.log_error(&format!("{:?}", e));
+            }
+        }
     }
 
     Ok(())
