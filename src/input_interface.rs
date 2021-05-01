@@ -438,7 +438,6 @@ impl InputInterface {
 
             "MODE_SET_INSERT_ASCII" => {
                 self.set_context("INSERT_ASCII");
-                //self.editor.set_user_msg("--INSERT--");
             }
 
             "MODE_SET_INSERT_SPECIAL" => {
@@ -497,6 +496,9 @@ impl InputInterface {
                         if something_else == "RUN_CUSTOM_COMMAND" {
                             self.set_context("DEFAULT");
                         }
+                        Ok(())
+                    }
+                    Err(SbyteError::InvalidCommand(failed_cmd)) => {
                         Ok(())
                     }
                     Err(SbyteError::BufferEmpty) => {
@@ -594,7 +596,7 @@ impl InputInterface {
                 }
 
                 let working_cmds: Vec<&str> = std::str::from_utf8(buffer.as_slice()).unwrap().split("\n").collect();
-                // Not using query here, we don't want these stored in the shell's history
+
                 for query in working_cmds.iter() {
                     let mut words = parse_words(query);
 
@@ -611,14 +613,6 @@ impl InputInterface {
             }
             Err(_e) => ()
         }
-
-        Ok(())
-    }
-
-    fn query(&mut self, query: &str) -> Result<(), SbyteError> {
-        self.shell.buffer_clear();
-        self.shell.buffer_push(query);
-        self.shell.query();
 
         Ok(())
     }
