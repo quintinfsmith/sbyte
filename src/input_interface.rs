@@ -24,10 +24,6 @@ pub struct InputInterface {
     frontend: FrontEnd,
     inputter: Arc<Mutex<Inputter>>,
 
-    locked_viewport_width: Option<usize>,
-
-    register: Option<usize>,
-
     running: bool,
     key_map: HashMap<&'static str, Vec<u8>>
 }
@@ -35,10 +31,8 @@ pub struct InputInterface {
 impl InputInterface {
     pub fn new(shell: Shell, frontend: FrontEnd) -> InputInterface {
         let mut interface = InputInterface {
-            locked_viewport_width: None,
             running: false,
             inputter: Arc::new(Mutex::new(InputInterface::new_inputter())),
-            register: None,
 
             key_map: InputInterface::build_key_map(),
             shell,
@@ -225,16 +219,7 @@ impl InputInterface {
         let mut result = Ok(());
 
         while self.running {
-            match self.frontend.tick(&mut self.shell) {
-                Ok(_) => {
-                    //self.editor.unset_user_error_msg();
-                    //self.editor.unset_user_msg();
-                }
-                Err(boxed_error) => {
-                    // To help debug ...
-                    //self.editor.set_user_error_msg(&format!("{:?}", boxed_error));
-                }
-            }
+            self.frontend.tick(&mut self.shell);
 
             let mut funcpair = None;
             match self.inputter.try_lock() {
@@ -504,24 +489,6 @@ impl InputInterface {
                 self.shell.buffer_push("find ");
             }
 
-            "lw" => {
-                match arguments.get(0) {
-                    Some(argument) => {
-                        match string_to_integer(argument) {
-                            Ok(new_width) => {
-                                self.ci_lock_viewport_width(new_width);
-                            }
-                            Err(_e) => {
-                                //TODO
-                            }
-                        }
-                    }
-                    None => {
-                        self.ci_unlock_viewport_width();
-                    }
-                }
-            }
-
 /////////////////////////////////////////////////////////////
 
             something_else => {
@@ -548,82 +515,43 @@ impl InputInterface {
     }
 
     fn hook_assign_mode_input(&mut self, arguments: &[&str]) {
-        let mode_key: &str = match arguments.get(0) {
-            Some(arg) => {
-                arg
-            }
-            None => {
-                ""
-            }
-        };
-
-        let new_funcref: &str = match arguments.get(1) {
-            Some(_new_funcref) => {
-                _new_funcref
-            }
-            None => {
-                ""
-            }
-        };
-
-        let new_input_string: Vec<u8> = match arguments.get(2) {
-            Some(_new_inputs) => {
-                let mut output = Vec::new();
-                for word in _new_inputs.split(",") {
-                    match self.key_map.get(word) {
-                        Some(seq) => {
-                            for byte in seq.iter() {
-                                output.push(*byte);
-                            }
-                        }
-                        None => () // TODO: ERROR
-                    }
-                }
-                output
-            }
-            None => {
-                Vec::new()
-            }
-        };
-
         if arguments.len() >= 3 {
-            loop {
-                match self.inputter.try_lock() {
-                    Ok(ref mut mutex) => {
-                        mutex.assign_mode_command(mode_key, &new_input_string, &new_funcref, &arguments[3..]);
+            let mode_key: &str = arguments.get(0).unwrap();
+            let new_funcref: &str = arguments.get(1).unwrap();
+
+            let mut new_input_sequence: Vec<u8> = Vec::new();
+            let mut sequence_is_valid = true;
+            for word in arguments.get(2).unwrap().split(",") {
+                match self.key_map.get(word) {
+                    Some(seq) => {
+                        for byte in seq.iter() {
+                            new_input_sequence.push(*byte);
+                        }
+                    }
+                    None => {
+                        sequence_is_valid = false;
                         break;
                     }
-                    Err(_e) => ()
                 }
             }
+
+            if sequence_is_valid {
+                loop {
+                    match self.inputter.try_lock() {
+                        Ok(ref mut mutex) => {
+                            mutex.assign_mode_command(mode_key, &new_input_sequence, &new_funcref, &arguments[3..]);
+                            break;
+                        }
+                        Err(_e) => ()
+                    }
+                }
+            } else {
+                self.shell.log_error(&format!("Invalid input sequence: {}", arguments.get(2).unwrap()));
+            }
         } else {
-            // TODO: Throw Error
+            self.shell.log_error("Mode key, function name & input sequence are required");
         }
     }
-
-
-    //        "MODE_SET_MASK_XOR" => {
-    //            //self.editor.set_commandline_register("xor ");
-    //            self.set_context("CMD");
-    //        }
-    //        "MODE_SET_MASK_OR" => {
-    //            //self.editor.set_commandline_register("or ");
-    //            self.set_context("CMD");
-    //        }
-    //        "MODE_SET_MASK_AND" => {
-    //            //self.editor.set_commandline_register("and ");
-    //            self.set_context("CMD");
-    //        }
-
-    //        "KILL" => {
-    //            self.running = false;
-    //        }
-
-
-    //        "SAVEQUIT" => {
-    //            self.ci_save(None);
-    //            self.running = false;
-    //        }
 
 
     //        "RELOAD" => {
@@ -697,72 +625,31 @@ impl InputInterface {
 
     fn resize_editor_viewport(&mut self) {
         //TODO, Clean this mess up
-        let cursor_offset = self.shell.get_editor().get_cursor_real_offset();
-        let cursor_length = self.shell.get_editor().get_cursor_real_length();
-
-        {
-            let editor = self.shell.get_editor_mut();
-            editor.set_viewport_offset(0);
-            editor.set_cursor_length(1);
-            editor.set_cursor_offset(0);
-        }
-
+        let viewport_height = self.frontend.get_viewport_height();
         let screensize = self.frontend.size();
         let display_ratio = self.shell.get_editor().get_display_ratio() as f64;
         let r: f64 = 1f64 / display_ratio;
         let a: f64 = 1f64 - (1f64 / (r + 1f64));
         let mut base_width = ((screensize.0 as f64 - 1f64) * a) as usize;
-        match self.get_locked_viewport_width() {
-            Some(locked_width) => {
-                base_width = min(base_width, locked_width);
-            }
-            None => ()
-        }
 
-        let height = self.frontend.get_viewport_height();
+        let cursor_offset = self.shell.get_editor().get_cursor_real_offset();
+        let cursor_length = self.shell.get_editor().get_cursor_real_length();
+        let editor = self.shell.get_editor_mut();
+        editor.set_viewport_offset(0);
+        editor.set_cursor_length(1);
+        editor.set_cursor_offset(0);
 
-        {
-            let editor = self.shell.get_editor_mut();
-            editor.set_viewport_size(base_width, height);
-            editor.set_cursor_offset(cursor_offset);
-            editor.set_cursor_length(cursor_length);
-        }
-    }
-
-    fn __resize_hook(&mut self) {
-        self.resize_editor_viewport();
-
+        editor.set_viewport_size(base_width, viewport_height);
+        editor.set_cursor_offset(cursor_offset);
+        editor.set_cursor_length(cursor_length);
     }
 
     fn auto_resize(&mut self) {
         if self.frontend.auto_resize() {
             let delay = time::Duration::from_nanos(1_000);
             thread::sleep(delay);
-            self.__resize_hook();
+            self.resize_editor_viewport();
         }
-    }
-
-
-    fn ci_lock_viewport_width(&mut self, new_width: usize) {
-        self.lock_viewport_width(new_width);
-        self.__resize_hook();
-    }
-
-    fn ci_unlock_viewport_width(&mut self) {
-        self.unlock_viewport_width();
-        self.__resize_hook();
-    }
-
-    fn get_locked_viewport_width(&mut self) -> Option<usize> {
-        self.locked_viewport_width
-    }
-
-    fn unlock_viewport_width(&mut self) {
-        self.locked_viewport_width = None;
-    }
-
-    fn lock_viewport_width(&mut self, new_width: usize) {
-        self.locked_viewport_width = Some(new_width);
     }
 
     fn set_context(&mut self, new_context: &str) {
