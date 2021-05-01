@@ -240,8 +240,9 @@ impl Shell {
                 f(self, args)
             }
             None => {
-                self.log_error(&format!("Invalid Command: \"{}\"", use_key));
-                Ok(())
+                let output = use_key.to_string();
+                self.log_error(&format!("Invalid Command: \"{}\"", use_key.clone()));
+                Err(SbyteError::InvalidCommand(output))
             }
         }
     }
