@@ -49,6 +49,7 @@ impl FrontEnd {
         let rect_offset = rectmanager.new_rect(rect_meta).ok().unwrap();
         let rect_scrollbar = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
         let rect_help_window = rectmanager.new_rect(wrecked::ROOT).ok().unwrap();
+        //rectmanager.detach(rect_help_window);
 
         let mut frontend = FrontEnd {
             rectmanager,
