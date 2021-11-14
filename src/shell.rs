@@ -84,7 +84,7 @@ impl Shell {
         output.map_alias("q", "QUIT");
         output.map_alias("w", "SAVE");
         output.map_alias("wq", "SAVEQUIT");
-        output.map_alias("find", "JUMP_TO_NEXT");
+        output.map_alias("find", "JUMP_TO_PATTERN");
         output.map_alias("fr", "REPLACE_ALL");
         output.map_alias("insert", "INSERT_STRING");
         output.map_alias("overwrite", "OVERWRITE");
@@ -836,8 +836,12 @@ fn hook_send_kill_signal(_: &mut Shell, _: &[&str]) -> R {
 
 
 fn hook_jump_to_pattern(shell: &mut Shell, args: &[&str]) -> R {
-    for arg in args.iter() {
-        jump_to_next(shell, Some(arg))?;
+    if args.len() > 0 {
+        for arg in args.iter() {
+            jump_to_next(shell, Some(arg))?;
+        }
+    } else {
+        jump_to_next(shell, None)?;
     }
 
     Ok(())

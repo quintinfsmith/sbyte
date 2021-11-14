@@ -26,5 +26,4 @@ mod tests {
         assert_eq!(inputter.fetch_hook(), None);
     }
 
-
 }
