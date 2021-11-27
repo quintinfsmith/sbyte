@@ -1,4 +1,3 @@
-use std::cmp::{min, max};
 use std::fs::File;
 use std::io;
 use std::io::{Write, Read};
@@ -9,7 +8,7 @@ pub mod inputter;
 
 //TODO Move string_to_integer
 use super::shell::{Shell, parse_words};
-use super::editor::{Editor, SbyteError, string_to_integer, string_to_bytes};
+use super::editor::{SbyteError, string_to_integer, string_to_bytes};
 use super::editor::converter::*;
 use super::console_displayer::FrontEnd;
 use inputter::Inputter;
@@ -499,6 +498,7 @@ impl InputInterface {
                         Ok(())
                     }
                     Err(SbyteError::InvalidCommand(failed_cmd)) => {
+                        self.set_context("DEFAULT");
                         Ok(())
                     }
                     Err(SbyteError::BufferEmpty) => {
