@@ -1,40 +1,46 @@
-
 #[derive(PartialEq, Clone, Copy, Debug, Eq)]
-pub enum ConverterRef {
+pub enum FormatterRef {
     HEX,
     BIN,
     DEC
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ConverterError {
-    InvalidDigit(ConverterRef)
+pub enum FormatterError {
+    InvalidDigit(FormatterRef)
 }
 
-pub trait Converter {
-    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8>;
-    fn encode_byte(&self, byte: u8) -> Vec<u8>;
-
-    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError>;
-    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError>;
-    fn encode_integer(&self, integer: usize) -> Vec<u8>;
-
-    fn radix(&self) -> u32;
+#[derive(Debug, PartialEq, Eq)]
+pub enum FormatterResponse {
+    Done,
+    Next(usize),
+    Failure
 }
-impl dyn Converter {
-    fn decode_string(&self, string: String) -> Result<Vec<u8>, ConverterError> {
+
+pub trait Formatter {
+    // Return a list of bytes to display,
+    //  A map of the same bytes keyed by the input byte-offsets that corresponds thereto
+    fn read_in(&self, next_bytes: Vec<u8>) -> (Vec<u8>, HashMap<u8, u8>, FormatterResponse);
+    fn ratio(&self) -> Option(u8, u8);
+
+    //fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8>;
+    //fn encode_integer(&self, integer: usize) -> Vec<u8>;
+}
+
+impl dyn Formatter {
+    fn decode_string(&self, string: String) -> Result<Vec<u8>, FormatterError> {
         let bytes = string.as_bytes().to_vec();
         self.decode(bytes)
     }
 }
 
-pub struct HexConverter { }
-pub struct HumanConverter { }
-pub struct BinaryConverter { }
-pub struct DecConverter { }
+pub struct HexFormatter { }
+pub struct HumanFormatter { }
+pub struct BinaryFormatter { }
+pub struct DecFormatter { }
 
-impl HexConverter {
-    fn hex_char_to_dec_int(&self, hex_char: u8) -> Result<u8, ConverterError> {
+impl HexFormatter {
+    fn hex_char_to_dec_int(&self, hex_char: u8) -> Result<u8, FormatterError> {
         // TODO: Make constant
         let hex_digits: Vec<u8> = vec![48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70];
 
@@ -43,23 +49,9 @@ impl HexConverter {
                 Ok(index as u8)
             }
             Err(_) => {
-                Err(ConverterError::InvalidDigit(ConverterRef::HEX))
+                Err(FormatterError::InvalidDigit(FormatterRef::HEX))
             }
         }
-    }
-}
-
-impl Converter for HexConverter {
-    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
-        let mut output_bytes: Vec<u8> = Vec::new();
-
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output_bytes.push(*subbyte);
-            }
-        }
-
-        output_bytes
     }
 
     fn encode_byte(&self, byte: u8) -> Vec<u8> {
@@ -86,62 +78,10 @@ impl Converter for HexConverter {
 
         output
     }
-
-    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
-        let mut output_bytes: Vec<u8> = Vec::new();
-
-        let mut byte_value: u8;
-        let mut lode_byte = 0;
-        for (i, byte) in bytes.iter().rev().enumerate() {
-            match self.hex_char_to_dec_int(*byte) {
-                Ok(decimal) => {
-                    byte_value = decimal;
-                    lode_byte += byte_value * ((16_u32.pow((i % 2) as u32)) as u8);
-
-                    if i % 2 != 0 {
-                        output_bytes.push(lode_byte);
-                        lode_byte = 0;
-                    }
-                }
-                Err(e) => {
-                    Err(e)?;
-                }
-            }
-        }
-
-        if lode_byte != 0 {
-            output_bytes.push(lode_byte);
-        }
-
-        output_bytes.reverse();
-
-        Ok(output_bytes)
-    }
-
-    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
-        let mut output_number: usize = 0;
-
-        for byte in byte_string.iter() {
-            match self.hex_char_to_dec_int(*byte) {
-                Ok(decimal_int) => {
-                    output_number *= 16;
-                    output_number += decimal_int as usize;
-                }
-                Err(e) => {
-                    Err(e)?;
-                }
-            }
-        }
-
-        Ok(output_number)
-    }
-    fn radix(&self) -> u32 {
-        16
-    }
 }
 
-impl Converter for BinaryConverter {
-    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
+impl Formatter for HexFormatter {
+    fn read_in(&self, real_bytes: Vec<u8>) -> (Vec<u8>, FormatterResponse) {
         let mut output_bytes: Vec<u8> = Vec::new();
 
         for byte in real_bytes.iter() {
@@ -150,9 +90,15 @@ impl Converter for BinaryConverter {
             }
         }
 
-        output_bytes
+        (output_bytes, ConveterResponse::Done)
     }
 
+    fn ratio(&self) -> Option<(u8, u8)> {
+        (1, 2)
+    }
+}
+
+impl BinaryFormatter {
     fn encode_byte(&self, byte: u8) -> Vec<u8> {
         let mut output = Vec::new();
         for i in 0 .. 8 {
@@ -180,53 +126,28 @@ impl Converter for BinaryConverter {
 
         output
     }
+}
 
-    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
+impl Formatter for BinaryFormatter {
+    fn read_in(&self, real_bytes: Vec<u8>) -> (Vec<u8>, FormatterResponse) {
         let mut output_bytes: Vec<u8> = Vec::new();
 
-        let mut lode_byte = 0;
-
-
-        for (i, byte) in bytes.iter().enumerate() {
-            lode_byte *= 2;
-            if *byte == 48 || *byte == 49 {
-                lode_byte += *byte - 48;
-            } else {
-                Err(ConverterError::InvalidDigit(ConverterRef::BIN))?;
-            }
-
-            if i == 7 || i == bytes.len() - 1 {
-                output_bytes.push(lode_byte);
-                lode_byte = 0;
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
+                output_bytes.push(*subbyte);
             }
         }
 
-        Ok(output_bytes)
+        (output_bytes, FormatterResponse::Done)
     }
 
-    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
-        let mut output_number: usize = 0;
-
-        for byte in byte_string.iter() {
-            output_number *= 2;
-            if *byte == 48 || *byte == 49 {
-                output_number += (*byte as usize) - 48;
-            } else {
-                Err(ConverterError::InvalidDigit(ConverterRef::BIN))?;
-            }
-
-        }
-
-        Ok(output_number)
-    }
-
-    fn radix(&self) -> u32 {
-        2
+    fn ratio(&self) -> Option<(u8,u8)> {
+        (1, 8)
     }
 }
 
-impl HumanConverter {
-    fn dec_char_to_dec_int(&self, dec_char: u8) -> Result<u8, ConverterError> {
+impl HumanFormatter {
+    fn dec_char_to_dec_int(&self, dec_char: u8) -> Result<u8, FormatterError> {
         // TODO: Make constant
         let dec_digits: Vec<u8> = vec![48,49,50,51,52,53,54,55,56,57];
 
@@ -235,24 +156,10 @@ impl HumanConverter {
                 Ok(index as u8)
             }
             Err(_) => {
-                Err(ConverterError::InvalidDigit(ConverterRef::DEC))
+                Err(FormatterError::InvalidDigit(FormatterRef::DEC))
             }
         }
     }
-}
-
-impl Converter for HumanConverter {
-    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
-        let mut output = Vec::new();
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output.push(*subbyte);
-            }
-        }
-
-        output
-    }
-
     fn encode_byte(&self, byte: u8) -> Vec<u8> {
         let mut output = Vec::new();
         match byte {
@@ -275,27 +182,6 @@ impl Converter for HumanConverter {
         output
     }
 
-    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
-        Ok(bytes)
-    }
-
-    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
-        let mut output_number: usize = 0;
-
-        for byte in byte_string.iter() {
-            match self.dec_char_to_dec_int(*byte) {
-                Ok(decimal_int) => {
-                    output_number *= 10;
-                    output_number += decimal_int as usize;
-                }
-                Err(e) => {
-                    Err(e)?;
-                }
-            }
-        }
-        Ok(output_number)
-    }
-
     fn encode_integer(&self, mut integer: usize) -> Vec<u8> {
         let digits = vec![48,49,50,51,52,53,54,55,56,57];
         let mut did_first_pass = false;
@@ -310,14 +196,27 @@ impl Converter for HumanConverter {
 
         output
     }
+}
 
-    fn radix(&self) -> u32 {
-        256
+impl Formatter for HumanFormatter {
+    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
+        let mut output = Vec::new();
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
+                output.push(*subbyte);
+            }
+        }
+
+        output
+    }
+
+    fn ratio(&self) -> Option<(u8, u8)> {
+        (1, 1)
     }
 }
 
-impl DecConverter {
-    fn dec_char_to_dec_int(&self, hex_char: u8) -> Result<u8, ConverterError> {
+impl DecFormatter {
+    fn dec_char_to_dec_int(&self, hex_char: u8) -> Result<u8, FormatterError> {
         // TODO: Make constant
         let dec_digits: Vec<u8> = vec![48,49,50,51,52,53,54,55,56,57];
 
@@ -326,25 +225,10 @@ impl DecConverter {
                 Ok(index as u8)
             }
             Err(_) => {
-                Err(ConverterError::InvalidDigit(ConverterRef::DEC))
+                Err(FormatterError::InvalidDigit(FormatterRef::DEC))
             }
         }
     }
-}
-
-impl Converter for DecConverter {
-    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
-        let mut output_bytes: Vec<u8> = Vec::new();
-
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output_bytes.push(*subbyte);
-            }
-        }
-
-        output_bytes
-    }
-
     fn encode_byte(&self, byte: u8) -> Vec<u8> {
         let dec_digits = vec![48,49,50,51,52,53,54,55,56,57];
         let mut output = Vec::new();
@@ -370,52 +254,22 @@ impl Converter for DecConverter {
         output
     }
 
-    // convert vector of ascii decimal digits (eg "123456" -> vec![1, 226, 64])
-    fn decode(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ConverterError> {
-        let mut tmpint: usize = 0;
-        for byte in bytes.iter() {
-            match self.dec_char_to_dec_int(*byte) {
-                Ok(decimal) => {
-                    tmpint *= 10;
-                    tmpint += decimal as usize;
-                }
-                Err(e) => {
-                    Err(e)?;
-                }
-            }
-        }
+}
 
+impl Formatter for DecFormatter {
+    fn read_in(&self, real_bytes: Vec<u8>) -> (Vec<u8>, FormatterResponse) {
         let mut output_bytes: Vec<u8> = Vec::new();
-        let mut first_pass = true;
-        while first_pass || tmpint > 0 {
-            output_bytes.push((tmpint % 256) as u8);
-            tmpint /= 256;
-            first_pass = false;
-        }
 
-        output_bytes.reverse();
-
-        Ok(output_bytes)
-    }
-
-    fn decode_integer(&self, byte_string: Vec<u8>) -> Result<usize, ConverterError> {
-        let mut some_number = 0;
-        for byte in byte_string.iter() {
-            match self.dec_char_to_dec_int(*byte) {
-                Ok(decimal_int) => {
-                    some_number *= 10;
-                    some_number += decimal_int as usize;
-                }
-                Err(e) => {
-                    Err(e)?;
-                }
+        for byte in real_bytes.iter() {
+            for subbyte in self.encode_byte(*byte).iter() {
+                output_bytes.push(*subbyte);
             }
         }
 
-        Ok(some_number)
+        (output_bytes, FormatterResponse::Done)
     }
 
-    fn radix(&self) -> u32 {
-        10
+    fn ratio(&self) -> Option<(u8, u8)> {
+        (3, 1)
     }
 }
