@@ -549,9 +549,11 @@ impl FrontEnd {
                 let mut tmp_bits_str;
                 let mut tmp_human;
                 let mut tmp_human_str;
+                let mut fmt_response;
+
                 for (x, byte) in chunk.iter().enumerate() {
-                    tmp_bits = active_formatter.encode_byte(*byte);
-                    tmp_human = human_formatter.encode_byte(*byte);
+                    (tmp_bits, fmt_response) = active_formatter.read_in(*byte);
+                    (tmp_human, fmt_response) = human_formatter.read_in(*byte);
 
                     match cellhash.get(&x) {
                         Some((bits, human)) => {

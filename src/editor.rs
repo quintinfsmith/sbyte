@@ -16,7 +16,7 @@ pub mod formatter;
 pub mod tests;
 pub mod content;
 
-use formatter::{HumanFormatter, BinaryFormatter, HexFormatter, Formatter, FormatterRef, FormatterError, DecFormatter};
+use formatter::{HumanFormatter, BinaryFormatter, HexFormatter, Formatter, FormatterRef, DecFormatter};
 use viewport::ViewPort;
 use cursor::Cursor;
 use content::{Content, ContentError, BitMask};
@@ -835,8 +835,14 @@ impl Editor {
 
     pub fn get_display_ratio(&self) -> u8 {
         let active_formatter = self.get_active_formatter();
-        let ratio = active_formatter.get_ratio();
-        ((ratio.1 / ratio.0) + 1) as u8
+        match active_formatter.get_ratio() {
+            Some(ratio) {
+                ((ratio.1 / ratio.0) + 1) as u8
+            }
+            None => {
+                1 // TODO: Will change for variable display ratio
+            }
+        }
     }
 
     pub fn get_cursor_offset(&self) -> usize {
@@ -1136,40 +1142,45 @@ pub fn parse_words(input_string: &str) -> Vec<String> {
     output
 }
 
-/// Take number string provided in the editor and convert it to integer
-pub fn string_to_integer(input_string: &str) -> Result<usize, FormatterError> {
-    let mut use_formatter: Option<Box<dyn Formatter>> = None;
+pub fn hex_string_to_integer(input_string: &str) -> Result<usize, F> {
+    let mut output = 0;
+    let input_bytes = input_string.to_string().as_bytes().to_vec();
+    j
+}
 
+/// Take number string provided in the editor and convert it to integer
+pub fn string_to_integer(input_string: &str) -> Result<usize, u8> {
+    let mut processed = false;
     let input_bytes = input_string.to_string().as_bytes().to_vec();
     if input_bytes.len() > 2 {
         if input_bytes[0] == 92 {
             match input_bytes[1] {
                 98 => { // b
-                    use_formatter = Some(Box::new(BinaryFormatter {}));
+                    processed = true;
+                    output = bin_string_to_integer(input_string[2..]);
                 }
                 120 => { // x
-                    use_formatter = Some(Box::new(HexFormatter {}));
+                    processed = true;
+                    output = hex_string_to_integer(input_string[2..]);
                 }
                 _ => { }
             }
         }
     }
-    match use_formatter {
-        Some(formatter) => {
-            formatter.decode_integer(input_bytes[2..].to_vec())
-        }
-        None => {
-            let mut output = 0;
-            let mut digit;
-            for character in input_string.chars() {
-                output *= 10;
-                if character.is_digit(10) {
-                    digit = character.to_digit(10).unwrap() as usize;
-                    output += digit;
-                }
+
+    if (! processed) {
+        let mut output_n = 0;
+        let mut digit;
+        for character in input_string.chars() {
+            output_n *= 10;
+            if character.is_digit(10) {
+                digit = character.to_digit(10).unwrap() as usize;
+                output_n += digit;
+            } else {
+                output = Err(1);
             }
-            Ok(output)
         }
+        output = Ok(output_n);
     }
 }
 

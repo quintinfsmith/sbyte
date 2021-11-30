@@ -20,11 +20,9 @@ pub enum FormatterResponse {
 pub trait Formatter {
     // Return a list of bytes to display,
     //  A map of the same bytes keyed by the input byte-offsets that corresponds thereto
-    fn read_in(&self, next_bytes: Vec<u8>) -> (Vec<u8>, HashMap<u8, u8>, FormatterResponse);
-    fn ratio(&self) -> Option(u8, u8);
-
-    //fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8>;
-    //fn encode_integer(&self, integer: usize) -> Vec<u8>;
+    fn read_in(&self, next_byte: u8) -> (Vec<u8>, FormatterResponse);
+    fn ratio(&self) -> Option<(u8, u8)>;
+    fn spaced(&self) -> bool;
 }
 
 impl dyn Formatter {
@@ -81,20 +79,15 @@ impl HexFormatter {
 }
 
 impl Formatter for HexFormatter {
-    fn read_in(&self, real_bytes: Vec<u8>) -> (Vec<u8>, FormatterResponse) {
-        let mut output_bytes: Vec<u8> = Vec::new();
-
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output_bytes.push(*subbyte);
-            }
-        }
-
-        (output_bytes, ConveterResponse::Done)
+    fn read_in(&self, next_byte: u8) -> (Vec<u8>, FormatterResponse) {
+        (self.encode_byte(next_byte), FormatterResponse::Done)
     }
 
     fn ratio(&self) -> Option<(u8, u8)> {
         (1, 2)
+    }
+    fn spaced(&self) -> bool {
+        true
     }
 }
 
@@ -129,20 +122,15 @@ impl BinaryFormatter {
 }
 
 impl Formatter for BinaryFormatter {
-    fn read_in(&self, real_bytes: Vec<u8>) -> (Vec<u8>, FormatterResponse) {
-        let mut output_bytes: Vec<u8> = Vec::new();
-
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output_bytes.push(*subbyte);
-            }
-        }
-
-        (output_bytes, FormatterResponse::Done)
+    fn read_in(&self, next_byte: u8) -> (Vec<u8>, FormatterResponse) {
+        (self.encode_byte(next_byte), FormatterResponse::Done)
     }
 
     fn ratio(&self) -> Option<(u8,u8)> {
         (1, 8)
+    }
+    fn spaced(&self) -> bool {
+        true
     }
 }
 
@@ -199,19 +187,15 @@ impl HumanFormatter {
 }
 
 impl Formatter for HumanFormatter {
-    fn encode(&self, real_bytes: Vec<u8>) -> Vec<u8> {
-        let mut output = Vec::new();
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output.push(*subbyte);
-            }
-        }
-
-        output
+    fn read_in(&self, next_byte: u8) -> (Vec<u8>, FormatterResponse) {
+        (self.encode_byte(next_byte), FormatterResponse::Done)
     }
 
     fn ratio(&self) -> Option<(u8, u8)> {
         (1, 1)
+    }
+    fn spaced(&self) -> bool {
+        false
     }
 }
 
@@ -229,6 +213,7 @@ impl DecFormatter {
             }
         }
     }
+
     fn encode_byte(&self, byte: u8) -> Vec<u8> {
         let dec_digits = vec![48,49,50,51,52,53,54,55,56,57];
         let mut output = Vec::new();
@@ -253,23 +238,18 @@ impl DecFormatter {
 
         output
     }
-
 }
 
 impl Formatter for DecFormatter {
-    fn read_in(&self, real_bytes: Vec<u8>) -> (Vec<u8>, FormatterResponse) {
-        let mut output_bytes: Vec<u8> = Vec::new();
-
-        for byte in real_bytes.iter() {
-            for subbyte in self.encode_byte(*byte).iter() {
-                output_bytes.push(*subbyte);
-            }
-        }
-
-        (output_bytes, FormatterResponse::Done)
+    fn read_in(&self, next_byte: u8) -> (Vec<u8>, FormatterResponse) {
+        (self.encode_byte(next_byte), FormatterResponse::Done)
     }
 
     fn ratio(&self) -> Option<(u8, u8)> {
         (3, 1)
+    }
+
+    fn spaced(&self) -> bool {
+        true
     }
 }
