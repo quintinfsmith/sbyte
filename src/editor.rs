@@ -12,11 +12,11 @@ use wrecked::WreckedError;
 
 pub mod viewport;
 pub mod cursor;
-pub mod converter;
+pub mod formatter;
 pub mod tests;
 pub mod content;
 
-use converter::{HumanConverter, BinaryConverter, HexConverter, Converter, ConverterRef, ConverterError, DecConverter};
+use formatter::{HumanFormatter, BinaryFormatter, HexFormatter, Formatter, FormatterRef, FormatterError, DecFormatter};
 use viewport::ViewPort;
 use cursor::Cursor;
 use content::{Content, ContentError, BitMask};
@@ -42,7 +42,7 @@ pub enum SbyteError {
     // TODO: Move InvalidCommand
     InvalidCommand(String),
     ConversionFailed,
-    InvalidDigit(ConverterRef),
+    InvalidDigit(FormatterRef),
     InvalidRadix(u8),
     BufferEmpty,
     KillSignal
@@ -64,9 +64,9 @@ impl From<ContentError> for SbyteError {
             }
             ContentError::InvalidDigit(digit, radix) => {
                 match radix {
-                    16 => SbyteError::InvalidDigit(ConverterRef::HEX),
-                    10 => SbyteError::InvalidDigit(ConverterRef::DEC),
-                    2 =>  SbyteError::InvalidDigit(ConverterRef::BIN),
+                    16 => SbyteError::InvalidDigit(FormatterRef::HEX),
+                    10 => SbyteError::InvalidDigit(FormatterRef::DEC),
+                    2 =>  SbyteError::InvalidDigit(FormatterRef::BIN),
                     _ => SbyteError::InvalidRadix(radix)
                 }
             }
@@ -74,10 +74,10 @@ impl From<ContentError> for SbyteError {
     }
 }
 
-impl From<ConverterError> for SbyteError {
-    fn from(err: ConverterError) -> Self {
+impl From<FormatterError> for SbyteError {
+    fn from(err: FormatterError) -> Self {
         match err {
-            ConverterError::InvalidDigit(conv) => {
+            FormatterError::InvalidDigit(conv) => {
                 SbyteError::InvalidDigit(conv)
             }
         }
@@ -96,7 +96,7 @@ pub struct Editor {
     active_file_path: Option<String>,
     cursor: Cursor,
     subcursor: Cursor,
-    active_converter: ConverterRef,
+    active_formatter: FormatterRef,
     undo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
     redo_stack: Vec<(usize, usize, Vec<u8>, Instant)>, // Position, bytes to remove, bytes to insert
 
@@ -121,7 +121,7 @@ impl Editor {
             active_file_path: None,
             cursor: Cursor::new(),
             subcursor: Cursor::new(),
-            active_converter: ConverterRef::HEX,
+            active_formatter: FormatterRef::HEX,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
 
@@ -327,42 +327,42 @@ impl Editor {
 
     }
 
-    pub fn set_active_converter(&mut self, converter: ConverterRef) {
-        self.active_converter = converter;
+    pub fn set_active_formatter(&mut self, formatter: FormatterRef) {
+        self.active_formatter = formatter;
         self.set_subcursor_length()
     }
 
-    pub fn get_active_converter_ref(&self) -> ConverterRef {
-        self.active_converter
+    pub fn get_active_formatter_ref(&self) -> FormatterRef {
+        self.active_formatter
     }
 
-    pub fn get_active_converter(&self) -> Box<dyn Converter> {
-        match self.active_converter {
-            ConverterRef::HEX => {
-                Box::new(HexConverter {})
+    pub fn get_active_formatter(&self) -> Box<dyn Formatter> {
+        match self.active_formatter {
+            FormatterRef::HEX => {
+                Box::new(HexFormatter {})
             }
-            ConverterRef::BIN => {
-                Box::new(BinaryConverter {})
+            FormatterRef::BIN => {
+                Box::new(BinaryFormatter {})
             }
-            ConverterRef::DEC => {
-                Box::new(DecConverter {})
+            FormatterRef::DEC => {
+                Box::new(DecFormatter {})
             }
         }
     }
 
-    pub fn toggle_converter(&mut self) {
-        let new_converter = match self.get_active_converter_ref() {
-            ConverterRef::BIN => {
-                ConverterRef::HEX
+    pub fn toggle_formatter(&mut self) {
+        let new_formatter = match self.get_active_formatter_ref() {
+            FormatterRef::BIN => {
+                FormatterRef::HEX
             }
-            ConverterRef::HEX => {
-                ConverterRef::DEC
+            FormatterRef::HEX => {
+                FormatterRef::DEC
             }
-            ConverterRef::DEC => {
-                ConverterRef::BIN
+            FormatterRef::DEC => {
+                FormatterRef::BIN
             }
         };
-        self.set_active_converter(new_converter);
+        self.set_active_formatter(new_formatter);
     }
 
     pub fn replace(&mut self, search_for: &str, replace_with: &[u8]) -> Result<Vec<usize>, SbyteError> {
@@ -693,8 +693,8 @@ impl Editor {
     }
 
     pub fn replace_digit(&mut self, digit: char) -> Result<(), SbyteError> {
-        let converter = self.get_active_converter();
-        let radix = converter.radix();
+        let formatter = self.get_active_formatter();
+        let radix = formatter.radix();
         let offset = self.get_cursor_offset() + (self.get_subcursor_offset() / self.get_subcursor_length());
 
         let subcursor_real_position = self.subcursor.get_length() - 1 - (self.subcursor.get_offset() % self.subcursor.get_length());
@@ -705,7 +705,7 @@ impl Editor {
                 Ok(())
             }
             None => {
-                Err(SbyteError::InvalidDigit(self.get_active_converter_ref()))
+                Err(SbyteError::InvalidDigit(self.get_active_formatter_ref()))
             }
         }
     }
@@ -834,13 +834,9 @@ impl Editor {
     }
 
     pub fn get_display_ratio(&self) -> u8 {
-        let human_converter = HumanConverter {};
-        let human_string_length = human_converter.encode(vec![65]).len();
-
-        let active_converter = self.get_active_converter();
-        let active_string_length = active_converter.encode(vec![65]).len();
-
-        ((active_string_length / human_string_length) + 1) as u8
+        let active_formatter = self.get_active_formatter();
+        let ratio = active_formatter.get_ratio();
+        ((ratio.1 / ratio.0) + 1) as u8
     }
 
     pub fn get_cursor_offset(&self) -> usize {
@@ -1141,26 +1137,26 @@ pub fn parse_words(input_string: &str) -> Vec<String> {
 }
 
 /// Take number string provided in the editor and convert it to integer
-pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
-    let mut use_converter: Option<Box<dyn Converter>> = None;
+pub fn string_to_integer(input_string: &str) -> Result<usize, FormatterError> {
+    let mut use_formatter: Option<Box<dyn Formatter>> = None;
 
     let input_bytes = input_string.to_string().as_bytes().to_vec();
     if input_bytes.len() > 2 {
         if input_bytes[0] == 92 {
             match input_bytes[1] {
                 98 => { // b
-                    use_converter = Some(Box::new(BinaryConverter {}));
+                    use_formatter = Some(Box::new(BinaryFormatter {}));
                 }
                 120 => { // x
-                    use_converter = Some(Box::new(HexConverter {}));
+                    use_formatter = Some(Box::new(HexFormatter {}));
                 }
                 _ => { }
             }
         }
     }
-    match use_converter {
-        Some(converter) => {
-            converter.decode_integer(input_bytes[2..].to_vec())
+    match use_formatter {
+        Some(formatter) => {
+            formatter.decode_integer(input_bytes[2..].to_vec())
         }
         None => {
             let mut output = 0;
@@ -1179,29 +1175,29 @@ pub fn string_to_integer(input_string: &str) -> Result<usize, ConverterError> {
 
 // Convert argument string to bytes.
 pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, SbyteError> {
-    let mut use_converter: Option<Box<dyn Converter>> = None;
+    let mut use_formatter: Option<Box<dyn Formatter>> = None;
 
     let input_bytes = input_string.as_bytes().to_vec();
     if input_bytes.len() > 2 {
         if input_bytes[0] == 92 {
             match input_bytes[1] {
                 98 => { // b
-                    use_converter = Some(Box::new(BinaryConverter {}));
+                    use_formatter = Some(Box::new(BinaryFormatter {}));
                 }
                 100 => { // d
-                    use_converter = Some(Box::new(DecConverter {}));
+                    use_formatter = Some(Box::new(DecFormatter {}));
                 }
                 120 => { // x
-                    use_converter = Some(Box::new(HexConverter {}));
+                    use_formatter = Some(Box::new(HexFormatter {}));
                 }
                 _ => { }
             }
         }
     }
 
-    let result = match use_converter {
-        Some(converter) => {
-            converter.decode(input_bytes[2..].to_vec())
+    let result = match use_formatter {
+        Some(formatter) => {
+            formatter.decode(input_bytes[2..].to_vec())
         }
         None => {
             Ok(input_string.as_bytes().to_vec())
@@ -1213,11 +1209,11 @@ pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, SbyteError> {
         Ok(output) => {
             Ok(output)
         }
-        Err(ConverterError::InvalidDigit(conv)) => {
+        Err(FormatterError::InvalidDigit(conv)) => {
             Err(match conv {
-                ConverterRef::HEX => { SbyteError::InvalidHexidecimal(input_string.to_string()) }
-                ConverterRef::BIN => { SbyteError::InvalidBinary(input_string.to_string()) }
-                ConverterRef::DEC => { SbyteError::InvalidDecimal(input_string.to_string()) }
+                FormatterRef::HEX => { SbyteError::InvalidHexidecimal(input_string.to_string()) }
+                FormatterRef::BIN => { SbyteError::InvalidBinary(input_string.to_string()) }
+                FormatterRef::DEC => { SbyteError::InvalidDecimal(input_string.to_string()) }
             })
         }
     }

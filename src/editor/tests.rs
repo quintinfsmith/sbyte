@@ -1,6 +1,6 @@
 #[cfg (test)]
 mod tests {
-    use crate::editor::{Editor, ConverterRef, HexConverter, BinaryConverter, DecConverter, SbyteError, parse_words, string_to_integer, string_to_bytes};
+    use crate::editor::{Editor, FormatterRef, HexFormatter, BinaryFormatter, DecFormatter, SbyteError, parse_words, string_to_integer, string_to_bytes};
     use std::{time, thread};
 
     #[test]
@@ -222,14 +222,14 @@ mod tests {
     }
 
     #[test]
-    fn test_set_active_converter() {
+    fn test_set_active_formatter() {
         let mut editor = Editor::new();
-        editor.set_active_converter(ConverterRef::HEX);
-        assert_eq!(editor.get_active_converter_ref(), ConverterRef::HEX);
-        editor.set_active_converter(ConverterRef::BIN);
-        assert_eq!(editor.get_active_converter_ref(), ConverterRef::BIN);
-        editor.set_active_converter(ConverterRef::DEC);
-        assert_eq!(editor.get_active_converter_ref(), ConverterRef::DEC);
+        editor.set_active_formatter(FormatterRef::HEX);
+        assert_eq!(editor.get_active_formatter_ref(), FormatterRef::HEX);
+        editor.set_active_formatter(FormatterRef::BIN);
+        assert_eq!(editor.get_active_formatter_ref(), FormatterRef::BIN);
+        editor.set_active_formatter(FormatterRef::DEC);
+        assert_eq!(editor.get_active_formatter_ref(), FormatterRef::DEC);
     }
 
     #[test]
@@ -327,13 +327,13 @@ mod tests {
     #[test]
     fn test_get_display_ratio() {
         let mut editor = Editor::new();
-        editor.set_active_converter(ConverterRef::HEX);
+        editor.set_active_formatter(FormatterRef::HEX);
         assert_eq!(editor.get_display_ratio(), 3);
 
-        editor.set_active_converter(ConverterRef::BIN);
+        editor.set_active_formatter(FormatterRef::BIN);
         assert_eq!(editor.get_display_ratio(), 9);
 
-        editor.set_active_converter(ConverterRef::DEC);
+        editor.set_active_formatter(FormatterRef::DEC);
         assert_eq!(editor.get_display_ratio(), 4);
     }
 
@@ -442,7 +442,7 @@ mod tests {
         let mut editor = Editor::new();
         editor.insert_bytes(0, &[0]);
 
-        editor.set_active_converter(ConverterRef::HEX);
+        editor.set_active_formatter(FormatterRef::HEX);
         editor.replace_digit('F');
         assert_eq!(editor.get_active_content(), &[0xF0]);
         editor.subcursor_next_digit();
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(editor.get_active_content(), &[0xF1]);
 
 
-        editor.set_active_converter(ConverterRef::BIN);
+        editor.set_active_formatter(FormatterRef::BIN);
         editor.replace_digit('0');
         assert_eq!(editor.get_active_content(), &[0b01110001]);
         editor.subcursor_next_digit();
@@ -462,7 +462,7 @@ mod tests {
         editor.replace_digit('1');
         assert_eq!(editor.get_active_content(), &[0b01111001]);
 
-        editor.set_active_converter(ConverterRef::DEC);
+        editor.set_active_formatter(FormatterRef::DEC);
         editor.overwrite_bytes(0, &[0]);
         editor.replace_digit('2');
         assert_eq!(editor.get_active_content(), &[200]);

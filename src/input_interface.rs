@@ -9,7 +9,7 @@ pub mod inputter;
 //TODO Move string_to_integer
 use super::shell::{Shell, parse_words};
 use super::editor::{SbyteError, string_to_integer, string_to_bytes};
-use super::editor::converter::*;
+use super::editor::formatter::*;
 use super::console_displayer::FrontEnd;
 use inputter::Inputter;
 
@@ -46,7 +46,7 @@ impl InputInterface {
 
     fn setup_default_controls(&mut self) -> Result<(), SbyteError> {
         // Default Controls
-        self.hook_assign_mode_input(&["DEFAULT", "TOGGLE_CONVERTER", "EQUALS"]);
+        self.hook_assign_mode_input(&["DEFAULT", "TOGGLE_FORMATTER", "EQUALS"]);
         self.hook_assign_mode_input(&["DEFAULT", "CURSOR_DOWN", "J_LOWER"]);
         self.hook_assign_mode_input(&["DEFAULT", "CURSOR_UP", "K_LOWER"]);
         self.hook_assign_mode_input(&["DEFAULT", "CURSOR_LEFT", "H_LOWER"]);
@@ -450,14 +450,14 @@ impl InputInterface {
             }
 
             "MODE_SET_OVERWRITE" => {
-                match self.shell.get_editor().get_active_converter_ref() {
-                    ConverterRef::BIN => {
+                match self.shell.get_editor().get_active_formatter_ref() {
+                    FormatterRef::BIN => {
                         self.set_context("OVERWRITE_BIN");
                     }
-                    ConverterRef::HEX => {
+                    FormatterRef::HEX => {
                         self.set_context("OVERWRITE_HEX");
                     }
-                    ConverterRef::DEC => {
+                    FormatterRef::DEC => {
                         self.set_context("OVERWRITE_DEC");
                     }
                 };

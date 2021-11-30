@@ -5,7 +5,7 @@ use wrecked::{RectManager, Color, WreckedError};
 
 use super::shell::Shell;
 use super::editor::*;
-use super::editor::converter::*;
+use super::editor::formatter::*;
 
 use usize as RectId;
 
@@ -528,8 +528,8 @@ impl FrontEnd {
     }
 
     fn set_row_characters(&mut self, editor: &Editor, absolute_y: usize) -> Result<(), WreckedError> {
-        let human_converter = HumanConverter {};
-        let active_converter = editor.get_active_converter();
+        let human_formatter = HumanFormatter {};
+        let active_formatter = editor.get_active_formatter();
         let (width, _height) = editor.get_viewport_size();
         let offset = width * absolute_y;
 
@@ -550,8 +550,8 @@ impl FrontEnd {
                 let mut tmp_human;
                 let mut tmp_human_str;
                 for (x, byte) in chunk.iter().enumerate() {
-                    tmp_bits = active_converter.encode_byte(*byte);
-                    tmp_human = human_converter.encode_byte(*byte);
+                    tmp_bits = active_formatter.encode_byte(*byte);
+                    tmp_human = human_formatter.encode_byte(*byte);
 
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
