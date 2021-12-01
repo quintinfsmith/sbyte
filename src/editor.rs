@@ -1142,45 +1142,31 @@ pub fn parse_words(input_string: &str) -> Vec<String> {
     output
 }
 
-pub fn hex_string_to_integer(input_string: &str) -> Result<usize, F> {
-    let mut output = 0;
-    let input_bytes = input_string.to_string().as_bytes().to_vec();
-    j
-}
 
 /// Take number string provided in the editor and convert it to integer
-pub fn string_to_integer(input_string: &str) -> Result<usize, u8> {
+pub fn string_to_integer(input_string: &str) -> Result<usize, ParseIntError> {
+    let mut output;
     let mut processed = false;
+    let mut radix = 10;
     let input_bytes = input_string.to_string().as_bytes().to_vec();
     if input_bytes.len() > 2 {
         if input_bytes[0] == 92 {
             match input_bytes[1] {
                 98 => { // b
-                    processed = true;
-                    output = bin_string_to_integer(input_string[2..]);
+                    radix = 2;
                 }
                 120 => { // x
-                    processed = true;
-                    output = hex_string_to_integer(input_string[2..]);
+                    radix = 16;
                 }
                 _ => { }
             }
         }
     }
 
-    if (! processed) {
-        let mut output_n = 0;
-        let mut digit;
-        for character in input_string.chars() {
-            output_n *= 10;
-            if character.is_digit(10) {
-                digit = character.to_digit(10).unwrap() as usize;
-                output_n += digit;
-            } else {
-                output = Err(1);
-            }
-        }
-        output = Ok(output_n);
+    if radix != 10 {
+        usize::from_str_radix(&input_string[2..], radix)
+    } else {
+        usize::from_str_radix(&input_string[2..], radix)
     }
 }
 
