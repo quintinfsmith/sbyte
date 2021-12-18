@@ -7,6 +7,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 use std::convert::From;
 use regex::bytes::Regex;
+use std::num::ParseIntError;
 
 use wrecked::WreckedError;
 
@@ -16,10 +17,11 @@ pub mod formatter;
 pub mod tests;
 pub mod content;
 
-use formatter::{HumanFormatter, BinaryFormatter, HexFormatter, Formatter, FormatterRef, DecFormatter};
+use formatter::{BinaryFormatter, HexFormatter, Formatter, FormatterRef, DecFormatter, FormatterError};
 use viewport::ViewPort;
 use cursor::Cursor;
 use content::{Content, ContentError, BitMask};
+
 
 
 #[derive(Debug, Eq, PartialEq)]
@@ -105,7 +107,9 @@ pub struct Editor {
 
     search_history: Vec<String>,
     change_flags: HashMap<String, bool>,
-    changed_offsets: HashSet<(usize, bool)>
+    changed_offsets: HashSet<(usize, bool)>,
+
+    _active_display_ratio: u8
 }
 
 impl Editor {
@@ -130,7 +134,9 @@ impl Editor {
 
             search_history: Vec::new(),
             change_flags: HashMap::new(),
-            changed_offsets: HashSet::new()
+            changed_offsets: HashSet::new(),
+
+            _active_display_ratio: 3
         };
 
         output.set_cursor_length(1);
@@ -329,7 +335,13 @@ impl Editor {
 
     pub fn set_active_formatter(&mut self, formatter: FormatterRef) {
         self.active_formatter = formatter;
-        self.set_subcursor_length()
+        match self.get_active_formatter().radix() {
+            radix => {
+                let l = 256.0_f64.log(radix as f64);
+                self._active_display_ratio = (l.ceil() as u8) + 1
+            }
+        }
+        self.set_subcursor_length();
     }
 
     pub fn get_active_formatter_ref(&self) -> FormatterRef {
@@ -669,14 +681,12 @@ impl Editor {
         self.find_nth_before(pattern, offset, 0)
     }
 
-
     pub fn remove_bytes(&mut self, offset: usize, length: usize) -> Vec<u8> {
         let removed_bytes = self.active_content.remove_bytes(offset, length);
         self.push_to_undo_stack(offset, 0, removed_bytes.clone());
 
         removed_bytes
     }
-
 
     pub fn remove_bytes_at_cursor(&mut self) -> Vec<u8> {
         let offset = self.cursor.get_offset();
@@ -698,7 +708,7 @@ impl Editor {
         let offset = self.get_cursor_offset() + (self.get_subcursor_offset() / self.get_subcursor_length());
 
         let subcursor_real_position = self.subcursor.get_length() - 1 - (self.subcursor.get_offset() % self.subcursor.get_length());
-        match digit.to_digit(radix) {
+        match digit.to_digit(radix as u32) {
             Some(value) => {
                 let old_byte = self.active_content.replace_digit(offset, subcursor_real_position as u8, value as u8, radix as u8)?;
                 self.push_to_undo_stack(offset, 1, vec![old_byte]);
@@ -834,15 +844,8 @@ impl Editor {
     }
 
     pub fn get_display_ratio(&self) -> u8 {
-        let active_formatter = self.get_active_formatter();
-        match active_formatter.get_ratio() {
-            Some(ratio) {
-                ((ratio.1 / ratio.0) + 1) as u8
-            }
-            None => {
-                1 // TODO: Will change for variable display ratio
-            }
-        }
+        self._active_display_ratio
+
     }
 
     pub fn get_cursor_offset(&self) -> usize {
@@ -870,7 +873,7 @@ impl Editor {
     }
 
     pub fn set_subcursor_length(&mut self) {
-        self.subcursor.set_length((self.get_display_ratio() - 1) as isize);
+        self.subcursor.set_length((self._active_display_ratio - 1) as isize);
         self.set_subcursor_offset(0);
     }
 
@@ -937,7 +940,6 @@ impl Editor {
         }
 
         self.set_viewport_offset(adj_viewport_offset);
-        self.flag_change("CURSOR");
     }
 
     pub fn get_viewport_size(&self) -> (usize, usize) {
@@ -954,7 +956,6 @@ impl Editor {
 
     pub fn set_viewport_offset(&mut self, new_offset: usize) {
         self.viewport.set_offset(new_offset);
-        self.flag_change("VIEWPORT_OFFSET");
     }
 
     pub fn set_viewport_size(&mut self, width: usize, height: usize) {
@@ -962,7 +963,6 @@ impl Editor {
         // Align the viewport with the new size to maintain sanity
         let old_offset = self.viewport.get_offset();
         self.set_viewport_offset((old_offset / width) * width);
-        self.flag_change("VIEWPORT_SIZE");
     }
 
     pub fn fetch_changed_offsets(&mut self) -> HashSet<(usize, bool)> {
@@ -1033,33 +1033,6 @@ impl Editor {
         }
         self.apply_mask(BitMask::Xor, &mask)
     }
-
-
-    fn flag_change(&mut self, flag: &str) {
-        self.change_flags.entry(flag.to_string())
-            .and_modify(|e| { *e = true })
-            .or_insert(true);
-    }
-
-    pub fn has_changed(&mut self, flag: &str) -> bool {
-        let output = match self.change_flags.get(&flag.to_string()) {
-            Some(did_change) => {
-                *did_change
-            }
-            None => {
-                false
-            }
-        };
-
-        if output {
-            self.change_flags.entry(flag.to_string())
-                .and_modify(|e| { *e = false })
-                .or_insert(false);
-        }
-
-        output
-    }
-
 }
 
 /// Takes strings input within the program and parses the words.
@@ -1142,15 +1115,14 @@ pub fn parse_words(input_string: &str) -> Vec<String> {
     output
 }
 
-
 /// Take number string provided in the editor and convert it to integer
 pub fn string_to_integer(input_string: &str) -> Result<usize, ParseIntError> {
-    let mut output;
-    let mut processed = false;
-    let mut radix = 10;
     let input_bytes = input_string.to_string().as_bytes().to_vec();
+    let mut radix = 10;
+    let mut start = 0;
     if input_bytes.len() > 2 {
         if input_bytes[0] == 92 {
+            start = 2;
             match input_bytes[1] {
                 98 => { // b
                     radix = 2;
@@ -1163,54 +1135,62 @@ pub fn string_to_integer(input_string: &str) -> Result<usize, ParseIntError> {
         }
     }
 
-    if radix != 10 {
-        usize::from_str_radix(&input_string[2..], radix)
-    } else {
-        usize::from_str_radix(&input_string[2..], radix)
-    }
+    usize::from_str_radix(&input_string[start..], radix)
 }
 
 // Convert argument string to bytes.
 pub fn string_to_bytes(input_string: &str) -> Result<Vec<u8>, SbyteError> {
-    let mut use_formatter: Option<Box<dyn Formatter>> = None;
-
     let input_bytes = input_string.as_bytes().to_vec();
+    let mut radix = 0;
     if input_bytes.len() > 2 {
         if input_bytes[0] == 92 {
             match input_bytes[1] {
                 98 => { // b
-                    use_formatter = Some(Box::new(BinaryFormatter {}));
+                    radix = 2;
                 }
                 100 => { // d
-                    use_formatter = Some(Box::new(DecFormatter {}));
+                    radix = 10;
                 }
                 120 => { // x
-                    use_formatter = Some(Box::new(HexFormatter {}));
+                    radix = 16;
                 }
                 _ => { }
             }
         }
     }
 
-    let result = match use_formatter {
-        Some(formatter) => {
-            formatter.decode(input_bytes[2..].to_vec())
+    let result;
+    if radix != 0 {
+        match usize::from_str_radix(&input_string[2..], radix) {
+            Ok(0) => {
+                result = Ok(vec![0]);
+            }
+            Ok(mut number) => {
+                let mut bytes: Vec<u8> = vec![];
+                while number > 0 {
+                    bytes.push((number % 256) as u8);
+                    number /= 256;
+                }
+                bytes.reverse();
+                result = Ok(bytes);
+            }
+            Err(e) => {
+                result = Err(e);
+            }
         }
-        None => {
-            Ok(input_string.as_bytes().to_vec())
-        }
-    };
-
+    } else {
+        result = Ok(input_string.as_bytes().to_vec());
+    }
 
     match result {
         Ok(output) => {
             Ok(output)
         }
-        Err(FormatterError::InvalidDigit(conv)) => {
-            Err(match conv {
-                FormatterRef::HEX => { SbyteError::InvalidHexidecimal(input_string.to_string()) }
-                FormatterRef::BIN => { SbyteError::InvalidBinary(input_string.to_string()) }
-                FormatterRef::DEC => { SbyteError::InvalidDecimal(input_string.to_string()) }
+        Err(_e) => { // FIXME: too generic
+            Err(match radix {
+                16 => { SbyteError::InvalidHexidecimal(input_string.to_string()) }
+                2 => { SbyteError::InvalidBinary(input_string.to_string()) }
+                _ => { SbyteError::InvalidDecimal(input_string.to_string()) }
             })
         }
     }

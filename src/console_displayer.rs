@@ -6,6 +6,8 @@ use wrecked::{RectManager, Color, WreckedError};
 use super::shell::Shell;
 use super::editor::*;
 use super::editor::formatter::*;
+use std::time::{Duration, Instant};
+use std::{time, thread};
 
 use usize as RectId;
 
@@ -25,7 +27,6 @@ pub struct FrontEnd {
     rect_feedback: RectId,
     rect_scrollbar: RectId,
 
-    last_known_viewport_offset: usize,
 
     row_dict: HashMap<usize, (RectId, RectId)>,
     cell_dict: HashMap<usize, HashMap<usize, (RectId, RectId)>>,
@@ -34,8 +35,17 @@ pub struct FrontEnd {
 
     rendered_buffer: Option<String>,
 
+
     rect_help_window: RectId,
-    flag_context_changed: bool
+    flag_context_changed: bool,
+
+    rendered_viewport_y_offset: usize,
+
+    rendered_viewport_size: Option<(usize, usize)>,
+    rendered_viewport_offset: Option<usize>,
+    rendered_formatter: Option<FormatterRef>,
+    rendered_cursor: Option<(usize, usize)>
+
 }
 
 impl FrontEnd {
@@ -67,13 +77,17 @@ impl FrontEnd {
             rects_display: (id_display_bits, id_display_human),
             row_dict: HashMap::new(),
             cell_dict: HashMap::new(),
-            last_known_viewport_offset: 9999,
+            rendered_viewport_y_offset: 9999,
 
             input_context: "DEFAULT".to_string(),
             rerow_flag: false,
             rendered_buffer: None,
 
-            flag_context_changed: false
+            flag_context_changed: false,
+            rendered_viewport_size: None,
+            rendered_viewport_offset: None,
+            rendered_formatter: None,
+            rendered_cursor: None
         };
 
 
@@ -92,9 +106,14 @@ impl FrontEnd {
     pub fn tick(&mut self, shell: &mut Shell) -> Result<(), Box::<dyn Error>> {
         let editor = shell.get_editor_mut();
         if !editor.is_loading() {
-            let changed_viewport_size = editor.has_changed("VIEWPORT_SIZE");
-            let changed_viewport_offset = editor.has_changed("VIEWPORT_OFFSET");
-            let changed_cursor = editor.has_changed("CURSOR");
+            let new_viewport_size = editor.get_viewport_size();
+            let new_viewport_offset = editor.get_viewport_offset();
+            let changed_viewport_size = Some(new_viewport_size) != self.rendered_viewport_size;
+            let changed_viewport_offset = Some(new_viewport_offset) != self.rendered_viewport_offset;
+
+            let new_cursor = (editor.get_cursor_offset(), editor.get_cursor_length());
+            let changed_cursor = Some(new_cursor) != self.rendered_cursor;
+
 
             if changed_viewport_size {
                 match self.setup_displays(editor) {
@@ -112,6 +131,8 @@ impl FrontEnd {
                         Err(SbyteError::RemapFailed(error))?
                     }
                 }
+                self.rendered_viewport_size = Some(new_viewport_size);
+                self.rendered_viewport_offset = Some(new_viewport_offset);
             }
 
             let changed_offsets = editor.fetch_changed_offsets();
@@ -154,6 +175,7 @@ impl FrontEnd {
 
             if changed_cursor {
                 self.display_user_offset(editor)?;
+                self.rendered_cursor = Some(new_cursor);
             }
 
 
@@ -195,17 +217,42 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn auto_resize(&mut self) -> bool {
-        self.rectmanager.auto_resize()
+    pub fn auto_resize(&mut self, shell: &mut Shell) -> bool {
+        let editor = shell.get_editor_mut();
+        let new_formatter = editor.get_active_formatter_ref();
+        if self.rectmanager.auto_resize() || Some(new_formatter) != self.rendered_formatter {
+            let delay = time::Duration::from_nanos(1_000);
+            thread::sleep(delay);
+
+            let viewport_height = self.get_viewport_height();
+            let screensize = self.size();
+            let display_ratio = editor.get_display_ratio() as f64;
+            let r: f64 = 1f64 / display_ratio;
+            let a: f64 = 1f64 - (1f64 / (r + 1f64));
+            let base_width = ((screensize.0 as f64 - 1f64) * a) as usize;
+
+            let cursor_offset = editor.get_cursor_real_offset();
+            let cursor_length = editor.get_cursor_real_length();
+            editor.set_viewport_offset(0);
+            editor.set_cursor_length(1);
+            editor.set_cursor_offset(0);
+
+            editor.set_viewport_size(base_width, viewport_height);
+            editor.set_cursor_offset(cursor_offset);
+            editor.set_cursor_length(cursor_length);
+            self.rendered_formatter = Some(new_formatter);
+            true
+        } else {
+            false
+        }
     }
 
     fn remap_active_rows(&mut self, editor: &Editor) -> Result<(), WreckedError> {
-
         let (width, height) = editor.get_viewport_size();
 
-        let initial_y = self.last_known_viewport_offset as isize;
+        let initial_y = self.rendered_viewport_y_offset as isize;
         let new_y = (editor.get_viewport_offset() / width) as isize;
-        self.last_known_viewport_offset = new_y as usize;
+        self.rendered_viewport_y_offset = new_y as usize;
 
         let diff: usize;
         if new_y > initial_y {
@@ -356,7 +403,6 @@ impl FrontEnd {
                     self.rows_to_refresh.insert(*y + (new_y as usize));
                 }
             }
-
         }
 
         Ok(())
@@ -366,7 +412,6 @@ impl FrontEnd {
         // Assumes that the viewport size AND the rectmanager size are correctly set at this point
         let full_width = self.rectmanager.get_width();
         let full_height = self.rectmanager.get_height();
-
         let (viewport_width, viewport_height) = editor.get_viewport_size();
 
         self.rectmanager.resize(self.rect_meta, full_width, 1)?;
@@ -386,8 +431,8 @@ impl FrontEnd {
         let (bits_display, human_display) = self.rects_display;
         self.rectmanager.clear_children(bits_display)?;
         self.rectmanager.clear_children(human_display)?;
-
         self.arrange_displays(editor)?;
+
 
         self.cell_dict.drain();
         self.row_dict.drain();
@@ -399,6 +444,7 @@ impl FrontEnd {
         } else {
             width_bits = display_ratio;
         }
+
 
         let mut _bits_row_id: RectId;
         let mut _bits_cell_id: RectId;
@@ -432,6 +478,7 @@ impl FrontEnd {
                 y as isize
             )?;
 
+
             self.row_dict.entry(y)
                 .and_modify(|e| *e = (_bits_row_id, _human_row_id))
                 .or_insert((_bits_row_id, _human_row_id));
@@ -440,6 +487,7 @@ impl FrontEnd {
 
             for x in 0 .. viewport_width {
                 _bits_cell_id = self.rectmanager.new_rect(_bits_row_id).ok().unwrap();
+
                 self.rectmanager.resize(
                     _bits_cell_id,
                     width_bits,
@@ -452,6 +500,7 @@ impl FrontEnd {
                     0
                 )?;
 
+
                 _human_cell_id = self.rectmanager.new_rect(_human_row_id).ok().unwrap();
 
                 self.rectmanager.set_position(
@@ -459,6 +508,7 @@ impl FrontEnd {
                     x as isize,
                     0
                 )?;
+
                 self.rectmanager.resize(_human_cell_id, 1, 1)?;
 
                 _cells_hashmap.entry(x as usize)
@@ -528,7 +578,7 @@ impl FrontEnd {
     }
 
     fn set_row_characters(&mut self, editor: &Editor, absolute_y: usize) -> Result<(), WreckedError> {
-        let human_formatter = HumanFormatter {};
+        let human_formatter = OneToOneFormatter {};
         let active_formatter = editor.get_active_formatter();
         let (width, _height) = editor.get_viewport_size();
         let offset = width * absolute_y;
@@ -538,50 +588,48 @@ impl FrontEnd {
 
         match self.cell_dict.get_mut(&relative_y) {
             Some(cellhash) => {
-
                 for (_x, (rect_id_bits, rect_id_human)) in cellhash.iter_mut() {
                     self.rectmanager.clear_characters(*rect_id_human)?;
                     self.rectmanager.clear_children(*rect_id_bits)?;
                     self.rectmanager.clear_characters(*rect_id_bits)?;
                 }
 
-                let mut tmp_bits;
                 let mut tmp_bits_str;
-                let mut tmp_human;
                 let mut tmp_human_str;
-                let mut fmt_response;
-
                 for (x, byte) in chunk.iter().enumerate() {
-                    (tmp_bits, fmt_response) = active_formatter.read_in(*byte);
-                    (tmp_human, fmt_response) = human_formatter.read_in(*byte);
-
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
-                            tmp_bits_str = match std::str::from_utf8(tmp_bits.as_slice()) {
-                                Ok(valid) => {
-                                    valid
+                            match active_formatter.read_in(*byte) {
+                                tmp_bits => {
+                                    tmp_bits_str = match std::str::from_utf8(tmp_bits.as_slice()) {
+                                        Ok(valid) => {
+                                            valid
+                                        }
+                                        Err(_) => {
+                                            // Shouldn't Happen
+                                            "."
+                                        }
+                                    };
+                                    for (i, c) in tmp_bits_str.chars().enumerate() {
+                                        self.rectmanager.set_character(*bits, i as isize, 0, c)?;
+                                    }
                                 }
-                                Err(_) => {
-                                    // Shouldn't Happen
-                                    "."
-                                }
-                            };
-                            tmp_human_str = match std::str::from_utf8(tmp_human.as_slice()) {
-                                Ok(valid) => {
-                                    valid
-                                }
-                                Err(_) => {
-                                    "."
-                                }
-                            };
-
-                            for (i, c) in tmp_human_str.chars().enumerate() {
-                                self.rectmanager.set_character(*human, i as isize, 0, c)?;
                             }
-                            for (i, c) in tmp_bits_str.chars().enumerate() {
-                                self.rectmanager.set_character(*bits, i as isize, 0, c)?;
+                            match human_formatter.read_in(*byte) {
+                                (tmp_human, fmt_response) => {
+                                    tmp_human_str = match std::str::from_utf8(tmp_human.as_slice()) {
+                                        Ok(valid) => {
+                                            valid
+                                        }
+                                        Err(_) => {
+                                            "."
+                                        }
+                                    };
+                                    for (i, c) in tmp_human_str.chars().enumerate() {
+                                        self.rectmanager.set_character(*human, i as isize, 0, c)?;
+                                    }
+                                }
                             }
-
                         }
                         None => { }
                     }
