@@ -9,13 +9,12 @@ pub mod inputter;
 //TODO Move string_to_integer
 use super::shell::{Shell, parse_words};
 use super::editor::{SbyteError, string_to_integer, string_to_bytes};
-use super::editor::converter::*;
+use super::editor::formatter::*;
 use super::console_displayer::FrontEnd;
 use inputter::Inputter;
 
 use std::{time, thread};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 
 pub struct InputInterface {
@@ -39,14 +38,14 @@ impl InputInterface {
         };
 
         interface.setup_default_controls().ok().unwrap();
-        interface.resize_editor_viewport();
+        interface.auto_resize();
 
         interface
     }
 
     fn setup_default_controls(&mut self) -> Result<(), SbyteError> {
         // Default Controls
-        self.hook_assign_mode_input(&["DEFAULT", "TOGGLE_CONVERTER", "EQUALS"]);
+        self.hook_assign_mode_input(&["DEFAULT", "TOGGLE_FORMATTER", "EQUALS"]);
         self.hook_assign_mode_input(&["DEFAULT", "CURSOR_DOWN", "J_LOWER"]);
         self.hook_assign_mode_input(&["DEFAULT", "CURSOR_UP", "K_LOWER"]);
         self.hook_assign_mode_input(&["DEFAULT", "CURSOR_LEFT", "H_LOWER"]);
@@ -450,14 +449,14 @@ impl InputInterface {
             }
 
             "MODE_SET_OVERWRITE" => {
-                match self.shell.get_editor().get_active_converter_ref() {
-                    ConverterRef::BIN => {
+                match self.shell.get_editor().get_active_formatter_ref() {
+                    FormatterRef::BIN => {
                         self.set_context("OVERWRITE_BIN");
                     }
-                    ConverterRef::HEX => {
+                    FormatterRef::HEX => {
                         self.set_context("OVERWRITE_HEX");
                     }
-                    ConverterRef::DEC => {
+                    FormatterRef::DEC => {
                         self.set_context("OVERWRITE_DEC");
                     }
                 };
@@ -617,33 +616,9 @@ impl InputInterface {
         Ok(())
     }
 
-    fn resize_editor_viewport(&mut self) {
-        //TODO, Clean this mess up
-        let viewport_height = self.frontend.get_viewport_height();
-        let screensize = self.frontend.size();
-        let display_ratio = self.shell.get_editor().get_display_ratio() as f64;
-        let r: f64 = 1f64 / display_ratio;
-        let a: f64 = 1f64 - (1f64 / (r + 1f64));
-        let mut base_width = ((screensize.0 as f64 - 1f64) * a) as usize;
-
-        let cursor_offset = self.shell.get_editor().get_cursor_real_offset();
-        let cursor_length = self.shell.get_editor().get_cursor_real_length();
-        let editor = self.shell.get_editor_mut();
-        editor.set_viewport_offset(0);
-        editor.set_cursor_length(1);
-        editor.set_cursor_offset(0);
-
-        editor.set_viewport_size(base_width, viewport_height);
-        editor.set_cursor_offset(cursor_offset);
-        editor.set_cursor_length(cursor_length);
-    }
 
     fn auto_resize(&mut self) {
-        if self.frontend.auto_resize() {
-            let delay = time::Duration::from_nanos(1_000);
-            thread::sleep(delay);
-            self.resize_editor_viewport();
-        }
+        self.frontend.auto_resize(&mut self.shell);
     }
 
     fn set_context(&mut self, new_context: &str) {

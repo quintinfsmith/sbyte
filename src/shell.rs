@@ -28,7 +28,7 @@ impl Shell {
             register: None
         };
 
-        output.map_command("TOGGLE_CONVERTER", hook_toggle_converter);
+        output.map_command("TOGGLE_FORMATTER", hook_toggle_formatter);
         output.map_command("QUIT", hook_send_kill_signal);
 
         output.map_command("CURSOR_UP", hook_cursor_up);
@@ -804,8 +804,8 @@ fn hook_save_quit(shell: &mut Shell, args: &[&str]) -> R {
     Err(SbyteError::KillSignal)
 }
 
-fn hook_toggle_converter(shell: &mut Shell, args: &[&str]) -> R {
-    shell.get_editor_mut().toggle_converter();
+fn hook_toggle_formatter(shell: &mut Shell, args: &[&str]) -> R {
+    shell.get_editor_mut().toggle_formatter();
     Ok(())
 }
 
