@@ -10,7 +10,7 @@ repository = "https://github.com/quintinfsmith/sbyte.git"
 license = "GPL-3.0"
 
 [dependencies]
-wrecked = "^1.0.7"
+wrecked = { git = "git://burnsomni.net/wrecked" }
 ctrlc = "3.1.6"
 regex = "^1.4.2"
 
