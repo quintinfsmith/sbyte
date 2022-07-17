@@ -6,8 +6,10 @@ edition = "2018"
 description = "Console-based byte editor"
 categories = ["command-line-utilities", "text-editors"]
 keywords = ["hex", "byte", "editor"]
-repository = "https://github.com/quintinfsmith/sbyte.git"
+repository = "git://burnsomni.net/sbyte"
+homepage = "https://burnsomni.net/software/sbyte/"
 license = "GPL-3.0"
+readme = "README.md"
 
 [dependencies]
 wrecked = { git = "git://burnsomni.net/wrecked" }
