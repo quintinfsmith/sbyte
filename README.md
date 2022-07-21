@@ -2,7 +2,6 @@
 An in-console byte editor. Work in progress, but fairly stable for basic work.<br/>
 [![Crates.io](https://img.shields.io/crates/v/sbyte?style=flat-square)](https://crates.io/crates/sbyte)
 [![Crates.io](https://img.shields.io/crates/d/sbyte?style=flat-square)](https://crates.io/crates/sbyte)
-[![Travis (.com)](https://img.shields.io/travis/com/quintinfsmith/sbyte?style=flat-square)](https://travis-ci.com/github/quintinfsmith/sbyte)
 [![GitHub](https://img.shields.io/github/license/quintinfsmith/sbyte?style=flat-square)](https://github.com/quintinfsmith/sbyte/blob/master/LICENSE)
 
 
