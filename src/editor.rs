@@ -47,7 +47,8 @@ pub enum SbyteError {
     InvalidDigit(FormatterRef),
     InvalidRadix(u8),
     BufferEmpty,
-    KillSignal
+    KillSignal,
+    IOError
 }
 
 impl fmt::Display for SbyteError {
@@ -83,6 +84,12 @@ impl From<FormatterError> for SbyteError {
                 SbyteError::InvalidDigit(conv)
             }
         }
+    }
+}
+
+impl From<std::io::Error> for SbyteError {
+    fn from(err: std::io::Error) -> Self {
+        SbyteError::IOError
     }
 }
 
@@ -449,7 +456,7 @@ impl Editor {
         Ok(())
     }
 
-    pub fn save(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn save(&mut self) -> Result<(), SbyteError> {
         match self.active_file_path.clone() {
             Some(path) => {
                 self.save_as(&path.to_string())?;
@@ -462,10 +469,10 @@ impl Editor {
         Ok(())
     }
 
-    pub fn save_as(&mut self, path: &str) -> std::io::Result<()> {
+    pub fn save_as(&mut self, path: &str) -> Result<(), SbyteError> {
         match File::create(path) {
             Ok(mut file) => {
-                file.write_all(self.active_content.as_slice())?;
+                file.write_all(self.active_content.as_slice())?
                 // TODO: Handle potential file system problems
                 //file.sync_all();
             }

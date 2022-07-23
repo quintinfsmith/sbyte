@@ -788,12 +788,27 @@ fn hook_decrement(shell: &mut Shell, args: &[&str]) -> R {
 fn hook_save(shell: &mut Shell, args: &[&str]) -> R {
     if !args.is_empty() {
         for arg in args.iter() {
-        // TODO: Handle Result here
-            shell.get_editor_mut().save_as(arg);
+            match shell.get_editor_mut().save_as(arg) {
+                Ok(_) => {
+                    shell.log_feedback(&format!("saved '{}'", arg));
+                }
+                Err(e) => {
+                    Err(e)?;
+                }
+            }
         }
     } else {
-        // TODO: Handle Result here
-        shell.get_editor_mut().save();
+        match shell.get_editor_mut().save() {
+            Ok(_) => {
+                shell.log_feedback("saved");
+            }
+            Err(SbyteError::PathNotSet) => {
+                shell.log_error("failed to save: no path set");
+            }
+            Err(e) => {
+                Err(e)?;
+            }
+        }
     }
 
     Ok(())
