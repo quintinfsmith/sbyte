@@ -984,6 +984,17 @@ impl Editor {
         self.search_history.clone()
     }
 
+    pub fn get_latest_search(&self) -> Option<String> {
+        match self.search_history.last() {
+            Some(hit) => {
+                Some(hit.to_string())
+            }
+            None => {
+                None
+            }
+        }
+    }
+
     pub fn unset_user_msg(&mut self) {
         self.user_msg = None;
     }

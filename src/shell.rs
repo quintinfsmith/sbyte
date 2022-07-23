@@ -882,92 +882,77 @@ fn hook_set_alias(shell: &mut Shell, args: &[&str]) -> R {
 ////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////
 
+/// Move to the next (or previous) instance of a given pattern
+fn jump_to_next_or_previous(shell: &mut Shell, argument: Option<&str>, is_next: bool) -> R {
+    let repeat: usize = shell.register_fetch(0);
+    let editor = shell.get_editor_mut();
+
+    let current_offset = editor.get_cursor_offset();
+    let option_pattern: Option<String> = match argument {
+        Some(pattern) => { // arugment was given. use it.
+            Some(pattern.to_string())
+        }
+        None => {
+            editor.get_latest_search()
+        }
+    };
+
+    match option_pattern {
+        Some(string_rep) => {
+            editor.add_search_history(string_rep.clone());
+            // This is the only difference in between jumping forward and backwards, so using a boolean
+            // unless I think of a cleaner way that also doesn't use a large chunk of duplication
+            let jump_result = match is_next {
+                true => {
+                    editor.find_nth_after(&string_rep, current_offset, repeat)
+                }
+                false => {
+                    editor.find_nth_before(&string_rep, current_offset, repeat)
+                }
+            };
+            match jump_result {
+                Ok(result) => {
+                    match result {
+                        Some(new_offset) => {
+                            editor.set_cursor_length((new_offset.1 - new_offset.0) as isize);
+                            editor.set_cursor_offset(new_offset.0)?;
+
+                            shell.log_feedback(&format!("found '{}' at {:#02x}", string_rep, new_offset.0));
+                        }
+                        None => {
+                            shell.log_feedback(&format!("no match found: {}", string_rep));
+                        }
+                    }
+                }
+                Err(SbyteError::InvalidHexidecimal(bad_string)) |
+                Err(SbyteError::InvalidDecimal(bad_string)) |
+                Err(SbyteError::InvalidBinary(bad_string)) |
+                Err(SbyteError::InvalidRegex(bad_string)) => {
+                    shell.log_error(&format!("invalid pattern: {}", &bad_string));
+                }
+                Err(e) => {
+                    Err(e)?;
+                }
+            }
+        }
+        None => {
+            shell.log_error("need a pattern");
+        }
+    }
+
+    Ok(())
+}
+
+/// Move cursor to the previous instance of a pattern
 fn jump_to_previous(shell: &mut Shell, argument: Option<&str>) -> R {
-    let current_offset = shell.get_editor_mut().get_cursor_offset();
-    let option_pattern: Option<String> = match argument {
-        Some(pattern) => { // arugment was given. use it.
-            Some(pattern.to_string())
-        }
-        None => {
-            match shell.get_editor_mut().get_search_history().last() {
-                Some(byte_pattern) => {
-                    Some(byte_pattern.clone())
-                }
-                None => {
-                    None
-                }
-            }
-        }
-    };
-
-    let repeat = shell.register_fetch(0);
-
-
-    // TODO: Feedback
-    match option_pattern {
-        Some(string_rep) => {
-            shell.get_editor_mut().add_search_history(string_rep.clone());
-            match shell.get_editor_mut().find_nth_before(&string_rep, current_offset, repeat) {
-                Ok(result) => {
-                    match result {
-                        Some(new_offset) => {
-                            shell.get_editor_mut().set_cursor_length((new_offset.1 - new_offset.0) as isize);
-                            shell.get_editor_mut().set_cursor_offset(new_offset.0);
-                        }
-                        None => ()
-                    }
-                }
-                Err(_e) => ()
-            }
-        }
-        None => ()
-    }
-
-    Ok(())
+    jump_to_next_or_previous(shell, argument, false)
 }
 
+/// Move cursor to the next instance of a pattern
 fn jump_to_next(shell: &mut Shell, argument: Option<&str>) -> R {
-    let current_offset = shell.get_editor_mut().get_cursor_offset();
-    let option_pattern: Option<String> = match argument {
-        Some(pattern) => { // arugment was given. use it.
-            Some(pattern.to_string())
-        }
-        None => {
-            match shell.get_editor_mut().get_search_history().last() {
-                Some(byte_pattern) => {
-                    Some(byte_pattern.clone())
-                }
-                None => {
-                    None
-                }
-            }
-        }
-    };
-
-    let repeat = shell.register_fetch(0);
-
-    // TODO: Feedback
-    match option_pattern {
-        Some(string_rep) => {
-            shell.get_editor_mut().add_search_history(string_rep.clone());
-            match shell.get_editor_mut().find_nth_after(&string_rep, current_offset, repeat) {
-                Ok(result) => {
-                    match result {
-                        Some(new_offset) => {
-                            shell.get_editor_mut().set_cursor_length((new_offset.1 - new_offset.0) as isize);
-                            shell.get_editor_mut().set_cursor_offset(new_offset.0);
-                        }
-                        None => ()
-                    }
-                }
-                Err(_e) => ()
-            }
-        }
-        None => ()
-    }
-
-    Ok(())
+    jump_to_next_or_previous(shell, argument, true)
 }
+
 
 /// Takes strings input within the program and parses the words.
 pub fn parse_words(input_string: &str) -> Vec<String> {
