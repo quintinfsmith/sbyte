@@ -645,11 +645,7 @@ impl InputInterface {
             self.shell.register_clear();
         }
 
-        if new_context.contains("INSERT") {
-            self.shell.log_feedback("--INSERT--");
-        } else if new_context.contains("OVERWRITE") {
-            self.shell.log_feedback("--OVERWRITE--");
-        }
+        self.shell.log_feedback(&format!("--{}--", new_context));
 
         match self.inputter.try_lock() {
             Ok(ref mut mutex) => {
