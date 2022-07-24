@@ -247,10 +247,6 @@ impl Shell {
         }
     }
 
-    fn handle_result(&mut self, result: Result<(), SbyteError>) {
-        // TODO
-    }
-
     pub fn get_editor(&self) -> &Editor {
         &self.editor
     }
@@ -298,7 +294,7 @@ fn hook_push_to_register(shell: &mut Shell, args: &[&str]) -> R {
                 digit = c.to_digit(10).unwrap() as usize;
                 shell.register_push(digit);
             } else {
-                // TODO Throw Error
+                shell.log_error(&format!("invalid digit: {}", c));
             }
         }
     }
@@ -523,8 +519,8 @@ fn hook_bitwise_nor_mask(shell: &mut Shell, args: &[&str]) -> R {
             Ok(mask) => {
                 shell.get_editor_mut().apply_nor_mask(&mask)?;
             }
-            Err(_e) => {
-                //TODO: Handle this
+            Err(e) => {
+                shell.log_error(&format!("{:?}", e));
             }
         }
     }
@@ -538,8 +534,8 @@ fn hook_bitwise_and_mask(shell: &mut Shell, args: &[&str]) -> R {
             Ok(mask) => {
                 shell.get_editor_mut().apply_and_mask(&mask)?;
             }
-            Err(_e) => {
-                //TODO: Handle this
+            Err(e) => {
+                shell.log_error(&format!("{:?}", e));
             }
         }
     }
@@ -552,8 +548,8 @@ fn hook_bitwise_nand_mask(shell: &mut Shell, args: &[&str]) -> R {
             Ok(mask) => {
                 shell.get_editor_mut().apply_nand_mask(&mask)?;
             }
-            Err(_e) => {
-                //TODO: Handle this
+            Err(e) => {
+                shell.log_error(&format!("{:?}", e));
             }
         }
     }
@@ -566,8 +562,8 @@ fn hook_bitwise_or_mask(shell: &mut Shell, args: &[&str]) -> R {
             Ok(mask) => {
                 shell.get_editor_mut().apply_or_mask(&mask)?;
             }
-            Err(_e) => {
-                //TODO: Handle this
+            Err(e) => {
+                shell.log_error(&format!("{:?}", e));
             }
         }
     }
@@ -580,8 +576,8 @@ fn hook_bitwise_xor_mask(shell: &mut Shell, args: &[&str]) -> R {
             Ok(mask) => {
                 shell.get_editor_mut().apply_xor_mask(&mask)?;
             }
-            Err(_e) => {
-                //TODO: Handle this
+            Err(e) => {
+                shell.log_error(&format!("{:?}", e));
             }
         }
     }
@@ -699,7 +695,9 @@ fn hook_insert_string(shell: &mut Shell, args: &[&str]) -> R {
                         shell.get_editor_mut().cursor_next_byte();
                     }
                 }
-                Err(_e) => ()
+                Err(e) => {
+                    shell.log_error(&format!("{:?}", e));
+                }
             }
 
         }
@@ -719,7 +717,9 @@ fn hook_overwrite_string(shell: &mut Shell, args: &[&str]) -> R {
                         shell.get_editor_mut().cursor_next_byte();
                     }
                 }
-                Err(_e) => ()
+                Err(e) => {
+                    shell.log_error(&format!("{:?}", e));
+                }
             }
 
         }
@@ -1033,3 +1033,4 @@ pub fn parse_words(input_string: &str) -> Vec<String> {
 
     output
 }
+
