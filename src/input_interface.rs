@@ -469,7 +469,7 @@ impl InputInterface {
             }
 
             "MODE_SET_APPEND" => {
-                self.send_command("MODE_SET_INSERT", arguments)?;
+                self.send_command("MODE_SET_INSERT_ASCII", arguments)?;
                 self.send_command("CURSOR_RIGHT", &[])?;
             }
 
@@ -479,6 +479,19 @@ impl InputInterface {
 
             "MODE_SET_CMD" => {
                 self.set_context("CMD");
+            }
+
+            "MODE_SET_MASK_AND" => {
+                self.set_context("CMD");
+                self.shell.buffer_push("and");
+            }
+            "MODE_SET_MASK_OR" => {
+                self.set_context("CMD");
+                self.shell.buffer_push("or ");
+            }
+            "MODE_SET_MASK_XOR" => {
+                self.set_context("CMD");
+                self.shell.buffer_push("xor ");
             }
 
             "MODE_SET_SEARCH" => {

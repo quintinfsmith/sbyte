@@ -76,6 +76,13 @@ impl Shell {
         output.map_command("RUN_CUSTOM_COMMAND", hook_query);
         output.map_command("REPLACE_ALL", hook_replace_pattern);
 
+        output.map_command("MASK_NOT", hook_bitwise_not);
+        output.map_command("MASK_AND", hook_bitwise_and_mask);
+        output.map_command("MASK_NAND", hook_bitwise_nand_mask);
+        output.map_command("MASK_OR", hook_bitwise_or_mask);
+        output.map_command("MASK_NOR", hook_bitwise_nor_mask);
+        output.map_command("MASK_XOR", hook_bitwise_xor_mask);
+
         output.map_command("ALIAS", hook_set_alias);
 
         output.map_command("SAVE", hook_save);
