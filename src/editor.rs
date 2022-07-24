@@ -423,19 +423,21 @@ impl Editor {
         self.copy_to_clipboard(selected_bytes);
     }
 
-    pub fn load_file(&mut self, file_path: &str) -> std::io::Result<()> {
+    pub fn load_file(&mut self, file_path: &str) -> Result<(), SbyteError> {
         self.flag_loading = true;
         self.active_content = Content::new();
 
         self.set_file_path(file_path);
         match File::open(file_path) {
             Ok(mut file) => {
-                let file_length = match file.metadata() {
+                let file_length;
+                match file.metadata() {
                     Ok(metadata) => {
-                        metadata.len()
+                        file_length = metadata.len();
                     }
-                    Err(_) => { // TODO: Handle different error types
-                        0
+                    Err(e) => {
+                        file_length = 0;
+                        Err(e)?;
                     }
                 };
 
@@ -473,7 +475,6 @@ impl Editor {
         match File::create(path) {
             Ok(mut file) => {
                 file.write_all(self.active_content.as_slice())?
-                // TODO: Handle potential file system problems
                 //file.sync_all();
             }
             Err(e) => {
