@@ -12,7 +12,9 @@ pub struct Shell {
     buffer_history: Vec<String>,
     feedback: Option<String>,
     error: Option<String>,
-    register: Option<usize>
+    register: Option<usize>,
+    record_map: HashMap<String, Vec<Vec<String>>>,
+    record_key: Option<String>
 }
 
 impl Shell {
@@ -25,7 +27,9 @@ impl Shell {
             buffer_history: Vec::new(),
             feedback: None,
             error: None,
-            register: None
+            register: None,
+            record_map: HashMap::new(),
+            record_key: None
         };
 
         output.map_command("TOGGLE_FORMATTER", hook_toggle_formatter);
@@ -85,24 +89,32 @@ impl Shell {
 
         output.map_command("ALIAS", hook_set_alias);
 
+        output.map_command("RECORD_START", hook_record_enable);
+        output.map_command("RECORD_STOP", hook_record_disable);
+        output.map_command("RECORD_TOGGLE", hook_record_toggle);
+        output.map_command("RECORD_PLAYBACK", hook_record_playback);
+
         output.map_command("SAVE", hook_save);
         output.map_command("SAVEQUIT", hook_save_quit);
 
-        output.map_alias("q", "QUIT");
-        output.map_alias("w", "SAVE");
-        output.map_alias("wq", "SAVEQUIT");
-        output.map_alias("find", "JUMP_TO_PATTERN");
-        output.map_alias("fr", "REPLACE_ALL");
-        output.map_alias("insert", "INSERT_STRING");
-        output.map_alias("overwrite", "OVERWRITE");
+        output.map_alias("rec", "RECORD_TOGGLE").ok();
+        output.map_alias("play", "RECORD_PLAYBACK").ok();
 
-        output.map_alias("and", "MASK_AND");
-        output.map_alias("nand", "MASK_NAND");
-        output.map_alias("or", "MASK_OR");
-        output.map_alias("nor", "MASK_NOR");
-        output.map_alias("xor", "MASK_XOR");
-        output.map_alias("not", "BITWISE_NOT");
-        output.map_alias("rep", "REPLACE_ALL");
+        output.map_alias("q", "QUIT").ok();
+        output.map_alias("w", "SAVE").ok();
+        output.map_alias("wq", "SAVEQUIT").ok();
+        output.map_alias("find", "JUMP_TO_PATTERN").ok();
+        output.map_alias("fr", "REPLACE_ALL").ok();
+        output.map_alias("insert", "INSERT_STRING").ok();
+        output.map_alias("overwrite", "OVERWRITE").ok();
+
+        output.map_alias("and", "MASK_AND").ok();
+        output.map_alias("nand", "MASK_NAND").ok();
+        output.map_alias("or", "MASK_OR").ok();
+        output.map_alias("nor", "MASK_NOR").ok();
+        output.map_alias("xor", "MASK_XOR").ok();
+        output.map_alias("not", "BITWISE_NOT").ok();
+        output.map_alias("rep", "REPLACE_ALL").ok();
 
        // output.map_command("", );
 
@@ -231,8 +243,82 @@ impl Shell {
         }
     }
 
-    pub fn try_command(&mut self, key: &str, args: &[&str]) -> Result<(), SbyteError> {
+    fn get_recorded_commands(&mut self, record_key: &str) -> Vec<Vec<String>> {
+        let mut output = vec![];
+        match self.record_map.get_mut(&record_key.to_string()) {
+            Some(command_list) => {
+                output = command_list.clone()
+            }
+            None => { }
+        }
+
+        output
+    }
+
+    fn record_playback(&mut self, record_key: &str) -> R {
+        let playback_list = self.get_recorded_commands(record_key);
+        for arglist in playback_list.iter() {
+            let cmd = arglist[0].as_str();
+            let mut args = vec![];
+            for arg in &arglist[1..] {
+                args.push(arg.as_str());
+            }
+            self.try_command(cmd, &args)?;
+        }
+
+        Ok(())
+    }
+
+    fn record_enable(&mut self, record_key: &str) {
+        self.record_key = Some(record_key.to_string());
+        self.record_map.entry(record_key.to_string())
+            .and_modify(|e| { *e = Vec::new(); })
+            .or_insert(Vec::new());
+    }
+
+    fn record_disable(&mut self) {
+        self.record_key = None;
+    }
+
+    fn record_command(&mut self, key: &str, args: &[&str]) {
+        match &self.record_key {
+            Some(record_key) => {
+                match self.record_map.get_mut(&record_key.to_string()) {
+                    Some(command_list) => {
+                        let mut recorded_command = vec![key.to_string()];
+                        for arg in args {
+                            recorded_command.push(arg.to_string());
+                        }
+                        command_list.push(recorded_command);
+                    }
+                    None => {
+                        self.log_error("Recorder not initialized");
+                    }
+                }
+            }
+            None => ()
+        }
+    }
+
+    pub fn get_recorded_action_count(&mut self, key: &str) -> usize {
+        match self.record_map.get(&key.to_string()) {
+            Some(command_list) => {
+                command_list.len()
+            }
+            None => {
+                0
+            }
+        }
+    }
+
+    pub fn get_active_record_key(&mut self) -> Option<String> {
+        self.record_key.clone()
+    }
+
+    pub fn try_command(&mut self, key: &str, args: &[&str]) -> R {
         let mut use_key = key;
+        self.record_command(use_key, args);
+
         if ! self.hook_map.contains_key(&key.to_string()) {
             match self.alias_map.get(&key.to_string()) {
                 Some(real_key) => {
@@ -241,6 +327,7 @@ impl Shell {
                 None => { }
             }
         }
+
 
         match self.hook_map.get(use_key) {
             Some(f) => {
@@ -283,7 +370,7 @@ impl Shell {
 //////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 
-fn hook_clear_register(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_clear_register(shell: &mut Shell, _args: &[&str]) -> R {
     shell.register_clear();
     Ok(())
 }
@@ -316,7 +403,7 @@ fn hook_push_to_register(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_clear_buffer(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_clear_buffer(shell: &mut Shell, _args: &[&str]) -> R {
     shell.buffer_clear();
     Ok(())
 }
@@ -328,7 +415,7 @@ fn hook_push_to_buffer(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_pop_from_buffer(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_pop_from_buffer(shell: &mut Shell, _args: &[&str]) -> R {
     match shell.buffer_pop() {
         Some(_) => {
             Ok(())
@@ -339,7 +426,7 @@ fn hook_pop_from_buffer(shell: &mut Shell, args: &[&str]) -> R {
     }
 }
 
-fn hook_query(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_query(shell: &mut Shell, _args: &[&str]) -> R {
     shell.query()
 }
 
@@ -348,7 +435,7 @@ fn hook_query(shell: &mut Shell, args: &[&str]) -> R {
 ////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////
 
-fn hook_cursor_up(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_up(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     shell.get_editor_mut().set_cursor_length(1);
 
@@ -359,7 +446,7 @@ fn hook_cursor_up(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_down(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_down(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     shell.get_editor_mut().set_cursor_length(1);
 
@@ -370,7 +457,7 @@ fn hook_cursor_down(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_left(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_left(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     shell.get_editor_mut().set_cursor_length(1);
 
@@ -381,7 +468,7 @@ fn hook_cursor_left(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_right(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_right(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     shell.get_editor_mut().set_cursor_length(1);
 
@@ -392,7 +479,7 @@ fn hook_cursor_right(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_length_up(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_length_up(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_decrease_length_by_line();
@@ -401,7 +488,7 @@ fn hook_cursor_length_up(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_length_down(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_length_down(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_increase_length_by_line();
@@ -410,7 +497,7 @@ fn hook_cursor_length_down(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_length_left(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_length_left(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_decrease_length();
@@ -419,7 +506,7 @@ fn hook_cursor_length_left(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_cursor_length_right(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_cursor_length_right(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_increase_length();
@@ -428,12 +515,12 @@ fn hook_cursor_length_right(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_subcursor_left(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_subcursor_left(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().subcursor_prev_digit();
     Ok(())
 }
 
-fn hook_subcursor_right(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_subcursor_right(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().subcursor_next_digit();
     Ok(())
 }
@@ -479,7 +566,7 @@ fn hook_overwrite_digit(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_jump_to_position(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_jump_to_position(shell: &mut Shell, _args: &[&str]) -> R {
     let default = shell.get_editor().len();
     let new_offset = shell.register_fetch(default);
     shell.get_editor_mut().set_cursor_length(1);
@@ -488,7 +575,7 @@ fn hook_jump_to_position(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_jump_big_endian(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_jump_big_endian(shell: &mut Shell, _args: &[&str]) -> R {
     let new_offset = shell.get_editor_mut().get_selected_as_big_endian();
     shell.get_editor_mut().set_cursor_length(1);
     shell.get_editor_mut().set_cursor_offset(new_offset)?;
@@ -496,7 +583,7 @@ fn hook_jump_big_endian(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_jump_little_endian(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_jump_little_endian(shell: &mut Shell, _args: &[&str]) -> R {
     let new_offset = shell.get_editor_mut().get_selected_as_little_endian();
     shell.get_editor_mut().set_cursor_length(1);
     shell.get_editor_mut().set_cursor_offset(new_offset)?;
@@ -504,7 +591,7 @@ fn hook_jump_little_endian(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_jump_register(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_jump_register(shell: &mut Shell, _args: &[&str]) -> R {
     let default = shell.get_editor().len();
     let new_offset = shell.register_fetch(default);
 
@@ -516,7 +603,7 @@ fn hook_jump_register(shell: &mut Shell, args: &[&str]) -> R {
 
 
 
-fn hook_bitwise_not(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_bitwise_not(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().bitwise_not()
 }
 
@@ -884,6 +971,47 @@ fn hook_set_alias(shell: &mut Shell, args: &[&str]) -> R {
         shell.log_error("Alias and command key required");
     }
 
+    Ok(())
+}
+fn hook_record_toggle(shell: &mut Shell, args: &[&str]) -> R {
+    match shell.get_active_record_key() {
+        Some(record_key) => {
+            let action_count = shell.get_recorded_action_count(&record_key);
+            shell.record_disable();
+            shell.log_feedback(&format!("recorded {} actions at {}", action_count, record_key));
+        }
+        None => {
+            if args.len() >= 1 {
+                shell.record_enable(args[0]);
+                shell.log_feedback(&format!("recording @ '{}'", args[0]));
+            } else {
+                shell.log_error("need a keyword");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn hook_record_playback(shell: &mut Shell, args: &[&str]) -> R {
+    for arg in args.iter() {
+        shell.record_playback(arg)?;
+    }
+    Ok(())
+}
+
+fn hook_record_enable(shell: &mut Shell, args: &[&str]) -> R {
+    if args.len() >= 1 {
+        shell.record_enable(args[0]);
+        shell.log_feedback(&format!("recording @ '{}'", args[0]));
+    } else {
+        shell.log_error("need a keyword");
+    }
+    Ok(())
+}
+
+fn hook_record_disable(shell: &mut Shell, _args: &[&str]) -> R {
+    shell.record_disable();
+    // TODO: Feedback
     Ok(())
 }
 ////////////////////////////////////////////////////////////////////////////
