@@ -643,9 +643,9 @@ impl InputInterface {
 
         if new_context != "DEFAULT" {
             self.shell.register_clear();
+            self.shell.log_feedback(&format!("--{}--", new_context));
         }
 
-        self.shell.log_feedback(&format!("--{}--", new_context));
 
         match self.inputter.try_lock() {
             Ok(ref mut mutex) => {

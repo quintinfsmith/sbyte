@@ -14,7 +14,8 @@ pub struct Shell {
     error: Option<String>,
     register: Option<usize>,
     record_map: HashMap<String, Vec<Vec<String>>>,
-    record_key: Option<String>
+    record_key: Option<String>,
+    in_playback: bool
 }
 
 impl Shell {
@@ -29,7 +30,8 @@ impl Shell {
             error: None,
             register: None,
             record_map: HashMap::new(),
-            record_key: None
+            record_key: None,
+            in_playback: false
         };
 
         output.map_command("TOGGLE_FORMATTER", hook_toggle_formatter);
@@ -257,46 +259,59 @@ impl Shell {
 
     fn record_playback(&mut self, record_key: &str) -> R {
         let playback_list = self.get_recorded_commands(record_key);
+        self.in_playback = true;
         for arglist in playback_list.iter() {
             let cmd = arglist[0].as_str();
             let mut args = vec![];
             for arg in &arglist[1..] {
                 args.push(arg.as_str());
             }
-            self.try_command(cmd, &args)?;
+            match self.try_command(cmd, &args) {
+                Ok(_) => {}
+                Err(e) => {
+                    self.in_playback = false;
+                    Err(e)?;
+                }
+            }
         }
 
         Ok(())
     }
 
     fn record_enable(&mut self, record_key: &str) {
-        self.record_key = Some(record_key.to_string());
-        self.record_map.entry(record_key.to_string())
-            .and_modify(|e| { *e = Vec::new(); })
-            .or_insert(Vec::new());
+        if ! self.in_playback {
+            self.record_key = Some(record_key.to_string());
+            self.record_map.entry(record_key.to_string())
+                .and_modify(|e| { *e = Vec::new(); })
+                .or_insert(Vec::new());
+        }
     }
 
     fn record_disable(&mut self) {
-        self.record_key = None;
+        if ! self.in_playback {
+            self.record_key = None;
+        }
     }
 
     fn record_command(&mut self, key: &str, args: &[&str]) {
-        match &self.record_key {
-            Some(record_key) => {
-                match self.record_map.get_mut(&record_key.to_string()) {
-                    Some(command_list) => {
-                        let mut recorded_command = vec![key.to_string()];
-                        for arg in args {
-                            recorded_command.push(arg.to_string());
+        if ! self.in_playback {
+            match &self.record_key {
+                Some(record_key) => {
+                    match self.record_map.get_mut(&record_key.to_string()) {
+                        Some(command_list) => {
+                            let mut recorded_command = vec![key.to_string()];
+                            for arg in args {
+                                recorded_command.push(arg.to_string());
+                            }
+                            command_list.push(recorded_command);
                         }
-                        command_list.push(recorded_command);
-                    }
-                    None => {
-                        self.log_error("Recorder not initialized");
+                        None => {
+                            self.log_error("Recorder not initialized");
+                        }
                     }
                 }
+                None => ()
             }
-            None => ()
         }
     }
 
@@ -974,18 +989,20 @@ fn hook_set_alias(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 fn hook_record_toggle(shell: &mut Shell, args: &[&str]) -> R {
-    match shell.get_active_record_key() {
-        Some(record_key) => {
-            let action_count = shell.get_recorded_action_count(&record_key);
-            shell.record_disable();
-            shell.log_feedback(&format!("recorded {} actions at {}", action_count, record_key));
-        }
-        None => {
-            if args.len() >= 1 {
-                shell.record_enable(args[0]);
-                shell.log_feedback(&format!("recording @ '{}'", args[0]));
-            } else {
-                shell.log_error("need a keyword");
+    if ! shell.in_playback {
+        match shell.get_active_record_key() {
+            Some(record_key) => {
+                let action_count = shell.get_recorded_action_count(&record_key);
+                shell.record_disable();
+                shell.log_feedback(&format!("recorded {} actions at {}", action_count, record_key));
+            }
+            None => {
+                if args.len() >= 1 {
+                    shell.record_enable(args[0]);
+                    shell.log_feedback(&format!("recording @ '{}'", args[0]));
+                } else {
+                    shell.log_error("need a keyword");
+                }
             }
         }
     }
