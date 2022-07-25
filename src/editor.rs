@@ -114,7 +114,7 @@ pub struct Editor {
 
     search_history: Vec<String>,
     change_flags: HashMap<String, bool>,
-    changed_offsets: HashSet<(usize, bool)>,
+    changed_offsets: HashSet<(usize, usize, bool)>,
 
     _active_display_ratio: u8
 }
@@ -286,7 +286,7 @@ impl Editor {
             self.active_content.insert_bytes(offset, &bytes_to_insert)?;
         }
 
-        self.changed_offsets.insert((offset, opposite_bytes_to_remove != opposite_bytes_to_insert.len()));
+        self.changed_offsets.insert((offset, max(opposite_bytes_to_remove, opposite_bytes_to_insert.len()), opposite_bytes_to_remove != opposite_bytes_to_insert.len()));
 
         Ok((offset, opposite_bytes_to_remove, opposite_bytes_to_insert, timestamp))
     }
@@ -332,7 +332,7 @@ impl Editor {
             None => ()
         }
 
-        self.changed_offsets.insert((offset, bytes_to_remove != bytes_to_insert.len()));
+        self.changed_offsets.insert((offset, max(bytes_to_remove, bytes_to_insert.len()), bytes_to_remove != bytes_to_insert.len()));
 
         if !was_merged {
             self.undo_stack.push((offset, bytes_to_remove, bytes_to_insert, Instant::now()));
@@ -973,7 +973,7 @@ impl Editor {
         self.set_viewport_offset((old_offset / width) * width);
     }
 
-    pub fn fetch_changed_offsets(&mut self) -> HashSet<(usize, bool)> {
+    pub fn fetch_changed_offsets(&mut self) -> HashSet<(usize, usize, bool)> {
         self.changed_offsets.drain().collect()
     }
 

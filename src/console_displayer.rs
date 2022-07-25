@@ -139,14 +139,16 @@ impl FrontEnd {
             if !changed_offsets.is_empty() {
                 let (viewport_width, viewport_height) = editor.get_viewport_size();
                 let viewport_bottom = (editor.get_viewport_offset() / viewport_width) + viewport_height;
-                for (i, rippled) in changed_offsets.iter() {
+                for (i, length, rippled) in changed_offsets.iter() {
                     let start_row = i / viewport_width;
                     if *rippled && viewport_bottom >= start_row {
                         for y in start_row .. viewport_bottom + 1 {
                             self.rows_to_refresh.insert(y);
                         }
                     } else {
-                        self.rows_to_refresh.insert(start_row);
+                        for x in 0 .. (*length as f32 / viewport_width as f32).ceil() as usize {
+                            self.rows_to_refresh.insert(start_row + x);
+                        }
                     }
                 }
             }
@@ -735,7 +737,7 @@ impl FrontEnd {
     pub fn _unapply_cursor(&mut self, editor: &Editor) -> Result<(), WreckedError> {
         // (They may no longer exist, but that's ok)
         for (bits, human) in self.active_cursor_cells.drain() {
-            self.rectmanager.clear_children(bits);
+            self.rectmanager.clear_children(bits)?;
             self.rectmanager.unset_invert_flag(bits).ok();
             self.rectmanager.unset_invert_flag(human).ok();
         }
@@ -750,7 +752,7 @@ impl FrontEnd {
         let cursor_length = editor.get_cursor_length();
 
         // First clear previously applied
-        self._unapply_cursor(editor);
+        self._unapply_cursor(editor)?;
 
         let start = if cursor_offset < viewport_offset {
             viewport_offset
@@ -774,7 +776,7 @@ impl FrontEnd {
                     x = (i - viewport_offset) % viewport_width;
                     match cellhash.get(&x) {
                         Some((bits, human)) => {
-                            self.rectmanager.clear_children(*bits);
+                            self.rectmanager.clear_children(*bits)?;
                             self.rectmanager.set_invert_flag(*bits)?;
                             self.rectmanager.set_invert_flag(*human)?;
                             self.cells_to_refresh.insert((*bits, *human));
@@ -798,19 +800,19 @@ impl FrontEnd {
                 match self.cell_dict.get(&y) {
                     Some(cellhash) => {
                         match cellhash.get(&x) {
-                            Some((bits, human)) => {
+                            Some((bits, _human)) => {
                                 match self.rectmanager.new_rect(*bits) {
                                     Ok(digit_cell) => {
                                         let digit_pos = (subcursor_offset % subcursor_length) as isize;
                                         let c = match self.rectmanager.get_character(*bits, digit_pos, 0) {
                                             Ok(_c) => { _c }
-                                            Err(e) => { 'X' }
+                                            Err(_e) => { 'X' }
                                         };
 
-                                        self.rectmanager.set_character(digit_cell, 0, 0, c);
-                                        self.rectmanager.set_position(digit_cell, digit_pos, 0);
-                                        self.rectmanager.set_invert_flag(digit_cell);
-                                        self.rectmanager.set_underline_flag(digit_cell);
+                                        self.rectmanager.set_character(digit_cell, 0, 0, c)?;
+                                        self.rectmanager.set_position(digit_cell, digit_pos, 0)?;
+                                        self.rectmanager.set_invert_flag(digit_cell)?;
+                                        self.rectmanager.set_underline_flag(digit_cell)?;
                                     }
                                     Err(_) => ()
                                 }
