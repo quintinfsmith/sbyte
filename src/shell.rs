@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::cmp::{min, max};
+use std::cmp::min;
 type R = Result<(), SbyteError>;
 type Callback = fn(&mut Shell, &[&str]) -> R;
 
@@ -462,7 +462,7 @@ fn hook_cursor_up(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().set_cursor_length(1);
 
     for _ in 0 .. repeat {
-        shell.get_editor_mut().cursor_prev_line();
+        shell.get_editor_mut().cursor_prev_line()?;
     }
 
     Ok(())

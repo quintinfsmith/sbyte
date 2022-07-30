@@ -88,7 +88,7 @@ impl From<FormatterError> for SbyteError {
 }
 
 impl From<std::io::Error> for SbyteError {
-    fn from(err: std::io::Error) -> Self {
+    fn from(_err: std::io::Error) -> Self {
         SbyteError::IOError
     }
 }
@@ -113,7 +113,6 @@ pub struct Editor {
     viewport: ViewPort,
 
     search_history: Vec<String>,
-    change_flags: HashMap<String, bool>,
     changed_offsets: HashSet<(usize, usize, bool)>,
 
     _active_display_ratio: u8
@@ -140,14 +139,13 @@ impl Editor {
 
 
             search_history: Vec::new(),
-            change_flags: HashMap::new(),
             changed_offsets: HashSet::new(),
 
             _active_display_ratio: 3
         };
 
         output.set_cursor_length(1);
-        output.set_cursor_offset(0);
+        output.set_cursor_offset(0).ok();
         output.set_subcursor_length();
 
         output
@@ -272,7 +270,7 @@ impl Editor {
     fn do_undo_or_redo(&mut self, task: (usize, usize, Vec<u8>, Instant)) -> Result<(usize, usize, Vec<u8>, Instant), SbyteError> {
         let (offset, bytes_to_remove, bytes_to_insert, timestamp) = task;
         self.set_cursor_length(1);
-        self.set_cursor_offset(offset);
+        self.set_cursor_offset(offset)?;
 
         let mut opposite_bytes_to_insert = vec![];
         if bytes_to_remove > 0 {
@@ -402,9 +400,10 @@ impl Editor {
         Ok(hit_positions)
     }
 
-    pub fn make_selection(&mut self, offset: usize, length: usize) {
-        self.set_cursor_offset(offset);
+    pub fn make_selection(&mut self, offset: usize, length: usize) -> Result<(), SbyteError> {
+        self.set_cursor_offset(offset)?;
         self.set_cursor_length(length as isize);
+        Ok(())
     }
 
     pub fn copy_to_clipboard(&mut self, bytes_to_copy: Vec<u8>) {
@@ -777,15 +776,16 @@ impl Editor {
         self.active_content.get_chunk(offset, length)
     }
 
-    pub fn cursor_next_byte(&mut self) {
+    pub fn cursor_next_byte(&mut self) -> Result<(), SbyteError> {
         let new_position = self.cursor.get_offset() + 1;
-        self.set_cursor_offset(new_position);
+        self.set_cursor_offset(new_position)?;
+        Ok(())
     }
 
     pub fn cursor_prev_byte(&mut self) {
         if self.cursor.get_offset() != 0 {
             let new_position = self.cursor.get_offset() - 1;
-            self.set_cursor_offset(new_position);
+            self.set_cursor_offset(new_position).ok();
         }
     }
 
@@ -894,15 +894,17 @@ impl Editor {
         self.active_content.as_slice()
     }
 
-    pub fn cursor_next_line(&mut self) {
+    pub fn cursor_next_line(&mut self) -> Result<(), SbyteError> {
         let new_offset = self.cursor.get_real_offset() + self.viewport.get_width();
-        self.set_cursor_offset(new_offset);
+        self.set_cursor_offset(new_offset)?;
+        Ok(())
     }
 
-    pub fn cursor_prev_line(&mut self) {
+    pub fn cursor_prev_line(&mut self) -> Result<(), SbyteError> {
         let viewport_width = self.viewport.get_width();
         let new_offset = self.cursor.get_real_offset() - min(self.cursor.get_real_offset(), viewport_width);
-        self.set_cursor_offset(new_offset);
+        self.set_cursor_offset(new_offset)?;
+        Ok(())
     }
 
     pub fn cursor_increase_length_by_line(&mut self) {
