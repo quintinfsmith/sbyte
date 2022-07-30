@@ -8,7 +8,7 @@ pub mod inputter;
 
 //TODO Move string_to_integer
 use super::shell::{Shell, parse_words};
-use super::editor::{SbyteError, string_to_integer, string_to_bytes};
+use super::editor::SbyteError;
 use super::editor::formatter::*;
 use super::console_displayer::FrontEnd;
 use inputter::Inputter;
@@ -171,7 +171,7 @@ impl InputInterface {
                     Ok(ref mut mutex) => {
                         killed = !mutex.is_alive();
                         if ! killed {
-                            &mutex.input(buffer[0]);
+                            mutex.input(buffer[0]);
                         }
                         retry_lock = false;
                     }
@@ -201,8 +201,7 @@ impl InputInterface {
     }
 
     pub fn new_inputter() -> Inputter {
-        let mut output = Inputter::new();
-        output
+        Inputter::new()
     }
 
     pub fn main(&mut self) -> Result<(), SbyteError> {
@@ -525,6 +524,7 @@ impl InputInterface {
                         Ok(())
                     }
                     Err(SbyteError::InvalidCommand(failed_cmd)) => {
+                        self.shell.log_error(&format!("bad command: '{}'", failed_cmd));
                         self.set_context("DEFAULT");
                         Ok(())
                     }
@@ -633,7 +633,7 @@ impl InputInterface {
                         for word in words.iter() {
                             args.push(word.as_str());
                         }
-                        self.send_command(&cmd, args.as_slice());
+                        self.send_command(&cmd, args.as_slice())?;
                     }
 
                 }
