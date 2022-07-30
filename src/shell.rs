@@ -380,6 +380,13 @@ impl Shell {
     pub fn log_feedback(&mut self, msg: &str) {
         self.feedback = Some(msg.to_string())
     }
+
+    pub fn is_recording(&mut self) -> bool {
+        match self.record_key {
+            Some(_) => true,
+            None => false
+        }
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////

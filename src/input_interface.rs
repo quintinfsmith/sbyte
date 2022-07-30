@@ -86,6 +86,8 @@ impl InputInterface {
         self.hook_assign_mode_input(&["DEFAULT", "MODE_SET_MASK_OR", "BAR"]);
         self.hook_assign_mode_input(&["DEFAULT", "MODE_SET_MASK_AND", "AMPERSAND"]);
         self.hook_assign_mode_input(&["DEFAULT", "MODE_SET_MASK_XOR", "CARET"]);
+        self.hook_assign_mode_input(&["DEFAULT", "MODE_SET_RECORD_KEY", "Q_LOWER"]);
+        self.hook_assign_mode_input(&["DEFAULT", "MODE_SET_PLAYBACK_KEY", "AT"]);
         self.hook_assign_mode_input(&["DEFAULT", "BITWISE_NOT", "TILDE"]);
 
         self.hook_assign_mode_input(&["OVERWRITE_BIN", "SUBCURSOR_LEFT", "H_LOWER"]);
@@ -499,6 +501,19 @@ impl InputInterface {
                 self.shell.buffer_push("find ");
             }
 
+            "MODE_SET_RECORD_KEY" => {
+                if self.shell.is_recording() {
+                    self.shell.try_command("rec", &[])?;
+                } else {
+                    self.set_context("CMD");
+                    self.shell.buffer_push("rec ");
+                }
+            }
+
+            "MODE_SET_PLAYBACK_KEY" => {
+                self.set_context("CMD");
+                self.shell.buffer_push("play ");
+            }
 /////////////////////////////////////////////////////////////
 
             something_else => {
