@@ -12,7 +12,7 @@ license = "GPL-3.0"
 readme = "README.md"
 
 [dependencies]
-wrecked = { git = "git://burnsomni.net/wrecked" }
+wrecked = "^1.1.0"
 ctrlc = "3.1.6"
 regex = "^1.4.2"
 
