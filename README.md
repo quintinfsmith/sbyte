@@ -17,7 +17,7 @@ sbyte <filename>
 
 ### From source:
 ```
-cargo install --git git://burnsomni.net/sbyte
+cargo install --git https://burnsomni.net/git/sbyte
 sbyte <filename>
 ```
 
