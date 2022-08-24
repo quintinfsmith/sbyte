@@ -1,4 +1,5 @@
 use windows::Win32::System::{Console, Threading};
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 use std::sync::{Mutex, Arc};
 use std::{time, thread};
@@ -14,15 +15,6 @@ pub fn get_input_reader() -> Reader {
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 
-fn log(msg: &str) {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .append(true)
-        .open("templog.txt")
-        .unwrap();
-
-    writeln!(&mut file, "{}", &msg).unwrap();
-}
 pub struct Reader {
     received_input: Arc<Mutex<Vec<u8>>>,
     kill_signal: Arc<Mutex<bool>>
@@ -80,9 +72,44 @@ impl Reader {
                                                 let input_record = record[i as usize];
                                                 if input_record.EventType == 1 {
                                                     if input_record.Event.KeyEvent.bKeyDown.as_bool() {
-                                                        match input_record.Event.KeyEvent.wVirtualKeyCode {
-                                                            0x0D => {
-                                                                mutex.push(10);
+                                                        match input_Record.Event.KeyEvent.wVirtualKeyCode {
+                                                            VK_BACK => {
+                                                                mutex.push(0x7F)
+                                                            }
+                                                            VK_TAB => {
+                                                                mutex.push(0x09)
+                                                            }
+                                                            VK_RETURN => {
+                                                                mutex.push(0x0A)
+                                                            }
+                                                            VK_ESCAPE => {
+                                                                mutex.push(0x1B)
+                                                            }
+                                                            VK_UP => {
+                                                                mutex.push(0x1B);
+                                                                mutex.push(b'[');
+                                                                mutex.push(b'A');
+                                                            }
+                                                            VK_LEFT => {
+                                                                mutex.push(0x1B);
+                                                                mutex.push(b'[');
+                                                                mutex.push(b'D');
+                                                            }
+                                                            VK_DOWN => {
+                                                                mutex.push(0x1B);
+                                                                mutex.push(b'[');
+                                                                mutex.push(b'B');
+                                                            }
+                                                            VK_RIGHT => {
+                                                                mutex.push(0x1B);
+                                                                mutex.push(b'[');
+                                                                mutex.push(b'C');
+                                                            }
+                                                            VK_DELETE => {
+                                                                mutex.push(0x1B);
+                                                                mutex.push(b'[');
+                                                                mutex.push(b'3');
+                                                                mutex.push(0x7E);
                                                             }
                                                             _ => {
                                                                 mutex.push(input_record.Event.KeyEvent.uChar.AsciiChar.0);
@@ -115,4 +142,3 @@ impl Reader {
         });
     }
 }
-
