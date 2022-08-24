@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #[derive(PartialEq, Clone, Copy, Debug, Eq)]
 pub enum FormatterRef {
     HEX,

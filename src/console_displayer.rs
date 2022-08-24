@@ -6,7 +6,6 @@ use wrecked::{RectManager, Color, WreckedError};
 use super::shell::Shell;
 use super::editor::*;
 use super::editor::formatter::*;
-use std::time::{Duration, Instant};
 use std::{time, thread};
 
 use usize as RectId;
@@ -59,9 +58,9 @@ impl FrontEnd {
         let rect_offset = rectmanager.new_rect(rect_meta).ok().unwrap();
         let rect_scrollbar = rectmanager.new_rect(rect_display_wrapper).ok().unwrap();
         let rect_help_window = rectmanager.new_rect(wrecked::ROOT).ok().unwrap();
-        rectmanager.detach(rect_help_window);
+        rectmanager.detach(rect_help_window).ok().unwrap();
 
-        let mut frontend = FrontEnd {
+        let frontend = FrontEnd {
             rectmanager,
             active_row_map: HashMap::new(),
             cells_to_refresh: HashSet::new(),
@@ -203,7 +202,7 @@ impl FrontEnd {
                 self.clear_feedback()?;
             }
 
-            self.display_command_line(shell);
+            self.display_command_line(shell)?;
 
 
             match self.rectmanager.render() {
@@ -237,10 +236,10 @@ impl FrontEnd {
             let cursor_length = editor.get_cursor_real_length();
             editor.set_viewport_offset(0);
             editor.set_cursor_length(1);
-            editor.set_cursor_offset(0);
+            editor.set_cursor_offset(0).ok();
 
             editor.set_viewport_size(base_width, viewport_height);
-            editor.set_cursor_offset(cursor_offset);
+            editor.set_cursor_offset(cursor_offset).ok();
             editor.set_cursor_length(cursor_length);
             self.rendered_formatter = Some(new_formatter);
             true
@@ -569,11 +568,11 @@ impl FrontEnd {
         self.rectmanager.resize(human_id, human_display_width, display_height)?;
         self.rectmanager.set_position(human_id, human_display_x as isize, 0)?;
 
-        self.rectmanager.set_fg_color(self.rect_scrollbar, wrecked::Color::BRIGHTBLACK);
-        self.rectmanager.resize(self.rect_scrollbar, 1, display_height);
-        self.rectmanager.set_position(self.rect_scrollbar, (human_display_x + human_display_width) as isize, 0);
+        self.rectmanager.set_fg_color(self.rect_scrollbar, wrecked::Color::BRIGHTBLACK)?;
+        self.rectmanager.resize(self.rect_scrollbar, 1, display_height)?;
+        self.rectmanager.set_position(self.rect_scrollbar, (human_display_x + human_display_width) as isize, 0)?;
         for y in 0 .. display_height as isize {
-            self.rectmanager.set_character(self.rect_scrollbar, 0, y, '\u{250B}');
+            self.rectmanager.set_character(self.rect_scrollbar, 0, y, '\u{250B}')?;
         }
 
         Ok(())
@@ -618,7 +617,7 @@ impl FrontEnd {
                                 }
                             }
                             match human_formatter.read_in(*byte) {
-                                (tmp_human, fmt_response) => {
+                                (tmp_human, _fmt_response) => {
                                     tmp_human_str = match std::str::from_utf8(tmp_human.as_slice()) {
                                         Ok(valid) => {
                                             valid
@@ -679,20 +678,20 @@ impl FrontEnd {
 
         // Do Scrollbar
         if denominator > (viewport_width * viewport_height) {
-            self.rectmanager.enable(self.rect_scrollbar);
-            self.rectmanager.clear_children(self.rect_scrollbar);
+            self.rectmanager.enable(self.rect_scrollbar)?;
+            self.rectmanager.clear_children(self.rect_scrollbar)?;
             let handle = self.rectmanager.new_rect(self.rect_scrollbar).ok().unwrap();
             let scrollbar_height = self.rectmanager.get_rect_height(self.rect_scrollbar);
 
             let handle_height = max(1, (viewport_height * scrollbar_height) / (denominator / viewport_width));
-            self.rectmanager.set_bg_color(handle, wrecked::Color::BRIGHTBLACK);
-            self.rectmanager.set_fg_color(handle, wrecked::Color::BLACK);
-            self.rectmanager.resize(handle, 1, handle_height);
+            self.rectmanager.set_bg_color(handle, wrecked::Color::BRIGHTBLACK)?;
+            self.rectmanager.set_fg_color(handle, wrecked::Color::BLACK)?;
+            self.rectmanager.resize(handle, 1, handle_height)?;
 
             let handle_y = (editor.get_viewport_offset() * (scrollbar_height - handle_height)) / (denominator - (viewport_width * viewport_height));
-            self.rectmanager.set_position(handle, 0, handle_y as isize);
+            self.rectmanager.set_position(handle, 0, handle_y as isize)?;
         } else {
-            self.rectmanager.disable(self.rect_scrollbar);
+            self.rectmanager.disable(self.rect_scrollbar)?;
         }
         ///////////////
 
@@ -734,7 +733,7 @@ impl FrontEnd {
         Ok(())
     }
 
-    pub fn _unapply_cursor(&mut self, editor: &Editor) -> Result<(), WreckedError> {
+    pub fn _unapply_cursor(&mut self, _editor: &Editor) -> Result<(), WreckedError> {
         // (They may no longer exist, but that's ok)
         for (bits, human) in self.active_cursor_cells.drain() {
             self.rectmanager.clear_children(bits)?;

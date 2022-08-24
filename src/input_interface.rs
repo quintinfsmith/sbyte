@@ -218,7 +218,7 @@ impl InputInterface {
         let mut result = Ok(());
 
         while self.running {
-            self.frontend.tick(&mut self.shell);
+            self.frontend.tick(&mut self.shell).ok();
 
             let mut funcpair = None;
             match self.inputter.try_lock() {

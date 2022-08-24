@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::collections::HashMap;
 use std::cmp::min;
 type R = Result<(), SbyteError>;
@@ -473,7 +474,7 @@ fn hook_cursor_down(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().set_cursor_length(1);
 
     for _ in 0 .. repeat {
-        shell.get_editor_mut().cursor_next_line();
+        shell.get_editor_mut().cursor_next_line()?;
     }
 
     Ok(())
@@ -495,7 +496,7 @@ fn hook_cursor_right(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().set_cursor_length(1);
 
     for _ in 0 .. repeat {
-        shell.get_editor_mut().cursor_next_byte();
+        shell.get_editor_mut().cursor_next_byte()?;
     }
 
     Ok(())
@@ -581,7 +582,7 @@ fn hook_overwrite_digit(shell: &mut Shell, args: &[&str]) -> R {
             shell.get_editor_mut().subcursor_next_digit();
             if shell.get_editor_mut().get_subcursor_offset() == 0
             && shell.get_editor_mut().get_cursor_length() == 1 {
-                shell.get_editor_mut().cursor_next_byte();
+                shell.get_editor_mut().cursor_next_byte()?;
             }
         }
     }
@@ -701,7 +702,7 @@ fn hook_bitwise_xor_mask(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_yank(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_yank(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().copy_selection();
     shell.get_editor_mut().set_cursor_length(1);
 
@@ -711,20 +712,20 @@ fn hook_yank(shell: &mut Shell, args: &[&str]) -> R {
 }
 
 
-fn hook_paste(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_paste(shell: &mut Shell, _args: &[&str]) -> R {
     let to_paste = shell.get_editor_mut().get_clipboard();
 
     for _ in 0 .. shell.register_fetch(1) {
         shell.get_editor_mut().insert_bytes_at_cursor(&to_paste)?;
-        for i in 0 .. to_paste.len() {
-            shell.get_editor_mut().cursor_next_byte();
+        for _ in 0 .. to_paste.len() {
+            shell.get_editor_mut().cursor_next_byte()?;
         }
     }
 
     Ok(())
 }
 
-fn hook_delete(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_delete(shell: &mut Shell, _args: &[&str]) -> R {
     let mut removed_bytes = Vec::new();
     for _ in 0 .. shell.register_fetch(1) {
         removed_bytes.extend(shell.get_editor_mut().remove_bytes_at_cursor().iter().copied());
@@ -738,7 +739,7 @@ fn hook_delete(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_backspace(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_backspace(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = min(shell.register_fetch(1), shell.get_editor_mut().get_cursor_offset());
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_prev_byte();
@@ -758,7 +759,7 @@ fn hook_backspace(shell: &mut Shell, args: &[&str]) -> R {
 
 }
 
-fn hook_undo(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_undo(shell: &mut Shell, _args: &[&str]) -> R {
     for i in 0 .. shell.register_fetch(1) {
         match shell.get_editor_mut().undo() {
             Ok(_) => {
@@ -779,7 +780,7 @@ fn hook_undo(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_redo(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_redo(shell: &mut Shell, _args: &[&str]) -> R {
     for i in 0 .. shell.register_fetch(1) {
         match shell.get_editor_mut().redo() {
             Ok(_) => {
@@ -801,14 +802,14 @@ fn hook_redo(shell: &mut Shell, args: &[&str]) -> R {
 }
 
 fn hook_insert_string(shell: &mut Shell, args: &[&str]) -> R {
-    for i in 0 .. shell.register_fetch(1) {
+    for _ in 0 .. shell.register_fetch(1) {
         for arg in args.iter() {
             match string_to_bytes(arg) {
                 Ok(converted) => {
                     shell.get_editor_mut().set_cursor_length(1);
                     shell.get_editor_mut().insert_bytes_at_cursor(&converted)?;
                     for _ in 0 .. converted.len() {
-                        shell.get_editor_mut().cursor_next_byte();
+                        shell.get_editor_mut().cursor_next_byte().ok().unwrap();
                     }
                 }
                 Err(e) => {
@@ -823,14 +824,14 @@ fn hook_insert_string(shell: &mut Shell, args: &[&str]) -> R {
 }
 
 fn hook_overwrite_string(shell: &mut Shell, args: &[&str]) -> R {
-    for i in 0 .. shell.register_fetch(1) {
+    for _ in 0 .. shell.register_fetch(1) {
         for arg in args.iter() {
             match string_to_bytes(arg) {
                 Ok(converted) => {
                     shell.get_editor_mut().set_cursor_length(1);
                     shell.get_editor_mut().overwrite_bytes_at_cursor(&converted)?;
                     for _ in 0 .. converted.len() {
-                        shell.get_editor_mut().cursor_next_byte();
+                        shell.get_editor_mut().cursor_next_byte().ok().unwrap();
                     }
                 }
                 Err(e) => {
@@ -844,7 +845,7 @@ fn hook_overwrite_string(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_increment(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_increment(shell: &mut Shell, _args: &[&str]) -> R {
     let offset = shell.get_editor_mut().get_cursor_offset();
     let cursor_length = shell.get_editor_mut().get_cursor_length();
     let repeat = shell.register_fetch(1);
@@ -872,7 +873,7 @@ fn hook_increment(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_decrement(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_decrement(shell: &mut Shell, _args: &[&str]) -> R {
     let offset = shell.get_editor_mut().get_cursor_offset();
     let cursor_length = shell.get_editor_mut().get_cursor_length();
     let repeat = shell.register_fetch(1);
@@ -935,12 +936,12 @@ fn hook_save_quit(shell: &mut Shell, args: &[&str]) -> R {
     Err(SbyteError::KillSignal)
 }
 
-fn hook_toggle_formatter(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_toggle_formatter(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().toggle_formatter();
     Ok(())
 }
 
-fn hook_jump_to_previous_selection(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_jump_to_previous_selection(shell: &mut Shell, _args: &[&str]) -> R {
     let selection = shell.get_editor_mut().get_selected();
     let mut string_rep = "".to_string();
     for ord in selection.iter() {
@@ -950,7 +951,7 @@ fn hook_jump_to_previous_selection(shell: &mut Shell, args: &[&str]) -> R {
     jump_to_previous(shell, Some(&string_rep))
 }
 
-fn hook_jump_to_next_selection(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_jump_to_next_selection(shell: &mut Shell, _args: &[&str]) -> R {
     let selection = shell.get_editor_mut().get_selected();
     let mut string_rep = "".to_string();
     for ord in selection.iter() {

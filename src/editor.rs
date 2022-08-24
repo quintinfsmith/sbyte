@@ -65,7 +65,7 @@ impl From<ContentError> for SbyteError {
             ContentError::OutOfBounds(offset, length) => {
                 SbyteError::OutOfBounds(offset, length)
             }
-            ContentError::InvalidDigit(digit, radix) => {
+            ContentError::InvalidDigit(_digit, radix) => {
                 match radix {
                     16 => SbyteError::InvalidDigit(FormatterRef::HEX),
                     10 => SbyteError::InvalidDigit(FormatterRef::DEC),

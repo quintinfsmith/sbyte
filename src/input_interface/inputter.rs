@@ -102,7 +102,7 @@ impl Inputter {
             match self.input_nodes.get(self.active_node) {
                 Some(node) => {
                     match node.get_next(test_byte) {
-                        Some(next_id) => {
+                        Some(_next_id) => {
                             output = true;
                         }
                         None => { }
@@ -117,7 +117,7 @@ impl Inputter {
 
     /// Checks if the active node has a command hook AND that the input buffer won't continue
     fn hook_ready(&mut self) -> bool {
-        let mut hook_result =match self.input_nodes.get(self.active_node) {
+        let hook_result = match self.input_nodes.get(self.active_node) {
             Some(node) => {
                 node.get_hook()
             }

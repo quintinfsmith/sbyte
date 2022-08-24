@@ -210,7 +210,7 @@ impl Content {
     pub fn replace_digit(&mut self, offset: usize, position: u8, digit_value: u8, radix: u8) -> Result<u8, ContentError> {
         match self.get_byte(offset) {
             Some(mut byte) => {
-                let mut steps = 256f64.log(radix as f64).ceil() as u8;
+                let steps = 256f64.log(radix as f64).ceil() as u8;
                 let mut digits = vec![];
                 for i in 0 .. steps {
                     if i == position {
