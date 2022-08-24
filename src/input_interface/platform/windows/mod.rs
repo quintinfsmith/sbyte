@@ -10,6 +10,19 @@ pub fn get_input_reader() -> Reader {
     Reader::new()
 }
 
+//DEBUG
+use std::fs::OpenOptions;
+use std::io::prelude::*;
+
+fn log(msg: &str) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open("templog.txt")
+        .unwrap();
+
+    writeln!(&mut file, "{}", &msg).unwrap();
+}
 pub struct Reader {
     received_input: Arc<Mutex<Vec<u8>>>,
     kill_signal: Arc<Mutex<bool>>
@@ -61,11 +74,20 @@ impl Reader {
                                             let mut record: [Console::INPUT_RECORD;512] = [Console::INPUT_RECORD::default(); 512];
                                             let mut read = 0;
                                             Console::ReadConsoleInputW(stdinhandle, &mut record, &mut read);
+                                            if read > 1 {
+                                            }
                                             for i in 0 .. read {
                                                 let input_record = record[i as usize];
-                                                if input_record.EventType == 2 {
+                                                if input_record.EventType == 1 {
                                                     if input_record.Event.KeyEvent.bKeyDown.as_bool() {
-                                                        mutex.push(input_record.Event.KeyEvent.uChar.AsciiChar.0);
+                                                        match input_record.Event.KeyEvent.wVirtualKeyCode {
+                                                            0x0D => {
+                                                                mutex.push(10);
+                                                            }
+                                                            _ => {
+                                                                mutex.push(input_record.Event.KeyEvent.uChar.AsciiChar.0);
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
