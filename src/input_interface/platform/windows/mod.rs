@@ -1,7 +1,14 @@
 use windows::Win32::System::{Console, Threading};
 
-use io
 use std::sync::{Mutex, Arc};
+use std::{time, thread};
+use std::ops::Deref;
+
+
+#[inline]
+pub fn get_input_reader() -> Reader {
+    Reader::new()
+}
 
 pub struct Reader {
     received_input: Arc<Mutex<Vec<u8>>>,
@@ -20,7 +27,7 @@ impl Reader {
         output
     }
 
-    pub fn read_exact(&mut self, buffer: &mut [u8]) {
+    pub fn read_exact(&mut self, buffer: &mut [u8]) -> Result<(), ()> {
         let mut trying = true;
         let mut offset: usize = 0;
         while offset < buffer.len() {
@@ -29,47 +36,61 @@ impl Reader {
                     // TODO: This could be improved
                     if mutex.len() > 0 {
                         buffer[offset] = mutex[0];
-                        mutex.drain(0);
+                        offset += 1;
+                        mutex.drain(0..1);
                     }
                 }
-                Err(e) = { }
+                Err(e) => { }
             }
         }
+        Ok(())
     }
 
     fn listen(&mut self) {
         let mut receiver = self.received_input.clone();
         let mut kill_signal = self.kill_signal.clone();;
         thread::spawn(move || {
-            match Console::GetStdHandle(Console::STD_INPUT_HANDLE) {
-                Ok(stdinhandle) => {
-                    loop {
-                        match Threading::WaitForSingleObject(stdinhandle, 50) {
-                            WAIT_OBJECT_0 => {
-                                match receiver.try_lock() {
-                                    Ok(ref mut mutex) => {
-                                        let mut record: [Console::INPUT_RECORD;512] = [0;512];
-                                        let mut read = 0;
-                                        Console::ReadConsoleInputW(stdinhandle, record, &mut read);
-                                    }
-                                    Err(_e) => { }
-                                }
-                            }
-                            _ => {
-                                match kill_signal.try_lock() {
-                                    Ok(ref mut mutex) => {
-                                        if mutex {
-                                            break;
+            unsafe {
+                match Console::GetStdHandle(Console::STD_INPUT_HANDLE) {
+                    Ok(stdinhandle) => {
+                        loop {
+                            match Threading::WaitForSingleObject(stdinhandle, 50) {
+                                WAIT_OBJECT_0 => {
+                                    match receiver.try_lock() {
+                                        Ok(ref mut mutex) => {
+                                            let mut record: [Console::INPUT_RECORD;512] = [Console::INPUT_RECORD::default(); 512];
+                                            let mut read = 0;
+                                            Console::ReadConsoleInputW(stdinhandle, &mut record, &mut read);
+                                            for i in 0 .. read {
+                                                let input_record = record[i as usize];
+                                                if input_record.EventType == 2 {
+                                                    if input_record.Event.KeyEvent.bKeyDown.as_bool() {
+                                                        mutex.push(input_record.Event.KeyEvent.uChar.AsciiChar.0);
+                                                    }
+                                                }
+                                            }
                                         }
+                                        Err(_e) => { }
                                     }
-                                    Err(_e) => {
+                                }
+                                _ => {
+                                    match kill_signal.try_lock() {
+                                        Ok(mutex) => {
+                                            if *mutex.deref() == false {
+                                                break;
+                                            }
+                                        }
+                                        Err(_e) => {
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    Err(_e) => {}
                 }
             }
         });
     }
 }
+
