@@ -15,6 +15,7 @@ readme = "README.md"
 wrecked = "^1.1.0"
 ctrlc = "3.1.6"
 regex = "^1.4.2"
+dirs = "4.0.0"
 
 
 [target.'cfg(windows)'.dependencies.windows]

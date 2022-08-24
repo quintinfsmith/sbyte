@@ -1,6 +1,7 @@
 use std::env;
 use std::path::Path;
 use std::error::Error;
+use dirs::home_dir;
 
 pub mod editor;
 pub mod input_interface;
@@ -25,9 +26,14 @@ fn result_catcher() -> Result<(), Box<dyn Error>> {
     let mut input_interface = InputInterface::new(shell, frontend);
 
     // commands like setcmd run in custom_rc will overwrite whatever was set in the default
-    let custom_rc_path = &format!("{}/.sbyterc", env::var("HOME").ok().unwrap());
-    if Path::new(custom_rc_path).exists() {
-        input_interface.load_config(custom_rc_path)?;
+    match home_dir() {
+        Some(home) => {
+            let custom_rc_path = &format!("{:?}/.sbyterc", home);
+            if Path::new(custom_rc_path).exists() {
+                input_interface.load_config(custom_rc_path)?;
+            }
+        }
+        None => {}
     }
 
     input_interface.main()?;
