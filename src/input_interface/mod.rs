@@ -5,8 +5,8 @@ use std::sync::{Mutex, Arc};
 
 pub mod tests;
 pub mod inputter;
+mod platform;
 
-//TODO Move string_to_integer
 use super::shell::{Shell, parse_words};
 use super::editor::SbyteError;
 use super::editor::formatter::*;
@@ -154,10 +154,8 @@ impl InputInterface {
             /////////////////////////////////
             // Rectmanager puts stdout in non-canonical mode,
             // so stdin will be char-by-char
-            let stdout = io::stdout();
-            let mut reader = io::stdin();
+            let mut reader = platform::get_input_reader();
             let mut buffer: [u8; 1] = [0;1];
-            stdout.lock().flush().unwrap();
             ////////////////////////////////
 
             let mut killed: bool = false;
