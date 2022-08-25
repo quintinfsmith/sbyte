@@ -72,40 +72,37 @@ impl Reader {
                                                 let input_record = record[i as usize];
                                                 if input_record.EventType == 1 {
                                                     if input_record.Event.KeyEvent.bKeyDown.as_bool() {
-                                                        match input_Record.Event.KeyEvent.wVirtualKeyCode {
-                                                            VK_BACK => {
+                                                        match input_record.Event.KeyEvent.wVirtualKeyCode {
+                                                            0x08 => { // Backspace
                                                                 mutex.push(0x7F)
                                                             }
-                                                            VK_TAB => {
+                                                            0x09 => { // Tab
                                                                 mutex.push(0x09)
                                                             }
-                                                            VK_RETURN => {
+                                                            0x0D => { // Enter
                                                                 mutex.push(0x0A)
                                                             }
-                                                            VK_ESCAPE => {
-                                                                mutex.push(0x1B)
-                                                            }
-                                                            VK_UP => {
+                                                            0x26 => { // Up Arrow
                                                                 mutex.push(0x1B);
                                                                 mutex.push(b'[');
                                                                 mutex.push(b'A');
                                                             }
-                                                            VK_LEFT => {
+                                                            0x25 => { // Left Arrow
                                                                 mutex.push(0x1B);
                                                                 mutex.push(b'[');
                                                                 mutex.push(b'D');
                                                             }
-                                                            VK_DOWN => {
+                                                            0x28 => { // Down Arrow
                                                                 mutex.push(0x1B);
                                                                 mutex.push(b'[');
                                                                 mutex.push(b'B');
                                                             }
-                                                            VK_RIGHT => {
+                                                            0x27 => { // Right Arrow
                                                                 mutex.push(0x1B);
                                                                 mutex.push(b'[');
                                                                 mutex.push(b'C');
                                                             }
-                                                            VK_DELETE => {
+                                                            0x2E => { // Del
                                                                 mutex.push(0x1B);
                                                                 mutex.push(b'[');
                                                                 mutex.push(b'3');
