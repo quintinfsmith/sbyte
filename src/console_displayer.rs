@@ -830,8 +830,9 @@ impl FrontEnd {
     }
 
     pub fn display_command_line(&mut self, shell: &Shell) -> Result<(), WreckedError> {
-        if self.rendered_buffer != shell.buffer_get() {
-            match shell.buffer_get() {
+        let buffer_option = shell.buffer_get();
+        if self.rendered_buffer != buffer_option {
+            match buffer_option {
                 Some(buffer) => {
                     self.clear_feedback()?;
 

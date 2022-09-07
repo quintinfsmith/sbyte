@@ -145,6 +145,9 @@ impl InputInterface {
         self.hook_assign_mode_input(&["CMD", "MODE_SET_DEFAULT", "ESCAPE"]);
         self.hook_assign_mode_input(&["CMD", "CMDLINE_BACKSPACE", "BACKSPACE"]);
 
+        self.hook_assign_mode_input(&["CMD", "CMDLINE_HISTORY_PREV", "ARROW_UP"]);
+        self.hook_assign_mode_input(&["CMD", "CMDLINE_HISTORY_NEXT", "ARROW_DOWN"]);
+
         Ok(())
     }
 

@@ -10,7 +10,9 @@ pub struct Shell {
     alias_map: HashMap<String, String>,
     editor: Editor,
     query_buffer: Option<String>,
+    query_buffer_bkp: Option<String>,
     buffer_history: Vec<String>,
+    history_cursor: Option<usize>,
     feedback: Option<String>,
     error: Option<String>,
     register: Option<usize>,
@@ -26,13 +28,15 @@ impl Shell {
             hook_map: HashMap::new(),
             alias_map: HashMap::new(),
             query_buffer: None,
+            query_buffer_bkp: None,
             buffer_history: Vec::new(),
             feedback: None,
             error: None,
             register: None,
             record_map: HashMap::new(),
             record_key: None,
-            in_playback: false
+            in_playback: false,
+            history_cursor: None
         };
 
         output.map_command("TOGGLE_FORMATTER", hook_toggle_formatter);
@@ -80,6 +84,10 @@ impl Shell {
 
         output.map_command("APPEND_TO_COMMANDLINE", hook_push_to_buffer);
         output.map_command("CMDLINE_BACKSPACE", hook_pop_from_buffer);
+
+        output.map_command("CMDLINE_HISTORY_PREV", hook_history_prev);
+        output.map_command("CMDLINE_HISTORY_NEXT", hook_history_next);
+
         output.map_command("RUN_CUSTOM_COMMAND", hook_query);
         output.map_command("REPLACE_ALL", hook_replace_pattern);
 
@@ -138,7 +146,19 @@ impl Shell {
 
         match output {
             Some(ref buffer) => {
-                self.buffer_history.push(buffer.clone());
+                // Check if last two commands are the same, if so, ignore.
+                let do_push = match self.buffer_history.last() {
+                    Some(value) => {
+                        buffer != value
+                    }
+                    None => {
+                        true
+                    }
+                };
+
+                if do_push {
+                    self.buffer_history.push(buffer.clone());
+                }
             }
             None => ()
         }
@@ -177,10 +197,75 @@ impl Shell {
         }
     }
 
+    pub fn update_query_buffer_from_history(&mut self) {
+        match self.history_cursor {
+            Some(value) => {
+                let abs_index = self.buffer_history.len() - 1 - value;
+                match self.buffer_history.get(abs_index) {
+                    Some(old_buffer) => {
+                        self.query_buffer = Some(old_buffer.clone())
+                    }
+                    None => {}
+                }
+            }
+            None => {
+                // Back up query_buffer
+                self.query_buffer = Some(
+                    match &self.query_buffer_bkp {
+                        None => { String::from("") }
+                        Some(s) => {
+                            s.clone()
+                        }
+                    }
+                );
+            }
+        }
+    }
+
+    pub fn history_set_next(&mut self) {
+        self.history_cursor = match self.history_cursor {
+            Some(value) => {
+                if value > 0 {
+                    Some(value - 1)
+                } else {
+                    None
+                }
+            }
+            None => { None } // No 'next' in history
+        };
+        self.update_query_buffer_from_history();
+    }
+
+    pub fn history_set_prev(&mut self) {
+        self.history_cursor = match self.history_cursor {
+            Some(value) => {
+                if value < self.buffer_history.len() - 1 {
+                    Some(value + 1)
+                } else {
+                    Some(value)
+                }
+            }
+            None => {
+                // Back up query_buffer
+                self.query_buffer_bkp = Some(
+                    match &self.query_buffer {
+                        None =>  {String::from("") }
+                        Some(s) => {
+                            s.clone()
+                        }
+                    }
+                );
+                Some(0)
+            }
+        };
+        self.update_query_buffer_from_history();
+    }
+
     pub fn query(&mut self) -> R {
         match self.buffer_fetch() {
-            Some(buffer) => {
-                let mut words = parse_words(&buffer);
+            Some(buffer_string) => {
+                self.history_cursor = None;
+                let mut words = parse_words(&buffer_string);
                 if words.len() > 0 {
                     let cmd = words.remove(0);
                     let mut args = vec![];
@@ -189,7 +274,7 @@ impl Shell {
                     }
                     self.try_command(&cmd, args.as_slice())
                 } else {
-                   Err(SbyteError::InvalidCommand(buffer.to_string()))
+                   Err(SbyteError::InvalidCommand(buffer_string))
                 }
             }
             None => {
@@ -360,6 +445,7 @@ impl Shell {
     pub fn get_editor(&self) -> &Editor {
         &self.editor
     }
+
     pub fn get_editor_mut(&mut self) -> &mut Editor {
         &mut self.editor
     }
@@ -387,6 +473,10 @@ impl Shell {
             Some(_) => true,
             None => false
         }
+    }
+
+    pub fn is_browsing_history(&mut self) -> bool {
+        ! self.history_cursor.is_some()
     }
 }
 
@@ -447,6 +537,15 @@ fn hook_pop_from_buffer(shell: &mut Shell, _args: &[&str]) -> R {
             Err(SbyteError::BufferEmpty)
         }
     }
+}
+
+fn hook_history_next(shell: &mut Shell, _args: &[&str]) -> R {
+    shell.history_set_next();
+    Ok(())
+}
+fn hook_history_prev(shell: &mut Shell, _args: &[&str]) -> R {
+    shell.history_set_prev();
+    Ok(())
 }
 
 fn hook_query(shell: &mut Shell, _args: &[&str]) -> R {
