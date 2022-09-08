@@ -43,7 +43,8 @@ pub struct FrontEnd {
     rendered_viewport_size: Option<(usize, usize)>,
     rendered_viewport_offset: Option<usize>,
     rendered_formatter: Option<FormatterRef>,
-    rendered_cursor: Option<(usize, usize)>
+    rendered_cursor: Option<(usize, usize)>,
+    rendered_cmd_cursor: Option<usize>
 
 }
 
@@ -86,7 +87,8 @@ impl FrontEnd {
             rendered_viewport_size: None,
             rendered_viewport_offset: None,
             rendered_formatter: None,
-            rendered_cursor: None
+            rendered_cursor: None,
+            rendered_cmd_cursor: None
         };
 
 
@@ -99,7 +101,12 @@ impl FrontEnd {
 
     pub fn set_input_context(&mut self, new_context: &str) {
         self.flag_context_changed = true;
+        if self.input_context == "CMD" && new_context != self.input_context {
+            self.rendered_cmd_cursor = None;
+            self.rendered_buffer = None;
+        }
         self.input_context = new_context.to_string();
+
     }
 
     pub fn tick(&mut self, shell: &mut Shell) -> Result<(), Box::<dyn Error>> {
@@ -831,23 +838,28 @@ impl FrontEnd {
 
     pub fn display_command_line(&mut self, shell: &Shell) -> Result<(), WreckedError> {
         let buffer_option = shell.buffer_get();
-        if self.rendered_buffer != buffer_option {
+        let cursor_x = shell.get_cursor_position();
+        if self.rendered_buffer != buffer_option || self.rendered_cmd_cursor != Some(cursor_x) {
             match buffer_option {
                 Some(buffer) => {
                     self.clear_feedback()?;
 
-                    let cursor_x = buffer.len() + 1;
                     let cursor_id = self.rectmanager.new_rect(self.rect_feedback).ok().unwrap();
+                    if cursor_x < buffer.len() {
+                        let character = &buffer[cursor_x..cursor_x + 1];
+                        self.rectmanager.set_string(cursor_id, 0, 0, character)?;
+                    }
 
                     self.rectmanager.resize(cursor_id, 1, 1)?;
-                    self.rectmanager.set_position(cursor_id, cursor_x as isize, 0)?;
+                    self.rectmanager.set_position(cursor_id, (cursor_x + 1) as isize, 0)?;
                     self.rectmanager.set_invert_flag(cursor_id)?;
 
                     self.rectmanager.set_string(self.rect_feedback, 0, 0, &vec![":", &buffer].join(""))?;
+                    self.rendered_buffer = Some(buffer);
+                    self.rendered_cmd_cursor = Some(cursor_x);
                 }
                 None => { }
             }
-            self.rendered_buffer = shell.buffer_get();
         }
 
         Ok(())

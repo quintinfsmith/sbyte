@@ -1,6 +1,6 @@
 [package]
 name = "sbyte"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Quintin Smith <smith.quintin@protonmail.com>"]
 edition = "2018"
 description = "Console-based byte editor"

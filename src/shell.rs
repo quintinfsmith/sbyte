@@ -18,7 +18,8 @@ pub struct Shell {
     register: Option<usize>,
     record_map: HashMap<String, Vec<Vec<String>>>,
     record_key: Option<String>,
-    in_playback: bool
+    in_playback: bool,
+    cursor: usize
 }
 
 impl Shell {
@@ -36,7 +37,8 @@ impl Shell {
             record_map: HashMap::new(),
             record_key: None,
             in_playback: false,
-            history_cursor: None
+            history_cursor: None,
+            cursor: 0
         };
 
         output.map_command("TOGGLE_FORMATTER", hook_toggle_formatter);
@@ -82,8 +84,13 @@ impl Shell {
         output.map_command("BITWISE_OR", hook_bitwise_or_mask);
         output.map_command("BITWISE_XOR", hook_bitwise_xor_mask);
 
-        output.map_command("APPEND_TO_COMMANDLINE", hook_push_to_buffer);
-        output.map_command("CMDLINE_BACKSPACE", hook_pop_from_buffer);
+        output.map_command("APPEND_TO_COMMANDLINE", hook_insert_to_buffer);
+        output.map_command("CMDLINE_BACKSPACE", hook_backspace_buffer);
+
+        output.map_command("CMDLINE_DELETE", hook_pop_from_buffer);
+
+        output.map_command("CMDLINE_CURSOR_BACK", hook_cmd_cursor_left);
+        output.map_command("CMDLINE_CURSOR_FWD", hook_cmd_cursor_right);
 
         output.map_command("CMDLINE_HISTORY_PREV", hook_history_prev);
         output.map_command("CMDLINE_HISTORY_NEXT", hook_history_next);
@@ -132,8 +139,27 @@ impl Shell {
         output
     }
 
+    pub fn cursor_move_right(&mut self) {
+        self.cursor = match &self.query_buffer {
+            Some(buffer_string) => {
+                std::cmp::min(self.cursor + 1, buffer_string.len())
+            }
+            None => { 0 }
+        };
+    }
+
+    pub fn cursor_move_left(&mut self) {
+        self.cursor = match &self.query_buffer {
+            Some(_buffer_string) => {
+                std::cmp::max(self.cursor - 1, 0)
+            }
+            None => { 0 }
+        };
+    }
+
     pub fn buffer_clear(&mut self) {
         self.query_buffer = None;
+        self.cursor = 0;
     }
 
     pub fn buffer_get(&self) -> Option<String> {
@@ -166,6 +192,21 @@ impl Shell {
         output
     }
 
+    pub fn buffer_insert(&mut self, input: &str) {
+        let working_string = match &self.query_buffer {
+            Some(buffer) => {
+                let part_a = &buffer[0..self.cursor];
+                let part_b = &buffer[self.cursor..];
+                self.cursor += input.len();
+                format!("{}{}{}", part_a, input, part_b)
+            }
+            None => {
+                input.to_string()
+            }
+        };
+        self.query_buffer = Some(working_string);
+    }
+
     pub fn buffer_push(&mut self, input: &str) {
         let working_string;
         match &self.query_buffer {
@@ -176,25 +217,27 @@ impl Shell {
                 working_string = input.to_string();
             }
         }
+        self.cursor = working_string.len();
         self.query_buffer = Some(working_string);
     }
 
     pub fn buffer_pop(&mut self) -> Option<char> {
-        if self.query_buffer.is_some() {
-            let mut c = self.query_buffer.as_deref_mut().unwrap().chars();
-            let output = c.next_back();
-            let tmp = c.as_str().to_string();
-
-            if output.is_some() {
-                self.query_buffer = Some(tmp);
-            } else {
-                self.query_buffer = None;
+        let mut output = None;
+        match &self.query_buffer {
+            Some(buffer) => {
+                if self.cursor < buffer.len() {
+                    let part_a = &buffer[0..self.cursor];
+                    let part_b = &buffer[self.cursor + 1..];
+                    let char_popped = &buffer[self.cursor..self.cursor + 1].chars().next().unwrap();
+                    output = Some(*char_popped);
+                    self.query_buffer = Some(format!("{}{}", part_a, part_b));
+                }
             }
-
-            output
-        } else {
-            None
+            None => {
+            }
         }
+
+        output
     }
 
     pub fn update_query_buffer_from_history(&mut self) {
@@ -219,6 +262,13 @@ impl Shell {
                     }
                 );
             }
+        }
+
+        match &self.query_buffer {
+            Some(buffer) => {
+                self.cursor = buffer.len();
+            }
+            None => {}
         }
     }
 
@@ -475,8 +525,12 @@ impl Shell {
         }
     }
 
-    pub fn is_browsing_history(&mut self) -> bool {
+    pub fn is_browsing_history(&self) -> bool {
         ! self.history_cursor.is_some()
+    }
+
+    pub fn get_cursor_position(&self) -> usize {
+        self.cursor
     }
 }
 
@@ -516,27 +570,63 @@ fn hook_push_to_register(shell: &mut Shell, args: &[&str]) -> R {
     Ok(())
 }
 
+
 fn hook_clear_buffer(shell: &mut Shell, _args: &[&str]) -> R {
     shell.buffer_clear();
     Ok(())
 }
 
-fn hook_push_to_buffer(shell: &mut Shell, args: &[&str]) -> R {
+fn hook_insert_to_buffer(shell: &mut Shell, args: &[&str]) -> R {
     for arg in args.iter() {
-        shell.buffer_push(arg);
+        shell.buffer_insert(arg);
     }
     Ok(())
 }
 
 fn hook_pop_from_buffer(shell: &mut Shell, _args: &[&str]) -> R {
-    match shell.buffer_pop() {
-        Some(_) => {
-            Ok(())
+    match shell.buffer_get() {
+        Some(buffer) => {
+            if buffer.len() == 0 {
+                Err(SbyteError::BufferEmpty)
+            } else {
+                shell.buffer_pop();
+                Ok(())
+            }
         }
         None => {
             Err(SbyteError::BufferEmpty)
         }
     }
+}
+fn hook_backspace_buffer(shell: &mut Shell, _args: &[&str]) -> R {
+    if shell.get_cursor_position() > 0 {
+        shell.cursor_move_left();
+        hook_pop_from_buffer(shell, _args)
+    } else {
+        match shell.buffer_get() {
+            // has buffer, but no room to backspace
+            Some(buffer) => {
+                if buffer.len() > 0 {
+                    Ok(())
+                } else {
+                    Err(SbyteError::BufferEmpty)
+                }
+            }
+            None => {
+                Err(SbyteError::BufferEmpty)
+            }
+        }
+    }
+}
+
+fn hook_cmd_cursor_left(shell: &mut Shell, _args: &[&str]) -> R {
+    shell.cursor_move_left();
+    Ok(())
+}
+
+fn hook_cmd_cursor_right(shell: &mut Shell, _args: &[&str]) -> R {
+    shell.cursor_move_right();
+    Ok(())
 }
 
 fn hook_history_next(shell: &mut Shell, _args: &[&str]) -> R {
@@ -553,7 +643,6 @@ fn hook_query(shell: &mut Shell, _args: &[&str]) -> R {
 }
 
 
-//fn(shell: &mut Shell, args: &[&str]) -> R {
 ////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////
 
