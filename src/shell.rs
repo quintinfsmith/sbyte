@@ -124,7 +124,7 @@ impl Shell {
         output.map_alias("find", "JUMP_TO_PATTERN").ok();
         output.map_alias("fr", "REPLACE_ALL").ok();
         output.map_alias("insert", "INSERT_STRING").ok();
-        output.map_alias("overwrite", "OVERWRITE").ok();
+        output.map_alias("overwrite", "OVERWRITE_STRING").ok();
 
         output.map_alias("and", "MASK_AND").ok();
         output.map_alias("nand", "MASK_NAND").ok();
