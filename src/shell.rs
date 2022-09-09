@@ -659,10 +659,25 @@ fn hook_cursor_up(shell: &mut Shell, _args: &[&str]) -> R {
 
 fn hook_cursor_down(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
-    shell.get_editor_mut().set_cursor_length(1);
+    // Set overshot to the last position in the file and go to it
+    // when attempting to move past the end of the file.
 
+    let mut overshot = 0;
     for _ in 0 .. repeat {
-        shell.get_editor_mut().cursor_next_line()?;
+        match shell.get_editor_mut().cursor_next_line() {
+            Ok(_) => { }
+            Err(SbyteError::OutOfBounds(_offset, filelength)) => {
+                overshot = filelength - 1;
+                break;
+            }
+            Err(e) => {
+                Err(e)?;
+            }
+        }
+    }
+
+    if overshot > 0 {
+        shell.get_editor_mut().set_cursor_offset(overshot)?;
     }
 
     Ok(())
