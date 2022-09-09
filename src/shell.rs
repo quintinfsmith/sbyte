@@ -667,7 +667,7 @@ fn hook_cursor_down(shell: &mut Shell, _args: &[&str]) -> R {
         match shell.get_editor_mut().cursor_next_line() {
             Ok(_) => { }
             Err(SbyteError::OutOfBounds(_offset, filelength)) => {
-                overshot = filelength - 1;
+                overshot = filelength;
                 break;
             }
             Err(e) => {
