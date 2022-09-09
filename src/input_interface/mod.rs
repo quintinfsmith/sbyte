@@ -528,6 +528,11 @@ impl InputInterface {
                         }
                         Ok(())
                     }
+                    Err(SbyteError::OutOfBounds(offset, filelength)) => {
+                        self.shell.log_error(&format!("Offset out of bounds: {} / {}", offset, filelength));
+                        self.set_context("DEFAULT");
+                        Ok(())
+                    }
                     Err(SbyteError::InvalidCommand(failed_cmd)) => {
                         self.shell.log_error(&format!("bad command: '{}'", failed_cmd));
                         self.set_context("DEFAULT");
