@@ -919,7 +919,7 @@ impl Editor {
 
     pub fn cursor_decrease_length_by_line(&mut self) {
         let mut new_length: isize = self.cursor.get_real_length() - (self.viewport.get_width() as isize);
-        if self.cursor.get_real_length() > 0 && new_length < 0 {
+        if self.cursor.get_real_length() > 0 && new_length <= 0 {
             new_length -= 1;
         }
         self.set_cursor_length(new_length);
