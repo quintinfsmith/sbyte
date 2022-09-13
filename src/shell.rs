@@ -19,7 +19,8 @@ pub struct Shell {
     record_map: HashMap<String, Vec<Vec<String>>>,
     record_key: Option<String>,
     in_playback: bool,
-    cursor: usize
+    cursor: usize,
+    option_flags: HashMap<String, bool>
 }
 
 impl Shell {
@@ -38,7 +39,8 @@ impl Shell {
             record_key: None,
             in_playback: false,
             history_cursor: None,
-            cursor: 0
+            cursor: 0,
+            option_flags: HashMap::new()
         };
 
         output.map_command("TOGGLE_FORMATTER", hook_toggle_formatter);
@@ -115,6 +117,10 @@ impl Shell {
         output.map_command("SAVE", hook_save);
         output.map_command("SAVEQUIT", hook_save_quit);
 
+        output.map_command("SETFLAG", hook_set_option_flag);
+
+        output.map_alias("set", "SETFLAG");
+
         output.map_alias("rec", "RECORD_TOGGLE").ok();
         output.map_alias("play", "RECORD_PLAYBACK").ok();
 
@@ -133,6 +139,7 @@ impl Shell {
         output.map_alias("xor", "MASK_XOR").ok();
         output.map_alias("not", "BITWISE_NOT").ok();
         output.map_alias("rep", "REPLACE_ALL").ok();
+
 
        // output.map_command("", );
 
@@ -532,6 +539,23 @@ impl Shell {
     pub fn get_cursor_position(&self) -> usize {
         self.cursor
     }
+
+    pub fn set_option_flag(&mut self, optionname: &str, value: bool) {
+        self.option_flags.entry(optionname.to_string())
+            .and_modify(|e| { *e = value })
+            .or_insert(value);
+    }
+
+    pub fn get_option_flag(&mut self, optionname: &str) -> bool {
+        match self.option_flags.get(&optionname.to_string()) {
+            Some(value) => {
+                *value
+            }
+            None => {
+                false
+            }
+        }
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -649,7 +673,9 @@ fn hook_query(shell: &mut Shell, _args: &[&str]) -> R {
 
 fn hook_cursor_up(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_prev_line()?;
@@ -662,6 +688,9 @@ fn hook_cursor_down(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
     // Set overshot to the last position in the file and go to it
     // when attempting to move past the end of the file.
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     let mut overshot = 0;
     for _ in 0 .. repeat {
@@ -686,7 +715,9 @@ fn hook_cursor_down(shell: &mut Shell, _args: &[&str]) -> R {
 
 fn hook_cursor_left(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_prev_byte();
@@ -697,7 +728,9 @@ fn hook_cursor_left(shell: &mut Shell, _args: &[&str]) -> R {
 
 fn hook_cursor_right(shell: &mut Shell, _args: &[&str]) -> R {
     let repeat = shell.register_fetch(1);
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     for _ in 0 .. repeat {
         shell.get_editor_mut().cursor_next_byte()?;
@@ -796,7 +829,9 @@ fn hook_overwrite_digit(shell: &mut Shell, args: &[&str]) -> R {
 fn hook_jump_to_position(shell: &mut Shell, _args: &[&str]) -> R {
     let default = shell.get_editor().len();
     let new_offset = shell.register_fetch(default);
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
     shell.get_editor_mut().set_cursor_offset(new_offset)?;
 
     Ok(())
@@ -804,7 +839,9 @@ fn hook_jump_to_position(shell: &mut Shell, _args: &[&str]) -> R {
 
 fn hook_jump_big_endian(shell: &mut Shell, _args: &[&str]) -> R {
     let new_offset = shell.get_editor_mut().get_selected_as_big_endian();
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
     shell.get_editor_mut().set_cursor_offset(new_offset)?;
 
     Ok(())
@@ -812,7 +849,9 @@ fn hook_jump_big_endian(shell: &mut Shell, _args: &[&str]) -> R {
 
 fn hook_jump_little_endian(shell: &mut Shell, _args: &[&str]) -> R {
     let new_offset = shell.get_editor_mut().get_selected_as_little_endian();
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
     shell.get_editor_mut().set_cursor_offset(new_offset)?;
 
     Ok(())
@@ -822,7 +861,9 @@ fn hook_jump_register(shell: &mut Shell, _args: &[&str]) -> R {
     let default = shell.get_editor().len();
     let new_offset = shell.register_fetch(default);
 
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
     shell.get_editor_mut().set_cursor_offset(new_offset)?;
 
     Ok(())
@@ -908,7 +949,9 @@ fn hook_bitwise_xor_mask(shell: &mut Shell, args: &[&str]) -> R {
 
 fn hook_yank(shell: &mut Shell, _args: &[&str]) -> R {
     shell.get_editor_mut().copy_selection();
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     let clipboard_len = shell.get_editor().get_clipboard().len();
     shell.log_feedback(&format!("Yanked {} bytes", clipboard_len));
@@ -935,7 +978,9 @@ fn hook_delete(shell: &mut Shell, _args: &[&str]) -> R {
         removed_bytes.extend(shell.get_editor_mut().remove_bytes_at_cursor().iter().copied());
     }
     shell.get_editor_mut().copy_to_clipboard(removed_bytes);
-    shell.get_editor_mut().set_cursor_length(1);
+    if ! shell.get_option_flag("manual_cursor_size") {
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     let clipboard_len = shell.get_editor().get_clipboard().len();
     shell.log_feedback(&format!("{} fewer bytes", clipboard_len));
@@ -943,21 +988,38 @@ fn hook_delete(shell: &mut Shell, _args: &[&str]) -> R {
     Ok(())
 }
 
-fn hook_backspace(shell: &mut Shell, _args: &[&str]) -> R {
-    let repeat = min(shell.register_fetch(1), shell.get_editor_mut().get_cursor_offset());
-    for _ in 0 .. repeat {
-        shell.get_editor_mut().cursor_prev_byte();
-    }
+fn hook_backspace(shell: &mut Shell, args: &[&str]) -> R {
+    let original_cursor_size = shell.get_editor_mut().get_cursor_length();
+    // If the cursor is highlighting more than one byte, assume the user wants to delete rather than backspace
+    if original_cursor_size > 1 {
+        hook_delete(shell, args)?;
+    } else {
+        let mut offset = shell.get_editor_mut().get_cursor_offset();
 
-    shell.get_editor_mut().set_cursor_length(repeat as isize);
+        // Move the cursor left as far as it can go
+        let repeat = shell.register_fetch(1);
+        let mut new_cursor_size = 0;
+        for _ in 0 .. repeat {
+            if offset == 0 {
+                break;
+            }
+            shell.get_editor_mut().cursor_prev_byte();
+            new_cursor_size += 1;
+            offset -= 1;
+        }
 
-    let mut removed_bytes = Vec::new();
-    for _ in 0 .. repeat {
+        // Set the cursor size to contain everything that will be removed
+        shell.get_editor_mut().set_cursor_length(new_cursor_size);
+
+        // Save all removed bytes
+        let mut removed_bytes = Vec::new();
         removed_bytes.extend(shell.get_editor_mut().remove_bytes_at_cursor().iter().copied());
-    }
 
-    shell.get_editor_mut().copy_to_clipboard(removed_bytes);
-    shell.get_editor_mut().set_cursor_length(1);
+        shell.get_editor_mut().copy_to_clipboard(removed_bytes);
+
+        // set the cursor length back to 1
+        shell.get_editor_mut().set_cursor_length(1);
+    }
 
     Ok(())
 
@@ -1241,6 +1303,29 @@ fn hook_record_enable(shell: &mut Shell, args: &[&str]) -> R {
 fn hook_record_disable(shell: &mut Shell, _args: &[&str]) -> R {
     shell.record_disable();
     // TODO: Feedback
+    Ok(())
+}
+
+fn hook_set_option_flag(shell: &mut Shell, args: &[&str]) -> R {
+    if args.len() < 2 {
+        shell.log_error("Need flag name and boolean Value");
+
+    } else {
+        let flag_name = args[0];
+        match args[1].to_uppercase().as_str() {
+            "T" | "TRUE" => {
+                shell.set_option_flag(flag_name, true);
+                shell.log_feedback(&format!("{} is true", flag_name));
+            }
+            "F" | "FALSE" => {
+                shell.set_option_flag(flag_name, false);
+                shell.log_feedback(&format!("{} is false", flag_name));
+            }
+            badvalue => {
+                shell.log_error(&format!("Invalid bool value: '{}'", badvalue));
+            }
+        }
+    }
     Ok(())
 }
 ////////////////////////////////////////////////////////////////////////////
