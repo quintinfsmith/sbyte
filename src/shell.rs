@@ -539,6 +539,7 @@ impl Shell {
 
 fn hook_clear_register(shell: &mut Shell, _args: &[&str]) -> R {
     shell.register_clear();
+    shell.log_feedback(&format!("")); // Forces an empty feedback msg in the console_displayer
     Ok(())
 }
 
