@@ -824,21 +824,23 @@ impl Editor {
     }
 
     pub fn set_cursor_offset(&mut self, new_offset: usize) -> Result<(), SbyteError> {
-        if new_offset <= self.active_content.len() {
-            self.cursor.set_offset(new_offset);
-            self.subcursor.set_offset(0);
-            self.adjust_viewport_offset();
-            Ok(())
-        } else {
-            Err(SbyteError::OutOfBounds(new_offset, self.active_content.len()))
-        }
+        let adj_offset = min(self.active_content.len(), max(0, new_offset));
+        self.cursor.set_offset(adj_offset);
+        self.subcursor.set_offset(0);
+        self.adjust_viewport_offset();
+        Ok(())
     }
 
     pub fn set_cursor_length(&mut self, new_length: isize) {
         if self.cursor.get_real_offset() == self.active_content.len() && new_length > 0 {
             self.cursor.set_length(1);
         } else if new_length < 0 {
-            self.cursor.set_length(max(new_length, 0 - self.cursor.get_real_offset() as isize));
+            let real_offset = self.cursor.get_real_offset() as isize;
+            if real_offset == 0 {
+                self.cursor.set_length(1);
+            } else {
+                self.cursor.set_length(max(new_length, 0 - self.cursor.get_real_offset() as isize));
+            }
         } else if new_length == 0 {
         } else {
             let adj_length = min(new_length as usize, self.active_content.len() - self.cursor.get_real_offset()) as isize;

@@ -206,7 +206,9 @@ impl FrontEnd {
 
 
             if !feedback_or_error && (changed_cursor || self.flag_context_changed) {
-                self.clear_feedback()?;
+                if (self.input_context == "DEFAULT" || self.input_context == "CMD") {
+                    self.clear_feedback()?;
+                }
             }
 
             self.display_command_line(shell)?;
