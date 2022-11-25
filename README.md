@@ -10,13 +10,13 @@ The environment was designed to feel and work as much like VIM as is reasonable 
 
 ## Installation & Usage
 ### From crates.io
-```
+```bash
 cargo install sbyte
 sbyte <filename>
 ```
 
 ### From source:
-```
+```bash
 cargo install --git https://burnsomni.net/git/sbyte
 sbyte <filename>
 ```
