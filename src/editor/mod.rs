@@ -23,7 +23,6 @@ use cursor::Cursor;
 use content::{Content, ContentError, BitMask};
 
 
-
 #[derive(Debug, Eq, PartialEq)]
 pub enum SbyteError {
     PathNotSet,
@@ -37,6 +36,7 @@ pub enum SbyteError {
     InvalidHexidecimal(String),
     InvalidDecimal(String),
     OutOfBounds(usize, usize),
+    FileNotFound(String),
     FailedToKill,
     EmptyStack,
     NoCommandGiven,
@@ -448,7 +448,7 @@ impl Editor {
                 }
             }
             Err(e) => {
-                Err(e)?
+                Err(SbyteError::FileNotFound(file_path.to_string()))?
             }
         }
 
